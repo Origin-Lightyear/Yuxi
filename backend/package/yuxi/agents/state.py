@@ -17,7 +17,7 @@ def merge_artifacts(existing: list[str] | None, new: list[str] | None) -> list[s
 
 
 class BaseState(AgentState):
-    """Shared state fields for Yuxi agents."""
+    """Shared state fields for Linko AI agents."""
 
     artifacts: Annotated[list[str], merge_artifacts]
 

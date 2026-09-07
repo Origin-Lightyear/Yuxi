@@ -658,12 +658,18 @@ async def _worker_startup(ctx):
         await ensure_options_in_db(session)
     sys_config.start_runtime_sync()
     await recover_pending_dispatches()
+    from yuxi.services.schedule_runner import schedule_runner
+
+    schedule_runner.start()
 
 
 async def _worker_shutdown(ctx):
     """关闭 worker 数据库连接。"""
 
     del ctx
+    from yuxi.services.schedule_runner import schedule_runner
+
+    await schedule_runner.stop()
     await pg_manager.close()
 
 

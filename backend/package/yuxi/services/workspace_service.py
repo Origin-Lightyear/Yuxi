@@ -203,8 +203,8 @@ async def read_workspace_file_content(*, path: str, current_user: User) -> dict 
 def _preview_binary_response(*, filename: str, content: bytes, media_type: str, preview_type: str) -> StreamingResponse:
     headers = {
         "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
-        "X-Yuxi-Preview-Type": preview_type,
-        "X-Yuxi-Preview-Filename": quote(filename),
+        "X-Linko AI-Preview-Type": preview_type,
+        "X-Linko AI-Preview-Filename": quote(filename),
     }
     return StreamingResponse(io.BytesIO(content), media_type=media_type, headers=headers)
 

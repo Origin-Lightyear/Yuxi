@@ -15,7 +15,7 @@ from questionary import Choice
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 
-from yuxi_cli.client import ClientError, YuxiClient
+from yuxi_cli.client import ClientError, Linko AIClient
 from yuxi_cli.config import ConfigStore, Remote
 from yuxi_cli.discovery import ServerCompatibilityError, ensure_server_compatible
 
@@ -120,7 +120,7 @@ def run_kb_upload(
     options: KbUploadOptions,
     console: Console,
     *,
-    client_factory=YuxiClient,
+    client_factory=Linko AIClient,
 ) -> KbUploadSummary:
     if options.concurrency < 1 or options.concurrency > MAX_CONCURRENCY:
         raise KbUploadError(f"--concurrency 必须在 1 到 {MAX_CONCURRENCY} 之间")
@@ -422,7 +422,7 @@ def _remote_document_exists(remote: Remote, client_factory, kb_id: str, item: Lo
         return False
 
 
-def add_uploaded_documents(client: YuxiClient, kb_id: str, uploaded: list[UploadResult]) -> dict:
+def add_uploaded_documents(client: Linko AIClient, kb_id: str, uploaded: list[UploadResult]) -> dict:
     items = [result.file_path for result in uploaded if result.file_path]
     params = {
         "content_type": "file",
@@ -481,14 +481,14 @@ def _local_file_from_path(path: Path, relative_path: str) -> tuple[list[LocalFil
     return [local_file], []
 
 
-def _ensure_kb_upload_supported(client: YuxiClient) -> None:
+def _ensure_kb_upload_supported(client: Linko AIClient) -> None:
     try:
         ensure_server_compatible(client.discovery(), "cli.kb_upload")
     except ServerCompatibilityError as exc:
         raise KbUploadError(str(exc)) from exc
 
 
-def _load_kb_types(client: YuxiClient) -> dict:
+def _load_kb_types(client: Linko AIClient) -> dict:
     payload = client.get_knowledge_base_types()
     kb_types = payload.get("kb_types")
     if not isinstance(kb_types, dict):
@@ -496,7 +496,7 @@ def _load_kb_types(client: YuxiClient) -> dict:
     return kb_types
 
 
-def _resolve_database(client: YuxiClient, kb_id: str | None, kb_types: dict, console: Console) -> dict:
+def _resolve_database(client: Linko AIClient, kb_id: str | None, kb_types: dict, console: Console) -> dict:
     if kb_id and kb_id.strip():
         database = client.get_database(kb_id.strip())
         _ensure_database_supports_documents(database, kb_types)
@@ -572,7 +572,7 @@ def _format_unsupported_summary(unsupported_counts: Counter[str]) -> str:
     return f"不支持: {total} ({', '.join(visible)}{suffix})"
 
 
-def _list_uploadable_databases(client: YuxiClient, kb_types: dict) -> list[dict]:
+def _list_uploadable_databases(client: Linko AIClient, kb_types: dict) -> list[dict]:
     payload = client.list_databases()
     databases = payload.get("databases")
     if not isinstance(databases, list):
@@ -605,7 +605,7 @@ def _database_supports_documents(database: dict, kb_types: dict) -> bool:
     return isinstance(type_info, dict) and type_info.get("supports_documents") is True
 
 
-def _load_supported_extensions(client: YuxiClient) -> set[str]:
+def _load_supported_extensions(client: Linko AIClient) -> set[str]:
     payload = client.get_supported_file_types()
     raw_file_types = payload.get("file_types")
     if not isinstance(raw_file_types, list) or not raw_file_types:

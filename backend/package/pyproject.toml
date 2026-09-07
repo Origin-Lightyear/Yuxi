@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "yuxi"
 version = "0.7.1"
-description = "Yuxi 智能知识库与知识图谱平台核心后端包"
+description = "Linko AI 智能知识库与知识图谱平台核心后端包"
 readme = "README.md"
 license = { text = "MIT" }
 classifiers = [
@@ -22,6 +22,7 @@ dependencies = [
     "asyncpg>=0.30.0",
     "chardet>=5.0.0",
     "colorlog>=6.9.0",
+    "croniter>=2.0.0",
     "dashscope>=1.23.2",
     "deepagents>=0.6.7",
     "docling>=2.68.0",

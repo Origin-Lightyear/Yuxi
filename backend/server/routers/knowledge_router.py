@@ -50,6 +50,12 @@ from server.utils.knowledge_permissions import (
     require_knowledge_base_manage,
     require_knowledge_base_read,
 )
+from server.utils.employee_kb_permissions import (
+    is_employee,
+    require_documents_edit_or_kb_manage,
+    require_kb_manage_for_documents,
+    require_kb_read_or_employee,
+)
 
 knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -370,17 +376,19 @@ async def get_mindmap_diff_route(kb_id: str, current_user: User = Depends(requir
 async def get_database_info(
     kb_id: str,
     include_files: bool = Query(False, description="是否包含全量文件列表，默认关闭以避免大知识库响应过大"),
-    current_user: User = Depends(require_knowledge_base_read),
+    current_user: User = Depends(require_kb_read_or_employee),
 ):
     """获取知识库详细信息"""
     database = await knowledge_base.get_database_info(kb_id, include_files=include_files)
     if database is None:
         raise HTTPException(status_code=404, detail="Database not found")
     permission = resolve_knowledge_base_permission(current_user, database)
+    # 员工的 MANAGE 仅表达文档级管理，敏感参数（密钥等）仍脱敏
+    redact_secrets = is_employee(current_user) or permission != ResourcePermission.MANAGE
     return serialize_knowledge_base(
         database,
         permission=permission,
-        redact_secrets=permission != ResourcePermission.MANAGE,
+        redact_secrets=redact_secrets,
     )
 
 
@@ -666,9 +674,9 @@ async def list_documents(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(100, ge=1, le=500, description="每页数量"),
     recursive: bool = Query(False, description="是否跨目录筛选"),
-    current_user: User = Depends(require_knowledge_base_read),
+    current_user: User = Depends(require_kb_read_or_employee),
 ):
-    """分页获取知识库文件列表。"""
+    """分页获取知识库文件列表（KB 级 READ 即可，目录仅作组织不分权限）。"""
     await _ensure_database_supports_documents(kb_id, "文档查看")
     try:
         return await knowledge_base.list_document_files(
@@ -690,7 +698,7 @@ async def search_documents(
     query: str = Query("", description="文件名关键词，仅匹配文件名不匹配内容"),
     offset: int = Query(0, ge=0, description="偏移量，从 0 开始"),
     limit: int = Query(100, ge=1, le=500, description="每页数量"),
-    current_user: User = Depends(require_knowledge_base_read),
+    current_user: User = Depends(require_kb_read_or_employee),
 ):
     """按文件名搜索知识库文件（仅匹配文件名，不搜索文件内容）。"""
     database = await knowledge_base.get_database_info(kb_id)
@@ -919,7 +927,7 @@ async def add_documents(
 async def add_uploaded_documents(
     kb_id: str,
     payload: AddUploadedDocumentsRequest,
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(get_required_user),
 ):
     """将已上传的 MinIO 文件同步添加为知识库文档记录，不解析、不入库。"""
     logger.debug(f"Add uploaded documents for kb_id {kb_id}: {payload.items} params={payload.params}")
@@ -931,6 +939,9 @@ async def add_uploaded_documents(
         raise HTTPException(status_code=400, detail="URL 处理方式已变更，请使用 fetch-url 接口先获取内容")
     if content_type != "file":
         raise HTTPException(status_code=400, detail=f"Unsupported content_type: {content_type}")
+
+    # 管理员与员工统一 KB 级 MANAGE（员工的 MANAGE 仅表达文档级管理）
+    await require_kb_manage_for_documents(kb_id, current_user)
 
     _validate_uploaded_document_items(payload.items, params)
 
@@ -1376,12 +1387,13 @@ async def _enqueue_index_pending_task(
 async def parse_documents(
     kb_id: str,
     file_ids: list[str] = Body(...),
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(get_required_user),
 ):
-    """手动触发文档解析"""
+    """手动触发文档解析（员工需对每个文档所在目录有 edit 权限）"""
     file_ids = _validate_direct_document_action_file_ids(file_ids)
     logger.debug(f"Parse documents for kb_id {kb_id}: {file_ids}")
     db_info = await _ensure_database_supports_documents(kb_id, "文档解析")
+    await require_documents_edit_or_kb_manage(kb_id, file_ids, current_user)
     return await _enqueue_parse_task(kb_id, file_ids, current_user.uid, db_info)
 
 
@@ -1398,13 +1410,14 @@ async def index_documents(
     kb_id: str,
     file_ids: list[str] = Body(...),
     params: dict | None = Body(None),
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(get_required_user),
 ):
-    """手动触发文档入库（Indexing），支持更新参数"""
+    """手动触发文档入库（Indexing），支持更新参数（员工需对每个文档所在目录有 edit 权限）"""
     file_ids = _validate_direct_document_action_file_ids(file_ids)
     params = params or {}
     logger.debug(f"Index documents for kb_id {kb_id}: {file_ids} {params=}")
     db_info = await _ensure_database_supports_documents(kb_id, "文档入库")
+    await require_documents_edit_or_kb_manage(kb_id, file_ids, current_user)
     return await _enqueue_index_task(kb_id, file_ids, params, current_user.uid, db_info)
 
 
@@ -1470,11 +1483,12 @@ async def get_document_content(kb_id: str, doc_id: str, current_user: User = Dep
 
 @knowledge.delete("/databases/{kb_id}/documents/batch")
 async def batch_delete_documents(
-    kb_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(require_knowledge_base_manage)
+    kb_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(get_required_user)
 ):
-    """批量删除文档或文件夹"""
+    """批量删除文档或文件夹（员工仅能删除有 edit 权限目录下的文档，文件夹目标一律拒绝）"""
     logger.debug(f"BATCH DELETE documents {file_ids} in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "批量文档删除")
+    await require_documents_edit_or_kb_manage(kb_id, file_ids, current_user)
 
     deleted_count = 0
     failed_items = []
@@ -1523,10 +1537,11 @@ async def batch_delete_documents(
 
 
 @knowledge.delete("/databases/{kb_id}/documents/{doc_id}")
-async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_manage)):
-    """删除文档或文件夹"""
+async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(get_required_user)):
+    """删除文档或文件夹（员工仅能删除有 edit 权限目录下的文档，文件夹目标一律拒绝）"""
     logger.debug(f"DELETE document {doc_id} info in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "文档删除")
+    await require_documents_edit_or_kb_manage(kb_id, [doc_id], current_user)
     try:
         file_meta_info = await knowledge_base.get_file_basic_info(kb_id, doc_id)
 
@@ -1647,9 +1662,9 @@ async def query_knowledge_base(
     kb_id: str,
     query: str = Body(...),
     meta: dict = Body(...),
-    current_user: User = Depends(require_knowledge_base_read),
+    current_user: User = Depends(require_kb_read_or_employee),
 ):
-    """查询知识库"""
+    """查询知识库（KB 级 READ 即可检索全库）"""
     logger.debug(f"Query knowledge base {kb_id}: {query}")
     try:
         result = await knowledge_base.aquery(query, kb_id=kb_id, **meta)
@@ -1664,9 +1679,9 @@ async def query_test(
     kb_id: str,
     query: str = Body(...),
     meta: dict = Body(...),
-    current_user: User = Depends(require_knowledge_base_read),
+    current_user: User = Depends(require_kb_read_or_employee),
 ):
-    """测试查询知识库"""
+    """测试查询知识库（KB 级 READ 即可检索全库）"""
     logger.debug(f"Query test in {kb_id}: {query}")
     try:
         result = await knowledge_base.aquery(query, kb_id=kb_id, **meta)
@@ -1929,15 +1944,20 @@ async def import_workspace_files(
 async def upload_file(
     file: UploadFile = File(...),
     kb_id: str | None = Query(None),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_required_user),
 ):
-    """上传文件"""
+    """上传文件（员工必须指定 kb_id 且具备 KB 级 MANAGE，与 add 建档门槛一致）"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No selected file")
 
     if kb_id:
-        await _require_manage_permission_if_kb_id(kb_id, current_user)
+        if is_employee(current_user):
+            await require_kb_manage_for_documents(kb_id, current_user)
+        else:
+            await _require_manage_permission_if_kb_id(kb_id, current_user)
         await _ensure_database_supports_documents(kb_id, "文档上传")
+    elif is_employee(current_user):
+        raise HTTPException(status_code=403, detail="上传文件必须指定知识库")
 
     logger.debug(f"Received upload file with filename: {file.filename}")
 

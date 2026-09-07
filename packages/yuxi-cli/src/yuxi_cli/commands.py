@@ -8,7 +8,7 @@ from collections.abc import Callable
 from rich.console import Console
 from rich.table import Table
 
-from yuxi_cli.client import ClientError, YuxiClient
+from yuxi_cli.client import ClientError, Linko AIClient
 from yuxi_cli.config import ConfigStore, Remote
 from yuxi_cli.discovery import ServerCompatibilityError, ensure_server_compatible
 
@@ -45,7 +45,7 @@ def remote_list(store: ConfigStore, console: Console) -> None:
     console.print(table)
 
 
-def remote_ping(store: ConfigStore, name: str | None, console: Console, client_factory=YuxiClient) -> None:
+def remote_ping(store: ConfigStore, name: str | None, console: Console, client_factory=Linko AIClient) -> None:
     config = store.load()
     remote = config.get_remote(name)
     with client_factory(remote) as client:
@@ -58,7 +58,7 @@ def login_with_api_key(
     remote_name: str | None,
     api_key: str,
     console: Console,
-    client_factory=YuxiClient,
+    client_factory=Linko AIClient,
 ) -> Remote:
     if not api_key.startswith("yxkey_"):
         raise CommandError("API Key 格式无效，应以 yxkey_ 开头")
@@ -82,7 +82,7 @@ def login_with_browser(
     no_open: bool,
     console: Console,
     *,
-    client_factory=YuxiClient,
+    client_factory=Linko AIClient,
     open_browser: Callable[[str], bool] = webbrowser.open,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
@@ -129,7 +129,7 @@ def _should_keep_polling(exc: ClientError) -> bool:
     return exc.status_code is None or exc.status_code >= 500
 
 
-def whoami(store: ConfigStore, remote_name: str | None, console: Console, client_factory=YuxiClient) -> None:
+def whoami(store: ConfigStore, remote_name: str | None, console: Console, client_factory=Linko AIClient) -> None:
     config = store.load()
     remote = config.get_remote(remote_name)
     if not remote.api_key:
@@ -139,7 +139,7 @@ def whoami(store: ConfigStore, remote_name: str | None, console: Console, client
     console.print(f"{user.get('username')} ({user.get('uid')}) - {user.get('role')}")
 
 
-def status(store: ConfigStore, remote_name: str | None, console: Console, client_factory=YuxiClient) -> None:
+def status(store: ConfigStore, remote_name: str | None, console: Console, client_factory=Linko AIClient) -> None:
     config = store.load()
     remote = config.get_remote(remote_name)
     with client_factory(remote) as client:
@@ -165,7 +165,7 @@ def logout(
     remote_name: str | None,
     local_only: bool,
     console: Console,
-    client_factory=YuxiClient,
+    client_factory=Linko AIClient,
 ) -> Remote:
     config = store.load()
     remote = config.get_remote(remote_name)
@@ -190,11 +190,11 @@ def select_login_mode(console: Console) -> str:
     return "api_key" if value == "2" else "browser"
 
 
-def _ensure_server_compatible(client: YuxiClient, required_capability: str) -> None:
+def _ensure_server_compatible(client: Linko AIClient, required_capability: str) -> None:
     try:
         discovery = client.discovery()
     except ClientError as exc:
-        raise CommandError(f"无法读取服务端 discovery，请确认远程是 Yuxi 0.7.1 或更高版本: {exc}") from exc
+        raise CommandError(f"无法读取服务端 discovery，请确认远程是 Linko AI 0.7.1 或更高版本: {exc}") from exc
     try:
         ensure_server_compatible(discovery, required_capability)
     except ServerCompatibilityError as exc:

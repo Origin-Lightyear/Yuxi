@@ -39,7 +39,7 @@ class ChannelMessageRequest(BaseModel):
     channel: str = Field("cli", max_length=32, description="通道名称")
     account_id: str = Field("default", description="通道账号标识")
     chat_id: str | None = Field(None, description="通道侧会话标识")
-    thread_id: str | None = Field(None, description="可选 Yuxi Thread ID")
+    thread_id: str | None = Field(None, description="可选 Linko AI Thread ID")
     sender_id: str | None = Field(None, description="通道侧发送者标识")
     message_id: str | None = Field(None, max_length=128, description="通道侧消息 ID")
     request_id: str | None = Field(None, description="请求幂等 ID")
@@ -224,7 +224,7 @@ def _resolve_thread_id(
     chat_id: str | None,
     requested_thread_id: str | None,
 ) -> str:
-    """根据显式 thread 或通道会话信息解析稳定 Yuxi Thread ID。"""
+    """根据显式 thread 或通道会话信息解析稳定 Linko AI Thread ID。"""
     if requested_thread_id and requested_thread_id.strip():
         return requested_thread_id.strip()
     if not chat_id or not chat_id.strip():

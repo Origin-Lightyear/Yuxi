@@ -1,6 +1,6 @@
 # 参与贡献
 
-感谢你对 Yuxi 的关注。我们欢迎 Bug 修复、功能改进、测试补充、文档更新以及其他能够让项目变得更好的贡献。
+感谢你对 Linko AI 的关注。我们欢迎 Bug 修复、功能改进、测试补充、文档更新以及其他能够让项目变得更好的贡献。
 
 本文面向通过 Fork 参与开发的贡献者，介绍从领取任务到提交 Pull Request（以下简称 PR）的完整流程。如果你只需要快速了解仓库入口，可以先阅读根目录的 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
 
@@ -39,8 +39,8 @@
 先在 GitHub 上 Fork [xerrors/Yuxi](https://github.com/xerrors/Yuxi)，然后克隆自己的 Fork：
 
 ```bash
-git clone https://github.com/<your-username>/Yuxi.git
-cd Yuxi
+git clone https://github.com/<your-username>/Linko AI.git
+cd Linko AI
 ```
 
 克隆完成后，默认的 `origin` 应指向你的 Fork。将官方仓库配置为 `upstream`：
@@ -100,7 +100,7 @@ git switch -c docs/update-contributing-guide
 
 ## 4. 开发环境
 
-Yuxi 使用 Docker Compose 管理开发环境。开发、调试和测试应在运行中的容器环境中完成。
+Linko AI 使用 Docker Compose 管理开发环境。开发、调试和测试应在运行中的容器环境中完成。
 
 首次启动前，根据 `.env.template` 准备项目根目录下的 `.env`，然后启动服务：
 
@@ -283,7 +283,7 @@ git push -u origin docs/update-contributing-guide
 base repository: xerrors/Yuxi
 base branch:     main
 
-head repository: <your-username>/Yuxi
+head repository: <your-username>/Linko AI
 compare branch:  当前任务分支
 ```
 

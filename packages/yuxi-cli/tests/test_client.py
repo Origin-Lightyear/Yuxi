@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import httpx
 
-from yuxi_cli.client import YuxiClient, _iter_sse_events
+from yuxi_cli.client import Linko AIClient, _iter_sse_events
 from yuxi_cli.config import Remote
 
 
 def _patched_client(monkeypatch):
-    client = YuxiClient(Remote(name="local", url="http://localhost:5173", api_key="yxkey_test"))
+    client = Linko AIClient(Remote(name="local", url="http://localhost:5173", api_key="yxkey_test"))
     calls: list[dict] = []
 
     def fake_request(method, path, **kwargs):
@@ -103,7 +103,7 @@ def test_stream_agent_run_events_sends_auth_and_uses_compact_events():
             headers={"Content-Type": "text/event-stream"},
         )
 
-    client = YuxiClient(remote)
+    client = Linko AIClient(remote)
     client.client.close()
     client.client = httpx.Client(transport=httpx.MockTransport(handler))
     try:

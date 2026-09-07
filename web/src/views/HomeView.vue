@@ -598,10 +598,7 @@ const realtimeStats = computed(() => {
   text-decoration: none;
   color: var(--gray-600);
   border: 1px solid transparent;
-  transition:
-    color 0.2s ease,
-    background 0.2s ease,
-    border-color 0.2s ease;
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 
   &:hover {
     color: var(--main-700);
@@ -732,9 +729,7 @@ const realtimeStats = computed(() => {
 
 .subtitle-switch-enter-active,
 .subtitle-switch-leave-active {
-  transition:
-    opacity 0.32s ease,
-    transform 0.32s ease;
+  transition: opacity 0.32s ease, transform 0.32s ease;
 }
 
 .subtitle-switch-enter-from,
@@ -763,9 +758,7 @@ const realtimeStats = computed(() => {
   cursor: pointer;
   border: 1px solid transparent;
   text-decoration: none;
-  transition:
-    background 0.25s ease,
-    box-shadow 0.25s ease;
+  transition: background 0.25s ease, box-shadow 0.25s ease;
   min-height: 52px;
 }
 
@@ -876,9 +869,7 @@ const realtimeStats = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition:
-    background 0.2s ease,
-    border-color 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease;
 
   :deep(svg) {
     color: var(--main-700);

@@ -28,7 +28,9 @@ def test_knowledge_base_global_read_and_department_manage():
     }
     resource = _resource(share_config=config)
 
-    assert resolve_knowledge_base_permission(_user(department_id=1), resource) == ResourcePermission.READ
+    # 员工 MANAGE 仅表达文档级管理：manage_scope 命中的员工获得 MANAGE
+    assert resolve_knowledge_base_permission(_user(department_id=1), resource) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_user(department_id=2), resource) == ResourcePermission.READ
     managing_admin = _user(uid="admin-1", role="admin", department_id=1)
     readonly_admin = _user(uid="other", role="admin", department_id=2)
     assert resolve_knowledge_base_permission(managing_admin, resource) == ResourcePermission.MANAGE
@@ -118,7 +120,8 @@ def test_global_knowledge_base_share_remains_manage_for_admin():
     )
 
     assert resolve_knowledge_base_permission(_user(role="admin"), resource) == ResourcePermission.MANAGE
-    assert resolve_knowledge_base_permission(_user(role="user"), resource) == ResourcePermission.READ
+    # 员工 MANAGE 上限已放开：global manage 命中的员工获得文档级管理
+    assert resolve_knowledge_base_permission(_user(role="user"), resource) == ResourcePermission.MANAGE
 
 
 def test_legacy_permission_config_is_rejected_at_runtime():
@@ -147,7 +150,7 @@ def test_manage_only_scope_also_grants_read_to_matching_users():
     assert (
         resolve_knowledge_base_permission(_user(role="admin", department_id=1), resource) == ResourcePermission.MANAGE
     )
-    assert resolve_knowledge_base_permission(_user(department_id=1), resource) == ResourcePermission.READ
+    assert resolve_knowledge_base_permission(_user(department_id=1), resource) == ResourcePermission.MANAGE
     assert resolve_knowledge_base_permission(_user(role="admin", department_id=2), resource) == ResourcePermission.NONE
 
 
@@ -187,3 +190,27 @@ def test_v2_scope_validation_rejects_disallowed_access_level():
             },
             allowed_access_levels={"user"},
         )
+
+
+def test_empty_user_scope_expresses_no_employee_permission():
+    """空 user_uids 合法：表达「无员工权限」，任何用户都不命中。"""
+    from yuxi.permissions import normalize_permission_config
+
+    normalized = normalize_permission_config(
+        {
+            "version": 2,
+            "read_scope": {"access_level": "user", "user_uids": []},
+            "manage_scope": {"access_level": "user", "user_uids": []},
+        }
+    )
+    assert normalized["read_scope"]["user_uids"] == []
+    assert normalized["manage_scope"]["user_uids"] == []
+
+    resource = _resource(
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "user", "user_uids": []},
+            "manage_scope": {"access_level": "user", "user_uids": []},
+        }
+    )
+    assert resolve_knowledge_base_permission(_user(uid="user-9"), resource) == ResourcePermission.NONE

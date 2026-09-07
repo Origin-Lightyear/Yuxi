@@ -244,7 +244,7 @@ def test_local_server_streams_chat_without_exposing_api_key():
                 "Content-Type": "application/json",
                 "Content-Length": str(len(body.encode())),
                 "Origin": server.origin,
-                "X-Yuxi-Chat-Token": "session-secret",
+                "X-Linko AI-Chat-Token": "session-secret",
             },
         )
         stream_response = connection.getresponse()
@@ -285,7 +285,7 @@ def test_local_server_returns_state_command_without_run_stream():
                 "Content-Type": "application/json",
                 "Content-Length": str(len(body.encode())),
                 "Origin": server.origin,
-                "X-Yuxi-Chat-Token": "session-secret",
+                "X-Linko AI-Chat-Token": "session-secret",
             },
         )
         response = connection.getresponse()
@@ -327,7 +327,7 @@ def test_local_server_waits_queued_request_before_run_stream():
                 "Content-Type": "application/json",
                 "Content-Length": str(len(body.encode())),
                 "Origin": server.origin,
-                "X-Yuxi-Chat-Token": "session-secret",
+                "X-Linko AI-Chat-Token": "session-secret",
             },
         )
         response = connection.getresponse()
@@ -365,7 +365,7 @@ def test_local_server_returns_approval_hint_without_error():
                 "Content-Type": "application/json",
                 "Content-Length": str(len(body.encode())),
                 "Origin": server.origin,
-                "X-Yuxi-Chat-Token": "session-secret",
+                "X-Linko AI-Chat-Token": "session-secret",
             },
         )
         response = connection.getresponse()
@@ -405,7 +405,7 @@ def test_local_server_flushes_delta_before_remote_stream_ends():
             headers={
                 "Content-Type": "application/json",
                 "Origin": server.origin,
-                "X-Yuxi-Chat-Token": "session-secret",
+                "X-Linko AI-Chat-Token": "session-secret",
             },
         )
         response = connection.getresponse()
@@ -446,7 +446,7 @@ def test_local_server_reports_truncated_remote_stream():
             headers={
                 "Content-Type": "application/json",
                 "Origin": server.origin,
-                "X-Yuxi-Chat-Token": "session-secret",
+                "X-Linko AI-Chat-Token": "session-secret",
             },
         )
         response = connection.getresponse()
@@ -468,7 +468,7 @@ def test_local_server_reports_truncated_remote_stream():
     ("headers", "expected_error"),
     [
         ({"Origin": "http://evil.example"}, "请求来源无效"),
-        ({"X-Yuxi-Chat-Token": "wrong-token"}, "会话令牌无效"),
+        ({"X-Linko AI-Chat-Token": "wrong-token"}, "会话令牌无效"),
     ],
 )
 def test_local_server_rejects_untrusted_requests(headers, expected_error):
@@ -481,7 +481,7 @@ def test_local_server_rejects_untrusted_requests(headers, expected_error):
     connection = http.client.HTTPConnection(*server.server_address, timeout=5)
     request_headers = {
         "Origin": server.origin,
-        "X-Yuxi-Chat-Token": "session-secret",
+        "X-Linko AI-Chat-Token": "session-secret",
         **headers,
     }
 
@@ -516,7 +516,7 @@ def test_local_server_rejects_invalid_json():
             body="not-json",
             headers={
                 "Origin": server.origin,
-                "X-Yuxi-Chat-Token": "session-secret",
+                "X-Linko AI-Chat-Token": "session-secret",
             },
         )
         response = connection.getresponse()
@@ -574,7 +574,7 @@ def test_run_web_chat_opens_browser_and_closes_resources(tmp_path, monkeypatch):
         def server_close(self):
             self.closed = True
 
-    monkeypatch.setattr(chat_web_module, "YuxiClient", FakeClient)
+    monkeypatch.setattr(chat_web_module, "Linko AIClient", FakeClient)
     monkeypatch.setattr(chat_web_module, "ChatWebServer", FakeServer)
     console = Console(file=io.StringIO(), force_terminal=False)
 

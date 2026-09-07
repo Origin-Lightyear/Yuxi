@@ -43,7 +43,9 @@ RESOURCE_PERMISSION_ORDER = {
 DEFAULT_SCOPE = {"access_level": "global", "department_ids": [], "user_uids": []}
 KNOWLEDGE_BASE_PERMISSION_POLICY = ResourcePermissionPolicy(
     role_ceiling={
-        "user": ResourcePermission.READ,
+        # 员工 MANAGE 仅表达「文档级管理」（上传/删除文档），
+        # KB 结构操作（CRUD/目录/share_config）由端点的管理员门槛另行拦截。
+        "user": ResourcePermission.MANAGE,
         "admin": ResourcePermission.MANAGE,
         "superadmin": ResourcePermission.MANAGE,
     }
@@ -79,8 +81,7 @@ def _normalize_scope(scope: dict | None) -> dict | None:
         return {"access_level": access_level, "department_ids": department_ids, "user_uids": []}
 
     user_uids = sorted({str(value).strip() for value in scope.get("user_uids") or [] if str(value).strip()})
-    if not user_uids:
-        raise ValueError("指定用户权限至少需要选择一个用户")
+    # 空用户列表合法：表达「无员工权限」（Tenant 平台按角色展开为空时使用）
     return {"access_level": access_level, "department_ids": [], "user_uids": user_uids}
 
 

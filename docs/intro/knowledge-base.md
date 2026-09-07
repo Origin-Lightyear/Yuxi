@@ -1,6 +1,6 @@
 # 知识库与知识图谱
 
-Yuxi 提供文档知识库、向量检索、知识导图和知识图谱构建能力。当前支持 Milvus 知识库、Milvus 知识库内的图谱构建/展示/检索，以及 Dify Dataset、Notion Data Source 只读检索。
+Linko AI 提供文档知识库、向量检索、知识导图和知识图谱构建能力。当前支持 Milvus 知识库、Milvus 知识库内的图谱构建/展示/检索，以及 Dify Dataset、Notion Data Source 只读检索。
 
 ## 为什么需要知识库
 

@@ -16,6 +16,7 @@ from yuxi.config import config as app_config
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SOURCES, ConversationRepository
+from yuxi.services import agent_data_sync
 from yuxi.services.mention_search_service import invalidate_mention_cache
 from yuxi.services.ocr_service import parse_document
 from yuxi.storage.minio import StorageError, get_minio_client
@@ -435,6 +436,7 @@ async def create_thread_view(
         thread_id=thread_id,
         metadata=thread_metadata,
     )
+    await agent_data_sync.sync_thread_created(db, conversation)
 
     return {
         "id": conversation.thread_id,
@@ -542,10 +544,11 @@ async def delete_thread_view(
     current_uid: str,
 ) -> dict:
     conv_repo = ConversationRepository(db)
-    await require_user_conversation(conv_repo, thread_id, str(current_uid))
+    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
     deleted = await conv_repo.delete_conversation(thread_id, soft_delete=True)
     if not deleted:
         raise HTTPException(status_code=404, detail="对话线程不存在")
+    await agent_data_sync.sync_thread_deleted(db, conversation)
     return {"message": "删除成功"}
 
 
@@ -569,6 +572,8 @@ async def update_thread_view(
     )
     if not updated_conv:
         raise HTTPException(status_code=500, detail="更新失败")
+    if title is not None:
+        await agent_data_sync.sync_thread_renamed(db, updated_conv)
     return {
         "id": updated_conv.thread_id,
         "uid": updated_conv.uid,

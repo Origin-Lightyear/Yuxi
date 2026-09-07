@@ -52,7 +52,7 @@
               <span>复制 ID</span>
             </button>
             <button
-              v-if="canManageDatabase"
+              v-if="canManageDatabase && userStore.isAdmin"
               type="button"
               class="lucide-icon-btn extension-panel-action extension-panel-action-primary"
               @click="showEditModal"
@@ -98,7 +98,7 @@
                     <span>上传</span>
                   </button>
                   <button
-                    v-if="canManageDatabase"
+                    v-if="canManageDatabase && userStore.isAdmin"
                     type="button"
                     class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
                     @click="showCreateFolderModal"
@@ -158,7 +158,7 @@
                   </div>
                 </div>
                 <button
-                  v-if="canManageDatabase"
+                  v-if="canManageDatabase && userStore.isAdmin"
                   type="button"
                   class="file-stat-card file-stat-summary file-stat-repair"
                   :disabled="statsRepairing"
@@ -175,7 +175,7 @@
                   </div>
                 </button>
                 <button
-                  v-if="canManageDatabase"
+                  v-if="canManageDatabase && userStore.isAdmin"
                   type="button"
                   class="file-stat-card file-stat-summary file-stat-repair"
                   :disabled="statsRepairing"
@@ -193,7 +193,7 @@
                 </button>
               </div>
             </div>
-            <FileTable ref="fileTableRef" :readonly="!canManageDatabase" />
+            <FileTable ref="fileTableRef" :readonly="!canManageDatabase" :allow-folder-ops="userStore.isAdmin" />
           </div>
 
           <div v-show="activeTab === 'query'" class="tab-panel query-config-panel">
@@ -370,6 +370,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
 import { useTaskerStore } from '@/stores/tasker'
+import { useUserStore } from '@/stores/user'
 import {
   ArrowLeft,
   BarChart3,
@@ -411,6 +412,7 @@ import { getKbTypeIcon, getKbTypeLabel, kbUtils } from '@/utils/kb_utils'
 const route = useRoute()
 const router = useRouter()
 const store = useDatabaseStore()
+const userStore = useUserStore()
 const taskerStore = useTaskerStore()
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
@@ -461,11 +463,14 @@ const tabs = computed(() => {
   return [{ key: 'query', label: '检索测试', icon: Search }]
 })
 
-const visibleTabs = computed(() =>
-  canManageDatabase.value
-    ? tabs.value
-    : tabs.value.filter((tab) => ['filetable', 'query', 'graph', 'mindmap'].includes(tab.key))
-)
+const visibleTabs = computed(() => {
+  if (canManageDatabase.value) return tabs.value
+  if (userStore.saasMode) {
+    // SaaS 员工：文档（目录过滤）+ 检索测试；图谱/导图等管理类 tab 不可见
+    return tabs.value.filter((tab) => ['filetable', 'query'].includes(tab.key))
+  }
+  return tabs.value.filter((tab) => ['filetable', 'query', 'graph', 'mindmap'].includes(tab.key))
+})
 const activeTab = ref('filetable')
 
 watch(

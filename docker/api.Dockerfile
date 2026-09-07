@@ -1,6 +1,7 @@
 # 使用轻量级Python基础镜像
 FROM python:3.13-slim
-COPY --from=ghcr.io/astral-sh/uv:0.11.26 /uv /uvx /bin/
+# 通过 pip 安装 uv（避免从 ghcr.io 缓慢拉取）
+RUN pip install uv --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple
 COPY --from=node:24-slim /usr/local/bin /usr/local/bin
 COPY --from=node:24-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=node:24-slim /usr/local/include /usr/local/include

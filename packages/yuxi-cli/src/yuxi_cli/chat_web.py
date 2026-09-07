@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from rich.console import Console
 
-from yuxi_cli.client import ClientError, YuxiClient
+from yuxi_cli.client import ClientError, Linko AIClient
 from yuxi_cli.config import ConfigStore
 
 MAX_MESSAGE_BYTES = 32 * 1024
@@ -23,14 +23,14 @@ class ChatWebError(Exception):
 
 
 class ChatWebServer(ThreadingHTTPServer):
-    """仅监听本机并代理 Yuxi Agent 请求的临时 HTTP 服务。"""
+    """仅监听本机并代理 Linko AI Agent 请求的临时 HTTP 服务。"""
 
     daemon_threads = True
 
     def __init__(
         self,
         address: tuple[str, int],
-        client: YuxiClient,
+        client: Linko AIClient,
         agent_slug: str,
         session_token: str,
     ):
@@ -80,7 +80,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             self._send_json_error(403, "请求来源无效")
             return
         if not secrets.compare_digest(
-            self.headers.get("X-Yuxi-Chat-Token", ""), self.server.session_token
+            self.headers.get("X-Linko AI-Chat-Token", ""), self.server.session_token
         ):
             self._send_json_error(403, "会话令牌无效")
             return
@@ -314,7 +314,7 @@ def run_web_chat(
     if not remote.has_api_key:
         raise ChatWebError("当前 remote 尚未登录，请先运行 yuxi login")
 
-    client = YuxiClient(remote)
+    client = Linko AIClient(remote)
     server = ChatWebServer(
         ("127.0.0.1", 0), client, agent_slug, secrets.token_urlsafe(24)
     )

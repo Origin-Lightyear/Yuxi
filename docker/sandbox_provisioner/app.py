@@ -1069,7 +1069,7 @@ async def lifespan(app: FastAPI):
             await app.state.http_client.aclose()
 
 
-app = FastAPI(title="Yuxi Sandbox Provisioner", lifespan=lifespan)
+app = FastAPI(title="Linko AI Sandbox Provisioner", lifespan=lifespan)
 
 
 def sandbox_response(record: SandboxRecord) -> SandboxResponse:

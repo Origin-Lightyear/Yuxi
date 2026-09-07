@@ -32,6 +32,7 @@ from yuxi.models.providers.cache import model_cache
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.services import agent_data_sync
 from yuxi.services.input_message_service import (
     AgentRunInputMessage,
     build_resume_input_message,
@@ -501,7 +502,10 @@ async def create_agent_run_view(
         origin_metadata=origin_metadata,
     )
     if created:
-        await _commit_and_enqueue(db, run.id)
+        await db.commit()
+        # 双写 USER 消息到 Tenant 服务（fail-soft），完成后再投递执行队列
+        await agent_data_sync.sync_user_message(db, scope.conversation, persisted_input_message)
+        await enqueue_agent_run(run.id)
 
     return _build_run_response(run)
 

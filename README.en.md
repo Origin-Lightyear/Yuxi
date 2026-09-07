@@ -1,5 +1,5 @@
 <div align="center">
-<h1>Yuxi</h1>
+<h1>Linko AI</h1>
 
 <p><strong>A multi-tenant agent platform combining RAG and knowledge graphs</strong><br/>Make enterprise knowledge retrievable, reasoned over, and deliverable by agents</p>
 
@@ -10,9 +10,9 @@
 [![zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff)](https://zread.ai/xerrors/Yuxi)
 [![demo](https://img.shields.io/badge/demo-00A1D6.svg?style=flat&logo=bilibili&logoColor=white)](https://www.bilibili.com/video/BV1TZEx6NEit/)
 
-<a href="https://trendshift.io/repositories/24335" target="_blank"><img src="https://trendshift.io/api/badge/repositories/24335" alt="xerrors%2FYuxi | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/24335" target="_blank"><img src="https://trendshift.io/api/badge/repositories/24335" alt="xerrors%2FLinko AI | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-[[Docs]](https://xerrors.github.io/Yuxi) · [[中文]](README.md)
+[[Docs]](https://xerrors.github.io/Linko AI) · [[中文]](README.md)
 
 </div>
 
@@ -22,9 +22,9 @@
 
 ## Introduction
 
-Yuxi is an LLM-powered platform for building knowledge-base and knowledge-graph agents. It unifies **RAG retrieval**, **Milvus-backed in-knowledge-base graphs**, and **LangGraph multi-agent orchestration** into a single multi-tenant workspace: administrators configure knowledge bases, models, and permissions, while users chat — in a ChatGPT-like interface — with agents that can mount Skills, MCPs, sub-agents, and sandbox tools, and receive answers with cited sources, graph-based reasoning, and deliverable artifacts.
+Linko AI is an LLM-powered platform for building knowledge-base and knowledge-graph agents. It unifies **RAG retrieval**, **Milvus-backed in-knowledge-base graphs**, and **LangGraph multi-agent orchestration** into a single multi-tenant workspace: administrators configure knowledge bases, models, and permissions, while users chat — in a ChatGPT-like interface — with agents that can mount Skills, MCPs, sub-agents, and sandbox tools, and receive answers with cited sources, graph-based reasoning, and deliverable artifacts.
 
-Navigation: [Introduction](https://xerrors.github.io/Yuxi/) ｜ [Quick Start](https://xerrors.github.io/Yuxi/intro/quick-start) ｜ [Roadmap](https://xerrors.github.io/Yuxi/develop-guides/roadmap); for the latest updates, see the [changelog](https://xerrors.github.io/Yuxi/develop-guides/changelog).
+Navigation: [Introduction](https://xerrors.github.io/Linko AI/) ｜ [Quick Start](https://xerrors.github.io/Linko AI/intro/quick-start) ｜ [Roadmap](https://xerrors.github.io/Linko AI/develop-guides/roadmap); for the latest updates, see the [changelog](https://xerrors.github.io/Linko AI/develop-guides/changelog).
 
 ## Core Features
 
@@ -55,7 +55,7 @@ Navigation: [Introduction](https://xerrors.github.io/Yuxi/) ｜ [Quick Start](ht
 
 ```bash
 git clone --branch v0.7.1 --depth 1 https://github.com/xerrors/Yuxi.git
-cd Yuxi
+cd Linko AI
 
 # Linux/macOS
 ./scripts/init.sh
@@ -74,7 +74,7 @@ docker compose up --build
 
 Once the services are ready, open `http://localhost:5173` in your browser and sign in with the admin account generated during initialization.
 
-> 💡 If you don't need heavy dependencies like knowledge bases / graphs, run `make up-lite` for a lightweight LITE mode with faster cold starts. See the [docs](https://xerrors.github.io/Yuxi) for more deployment details.
+> 💡 If you don't need heavy dependencies like knowledge bases / graphs, run `make up-lite` for a lightweight LITE mode with faster cold starts. See the [docs](https://xerrors.github.io/Linko AI) for more deployment details.
 
 ## Examples and Demo
 
@@ -155,7 +155,7 @@ Once the services are ready, open `http://localhost:5173` in your browser and si
 
 ## Acknowledgements
 
-Yuxi references and builds on the following excellent open-source projects:
+Linko AI references and builds on the following excellent open-source projects:
 
 - [LightRAG](https://github.com/HKUDS/LightRAG) - Used as the foundation for graph construction and retrieval.
 - [DeepAgents](https://github.com/langchain-ai/deepagents) - Used as the deep agent framework.

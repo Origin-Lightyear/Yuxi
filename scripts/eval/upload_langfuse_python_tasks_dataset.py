@@ -50,7 +50,7 @@ PYTHON_TASK_ITEMS = [
     {
         "id": "py-task-006",
         "input": (
-            "请用 Python 完成任务并给出最终答案：给定 s = 'Yuxi Agent Evaluation'，"
+            "请用 Python 完成任务并给出最终答案：给定 s = 'Linko AI Agent Evaluation'，"
             "忽略大小写统计元音字母 a/e/i/o/u 的总数。请只输出最终整数。"
         ),
         "expected_output": "10",
@@ -106,7 +106,7 @@ def main() -> None:
     client = Langfuse()
     client.create_dataset(
         name=args.dataset_name,
-        description="Yuxi agent evaluation dataset: deterministic Python programming tasks.",
+        description="Linko AI agent evaluation dataset: deterministic Python programming tasks.",
         metadata={
             "source": "scripts/eval/upload_langfuse_python_tasks_dataset.py",
             "task_type": "python_programming",

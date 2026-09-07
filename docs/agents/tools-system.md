@@ -1,10 +1,10 @@
 # 工具系统
 
-Yuxi 的工具系统基于注册机制，支持多种工具类型的动态组装。
+Linko AI 的工具系统基于注册机制，支持多种工具类型的动态组装。
 
 ## 工具注册机制
 
-Yuxi 的工具系统采用 `@tool` 装饰器注册机制，核心位于 `backend/package/yuxi/agents/toolkits/registry.py`。
+Linko AI 的工具系统采用 `@tool` 装饰器注册机制，核心位于 `backend/package/yuxi/agents/toolkits/registry.py`。
 
 ### @tool 装饰器
 

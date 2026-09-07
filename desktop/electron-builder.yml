@@ -1,0 +1,32 @@
+appId: com.yuxi.desktop
+# 产品名用于安装包文件名、快捷方式、安装目录等显示；内部 exe 文件名保持 ASCII（win.executableName）
+productName: 大力水手
+directories:
+  output: dist
+
+files:
+  - main.js
+  - preload.js
+  - package.json
+
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.productivity
+  icon: build/icon.png
+
+win:
+  target:
+    - nsis
+  icon: build/icon.png
+  executableName: Yuxi
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+
+electronLanguages:
+  - zh_CN
+  - en

@@ -1,7 +1,7 @@
 import re
 from yuxi.utils import logger
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status, UploadFile, File
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,6 +42,10 @@ from yuxi.services.oidc_service import (
     oidc_login_url_handler,
 )
 
+# SaaS 多租户认证相关导入
+from yuxi.services.saas_client import SaasAPIError, get_saas_client
+from yuxi.config import config as app_config
+
 # 创建路由器
 auth = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -58,6 +62,9 @@ class Token(BaseModel):
     role: str
     department_id: int | None = None
     department_name: str | None = None
+    # SaaS 模式下的扩展字段
+    saas_mode: bool = False
+    employee_code: str | None = None
 
 
 class UserCreate(BaseModel):
@@ -192,6 +199,301 @@ def _raise_cli_auth_error(exc: CLIAuthError) -> None:
     ) from exc
 
 
+async def _upsert_saas_model_provider(db, llm_key, llm_url):
+    """同步 SaaS LLM 配置，含自动拉取模型列表。保留已有的 request_body_overrides。"""
+    from yuxi.storage.postgres.models_business import ModelProvider
+    from yuxi.models.providers.service import _normalize_payload
+    from yuxi.models.providers.repository import create_model_provider
+    import httpx
+
+    provider_id = "saas-newapi"
+    result = await db.execute(select(ModelProvider).filter(ModelProvider.provider_id == provider_id))
+    provider = result.scalar_one_or_none()
+
+    # 保留已有的 overrides
+    existing_overrides = {}
+    if provider and provider.enabled_models:
+        for m in provider.enabled_models:
+            if m.get("request_body_overrides"):
+                existing_overrides[m["id"]] = m["request_body_overrides"]
+
+    # 自动拉取 NewAPI 模型列表
+    enabled_models = []
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{llm_url.rstrip('/')}/v1/models",
+                headers={"Authorization": f"Bearer {llm_key}"},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            raw_models = payload.get("data", []) if isinstance(payload, dict) else payload
+            for m_data in raw_models if isinstance(raw_models, list) else []:
+                if isinstance(m_data, dict) and m_data.get("id"):
+                    model_cfg = {
+                        "id": m_data["id"],
+                        "type": "chat",
+                        "source": "remote",
+                        "display_name": m_data.get("name", m_data["id"]),
+                    }
+                    # 保留已有 overrides 并添加默认 thinking disable
+                    if m_data["id"] in existing_overrides:
+                        model_cfg["request_body_overrides"] = existing_overrides[m_data["id"]]
+                    else:
+                        model_cfg["request_body_overrides"] = {"thinking": {"type": "disabled"}}
+                    enabled_models.append(model_cfg)
+            logger.info(f"SaaS NewAPI models fetched: {len(enabled_models)}")
+    except Exception as exc:
+        logger.warning(f"Failed to fetch SaaS NewAPI models: {exc}")
+
+    if enabled_models:
+        if provider is None:
+            payload = _normalize_payload(
+                {
+                    "provider_id": provider_id,
+                    "display_name": "SaaS NewAPI",
+                    "provider_type": "openai",
+                    "base_url": llm_url,
+                    "api_key": llm_key,
+                    "capabilities": ["chat"],
+                    "enabled_models": enabled_models,
+                    "is_enabled": True,
+                    "is_builtin": False,
+                }
+            )
+            payload["created_by"] = "saas"
+            payload["updated_by"] = "saas"
+            await create_model_provider(db, payload)
+            logger.info(f"SaaS model provider created: {provider_id}")
+        else:
+            provider.base_url = llm_url
+            provider.api_key = llm_key
+            provider.is_enabled = True
+            provider.enabled_models = enabled_models
+            provider.updated_by = "saas"
+            logger.info(f"SaaS model provider updated: {provider_id}")
+
+    await db.flush()
+
+
+async def _upsert_saas_mcp_server(db, mcp_url: str) -> None:
+    """根据 SaaS 下发的 MCP URL 创建或更新 MCP 服务器配置。"""
+    if not mcp_url:
+        return
+    from yuxi.storage.postgres.models_business import MCPServer
+
+    slug = "saas-mcp"
+    result = await db.execute(select(MCPServer).filter(MCPServer.slug == slug))
+    server = result.scalar_one_or_none()
+
+    if server is None:
+        server = MCPServer(
+            slug=slug,
+            name="SaaS MCP",
+            transport="sse",
+            url=mcp_url,
+            description="SaaS 平台 MCP 服务",
+            icon="🏭",
+            enabled=True,
+            created_by="saas",
+            updated_by="saas",
+        )
+        db.add(server)
+        logger.info(f"SaaS MCP server created: {slug} -> {mcp_url}")
+    else:
+        server.url = mcp_url
+        server.enabled = True
+        logger.info(f"SaaS MCP server updated: {slug} -> {mcp_url}")
+
+    await db.flush()
+
+
+async def _find_or_create_saas_user(
+    db: AsyncSession, mobile: str, employee_code: str, employee_name: str, department_name: str
+) -> User:
+    """按手机号查找本地用户，不存在则在当前会话中创建。"""
+    result = await db.execute(select(User).filter(User.phone_number == mobile, User.is_deleted == 0))
+    user = result.scalar_one_or_none()
+
+    if user is not None:
+        if user.is_deleted:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="该账户已注销",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user.username = employee_name
+        user.reset_failed_login()
+        user.last_login = utc_now_naive()
+        await db.flush()
+        return user
+
+    # 创建新用户，uid 使用手机号
+    hashed_pw = AuthUtils.hash_password(AuthUtils.generate_api_key()[0])
+    dept = await _resolve_department(db, employee_name)
+
+    new_user = User(
+        username=employee_name,
+        uid=employee_code,
+        phone_number=mobile,
+        password_hash=hashed_pw,
+        role="user",
+        department_id=dept.id if dept else None,
+        last_login=utc_now_naive(),
+    )
+    db.add(new_user)
+    await db.flush()
+    await db.refresh(new_user)
+    logger.info(f"SaaS local user created: mobile={mobile}, name={employee_name}")
+    return new_user
+
+
+async def _resolve_department(db: AsyncSession, name: str) -> Department | None:
+    """按名称查找部门，不存在则在当前会话中创建。"""
+    result = await db.execute(select(Department).filter(Department.name == name))
+    dept = result.scalar_one_or_none()
+    if dept is not None:
+        return dept
+
+    dept = Department(name=name, description=f"SaaS 自动创建: {name}")
+    db.add(dept)
+    await db.flush()
+    await db.refresh(dept)
+    return dept
+
+
+async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: int | None = None) -> dict:
+    """SaaS 模式登录：通过 Tenant 服务鉴权。
+
+    单租户：直接同步用户并返回 JWT。
+    多租户且未指定 tenant_id：返回租户列表供前端选择。
+    多租户且已指定 tenant_id：使用指定租户登录。
+    """
+    saas = get_saas_client()
+
+    try:
+        auth_result = await saas.authenticate_employee(mobile, password)
+    except SaasAPIError as exc:
+        logger.warning(f"SaaS employee auth failed: code={exc.code}, msg={exc.msg}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="手机号或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except Exception as exc:
+        logger.error(f"SaaS employee auth error: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="认证服务暂时不可用，请稍后重试",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 如果指定了 tenant_id，选择对应租户
+    if tenant_id:
+        emp = next((t for t in auth_result.tenants if t.tenant_id == tenant_id), None)
+        if not emp:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="指定的租户不存在",
+            )
+    elif len(auth_result.tenants) == 1:
+        emp = auth_result.primary
+    else:
+        # 多租户：返回列表供用户选择
+        return {
+            "need_select_tenant": True,
+            "mobile": auth_result.mobile,
+            "tenants": [
+                {
+                    "tenant_id": t.tenant_id,
+                    "tenant_name": t.tenant_name,
+                    "employee_name": t.employee_name,
+                    "department_name": t.department_name,
+                }
+                for t in auth_result.tenants
+            ],
+        }
+
+    if not emp:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该员工未绑定任何租户",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if emp.enabled != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该员工账户已被禁用",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        tenant_cfg = await saas.get_tenant_config(emp.tenant_id)
+    except Exception as exc:
+        logger.warning(f"Failed to fetch tenant config: {exc}")
+        tenant_cfg = None
+
+    # 同步 MCP 配置
+    mcp_url = tenant_cfg.mcp_url if tenant_cfg else ""
+    if mcp_url:
+        try:
+            await _upsert_saas_mcp_server(db, mcp_url)
+        except Exception as exc:
+            logger.warning(f"Failed to upsert SaaS MCP server: {exc}")
+
+    llm_key = emp.llm_key or (tenant_cfg.llm_key if tenant_cfg else "")
+    llm_url = emp.llm_url or (tenant_cfg.llm_url if tenant_cfg else "")
+    if llm_key and llm_url:
+        try:
+            await _upsert_saas_model_provider(db, llm_key, llm_url)
+        except Exception as exc:
+            logger.warning(f"Failed to upsert SaaS model provider: {exc}")
+
+    user = await _find_or_create_saas_user(
+        db,
+        mobile=mobile,
+        employee_code=emp.employee_code,
+        employee_name=emp.employee_name,
+        department_name=emp.department_name,
+    )
+
+    # 持久化 SaaS 员工身份，供 Agent 数据双写与定时任务使用
+    from yuxi.services.saas_identity import save_saas_employee_context
+
+    await save_saas_employee_context(db, user.uid, emp.tenant_id, emp.employee_id)
+    await db.commit()
+
+    token_data = {"sub": str(user.id)}
+    access_token = AuthUtils.create_access_token(token_data)
+
+    await log_operation(
+        db,
+        user.id,
+        "SaaS 登录",
+        f"tenant_id={emp.tenant_id}, employee_id={emp.employee_id}",
+    )
+
+    department_name = None
+    if user.department_id:
+        result = await db.execute(select(Department.name).filter(Department.id == user.department_id))
+        department_name = result.scalar_one_or_none()
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": user.id,
+        "username": user.username,
+        "uid": user.uid,
+        "phone_number": user.phone_number,
+        "avatar": normalize_public_minio_url(user.avatar),
+        "role": user.role,
+        "department_id": user.department_id,
+        "department_name": department_name,
+        "saas_mode": True,
+        "employee_code": emp.employee_code,
+    }
+
+
 # 路由：登录获取令牌
 # =============================================================================
 # === 认证分组 ===
@@ -199,10 +501,18 @@ def _raise_cli_auth_error(exc: CLIAuthError) -> None:
 
 
 @auth.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
-    # 查找用户 - 支持user_id和phone_number登录
-    login_identifier = form_data.username  # OAuth2表单中的username字段作为登录标识符
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Form(None),
+):
+    login_identifier = form_data.username
 
+    # --- SaaS 模式：委托 Tenant 服务鉴权 ---
+    if app_config.is_saas_enabled:
+        return await _saas_login(db, login_identifier, form_data.password, tenant_id)
+
+    # --- 本地认证模式 ---
     # 尝试通过user_id查找
     result = await db.execute(select(User).filter(User.uid == login_identifier))
     user = result.scalar_one_or_none()
@@ -290,6 +600,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         "role": user.role,
         "department_id": user.department_id,
         "department_name": department_name,
+        "saas_mode": False,
+        "employee_code": None,
     }
 
 

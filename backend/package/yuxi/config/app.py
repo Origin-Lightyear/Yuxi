@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,17 @@ class Config(BaseModel):
         description="内容审查LLM模型",
     )
     default_ocr_engine: str = Field(default=DEFAULT_OCR_ENGINE, description="默认 OCR 解析引擎")
+    saas_enabled: bool = Field(default=False, description="是否启用 SaaS 多租户模式")
+    saas_service_url: str = Field(default="", description="SaaS 登录服务地址")
+    platform_service_url: str = Field(default="", description="Platform 内部服务地址")
+    agent_data_sync_enabled: bool | None = Field(
+        default=None,
+        description="SaaS 模式下是否双写同步 Agent 数据到 Tenant 服务（默认跟随 SaaS 开关）",
+    )
+    tenant_admin_api_key: str = Field(
+        default="",
+        description="Tenant 服务调用租户知识库管理 API 的静态密钥（Tenant 侧持有）",
+    )
 
     _config_file: Path | None = PrivateAttr(default=None)
     _runtime_sync_thread: Any = PrivateAttr(default=None)
@@ -69,7 +81,31 @@ class Config(BaseModel):
     def __init__(self, **data):
         super().__init__(**data)
         self._setup_paths()
+        self._apply_env_defaults()
         self._load_user_config()
+
+    def _apply_env_defaults(self) -> None:
+        """从环境变量读取 SaaS 相关配置作为初始值（可被 TOML 覆盖）。"""
+        env_saas = os.getenv("SAAS_ENABLED", "").lower()
+        if env_saas in ("true", "1"):
+            self.saas_enabled = True
+        elif env_saas in ("false", "0"):
+            self.saas_enabled = False
+
+        env_agent_data_sync = os.getenv("AGENT_DATA_SYNC", "").strip().lower()
+        if env_agent_data_sync in ("true", "1"):
+            self.agent_data_sync_enabled = True
+        elif env_agent_data_sync in ("false", "0"):
+            self.agent_data_sync_enabled = False
+
+        for field_name, env_key in (
+            ("saas_service_url", "SAAS_SERVICE_URL"),
+            ("platform_service_url", "PLATFORM_SERVICE_URL"),
+            ("tenant_admin_api_key", "TENANT_ADMIN_API_KEY"),
+        ):
+            env_val = os.getenv(env_key, "").strip()
+            if env_val:
+                setattr(self, field_name, env_val)
 
     def _setup_paths(self) -> None:
         self._config_file = Path(self.save_dir) / "config" / "base.toml"
@@ -110,6 +146,20 @@ class Config(BaseModel):
     def refresh(self) -> None:
         """从 Redis 快照刷新公开配置字段到内存；Redis 不可用或无快照时保持当前值。"""
         runtime_cache.refresh_runtime_config(self)
+
+    @property
+    def is_saas_enabled(self) -> bool:
+        """SaaS 模式是否可用：开关打开且服务地址已配置。"""
+        return self.saas_enabled and bool(self.platform_service_url)
+
+    @property
+    def is_agent_data_sync_enabled(self) -> bool:
+        """Agent 数据双写是否启用：SaaS 可用且未被显式关闭。"""
+        if not self.is_saas_enabled:
+            return False
+        if self.agent_data_sync_enabled is None:
+            return True
+        return self.agent_data_sync_enabled
 
     def save(self) -> None:
         if not self._config_file:

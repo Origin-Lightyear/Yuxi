@@ -6,7 +6,7 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from yuxi_cli.client import YuxiClient
+from yuxi_cli.client import Linko AIClient
 from yuxi_cli.config import ConfigStore, Remote
 from yuxi_cli.discovery import ServerCompatibilityError, ensure_server_compatible
 
@@ -26,7 +26,7 @@ def run_kb_list(
     console: Console,
     *,
     as_json: bool = False,
-    client_factory: type[YuxiClient] = YuxiClient,
+    client_factory: type[Linko AIClient] = Linko AIClient,
 ) -> dict:
     remote = _require_remote(store, remote_name)
     with client_factory(remote) as client:
@@ -47,7 +47,7 @@ def run_kb_files(
     limit: int = 100,
     status: str = "all",
     as_json: bool = False,
-    client_factory: type[YuxiClient] = YuxiClient,
+    client_factory: type[Linko AIClient] = Linko AIClient,
 ) -> dict:
     remote = _require_remote(store, remote_name)
     with client_factory(remote) as client:
@@ -74,7 +74,7 @@ def run_kb_query(
     top_k: int | None = None,
     search_mode: str | None = None,
     as_json: bool = False,
-    client_factory: type[YuxiClient] = YuxiClient,
+    client_factory: type[Linko AIClient] = Linko AIClient,
 ) -> dict:
     options: dict[str, Any] = {}
     if top_k is not None:
@@ -102,7 +102,7 @@ def run_kb_open(
     offset: int = 0,
     limit: int = 200,
     as_json: bool = False,
-    client_factory: type[YuxiClient] = YuxiClient,
+    client_factory: type[Linko AIClient] = Linko AIClient,
 ) -> dict:
     remote = _require_remote(store, remote_name)
     with client_factory(remote) as client:
@@ -125,7 +125,7 @@ def run_kb_find(
     max_windows: int = 5,
     window_size: int = 80,
     as_json: bool = False,
-    client_factory: type[YuxiClient] = YuxiClient,
+    client_factory: type[Linko AIClient] = Linko AIClient,
 ) -> dict:
     if not patterns:
         raise KbError("至少提供一个 --pattern")
@@ -157,7 +157,7 @@ def _require_remote(store: ConfigStore, remote_name: str | None) -> Remote:
     return remote
 
 
-def _ensure_capability(client: YuxiClient, capability: str) -> None:
+def _ensure_capability(client: Linko AIClient, capability: str) -> None:
     try:
         ensure_server_compatible(client.discovery(), capability)
     except ServerCompatibilityError as exc:

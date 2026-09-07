@@ -13,6 +13,8 @@ export const useUserStore = defineStore('user', () => {
   const userRole = ref('')
   const departmentId = ref(null)
   const departmentName = ref('')
+  const saasMode = ref(false)
+  const employeeCode = ref('')
 
   // 计算属性
   const isLoggedIn = computed(() => !!token.value)
@@ -23,9 +25,11 @@ export const useUserStore = defineStore('user', () => {
   async function login(credentials) {
     try {
       const formData = new FormData()
-      // 支持uid或phone_number登录
-      formData.append('username', credentials.loginId) // 使用loginId作为通用登录标识
+      formData.append('username', credentials.loginId)
       formData.append('password', credentials.password)
+      if (credentials.tenantId) {
+        formData.append('tenant_id', credentials.tenantId)
+      }
 
       const response = await fetch('/api/auth/token', {
         method: 'POST',
@@ -34,19 +38,21 @@ export const useUserStore = defineStore('user', () => {
 
       if (!response.ok) {
         const error = await response.json()
-
-        // 如果是423锁定状态码，抛出包含状态码的错误
         if (response.status === 423) {
           const lockError = new Error(error.detail || '账户被锁定')
           lockError.status = 423
           lockError.headers = response.headers
           throw lockError
         }
-
         throw new Error(error.detail || '登录失败')
       }
 
       const data = await response.json()
+
+      // 多租户选择
+      if (data.need_select_tenant) {
+        return { needSelectTenant: true, tenants: data.tenants, mobile: data.mobile }
+      }
 
       // 更新状态
       token.value = data.access_token
@@ -58,6 +64,8 @@ export const useUserStore = defineStore('user', () => {
       userRole.value = data.role
       departmentId.value = data.department_id || null
       departmentName.value = data.department_name || ''
+      saasMode.value = data.saas_mode || false
+      employeeCode.value = data.employee_code || ''
 
       // 只保存 token 到本地存储
       localStorage.setItem('user_token', data.access_token)
@@ -80,6 +88,8 @@ export const useUserStore = defineStore('user', () => {
     userRole.value = ''
     departmentId.value = null
     departmentName.value = ''
+    saasMode.value = false
+    employeeCode.value = ''
 
     // 清除 agentStore 状态，确保重新登录时能正确加载数据
     const agentStore = useAgentStore()
@@ -382,6 +392,8 @@ export const useUserStore = defineStore('user', () => {
     userRole,
     departmentId,
     departmentName,
+    saasMode,
+    employeeCode,
 
     // 计算属性
     isLoggedIn,

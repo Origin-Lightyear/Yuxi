@@ -33,7 +33,7 @@ class CLIAuthSession:
         return f"{self.verification_uri}{separator}{params}"
 
 
-class YuxiClient:
+class Linko AIClient:
     def __init__(self, remote: Remote, timeout: float = 30.0):
         self.remote = remote
         self.client = httpx.Client(timeout=timeout)
@@ -41,7 +41,7 @@ class YuxiClient:
     def close(self) -> None:
         self.client.close()
 
-    def __enter__(self) -> YuxiClient:
+    def __enter__(self) -> Linko AIClient:
         return self
 
     def __exit__(self, *_exc) -> None:

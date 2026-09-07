@@ -210,7 +210,7 @@ const vReveal = {
       </div>
       <div class="yx-container yx-hero__inner">
         <span class="yx-badge">v0.7.1 · MIT 开源 · LangGraph 驱动</span>
-        <h1 class="yx-hero__title">语析 <span class="yx-accent">Yuxi</span></h1>
+        <h1 class="yx-hero__title">Linko AI <span class="yx-accent">Linko AI</span></h1>
         <p class="yx-hero__subtitle">融合 RAG 与知识图谱的智能体 Harness 平台</p>
         <p class="yx-hero__desc">
           管理员配置知识库、模型与权限，用户在类 ChatGPT 的界面中，
@@ -226,7 +226,7 @@ const vReveal = {
           <img
             class="yx-hero__img"
             src="https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260608002434299.png"
-            alt="语析 Yuxi 产品界面预览"
+            alt="Linko AI Linko AI 产品界面预览"
             loading="lazy"
           />
         </div>
@@ -249,7 +249,7 @@ const vReveal = {
         <header v-reveal class="yx-head">
           <span class="yx-head__eyebrow">智能体运行时</span>
           <h2 class="yx-head__title">不止于对话，更能执行与交付</h2>
-          <p class="yx-head__sub">Yuxi 内置一套完整的 Harness——沙盒、技能、工具、子智能体与中间件，让智能体真正动手完成任务。</p>
+          <p class="yx-head__sub">Linko AI 内置一套完整的 Harness——沙盒、技能、工具、子智能体与中间件，让智能体真正动手完成任务。</p>
         </header>
         <div class="yx-bento">
           <article
@@ -454,7 +454,7 @@ const vReveal = {
         <div v-reveal class="yx-quick">
           <pre class="yx-code"><code><span class="yx-c-cmt"># 1. 克隆并初始化</span>
 git clone --branch v0.7.1 --depth 1 https://github.com/xerrors/Yuxi.git
-cd Yuxi && ./scripts/init.sh
+cd Linko AI && ./scripts/init.sh
 
 <span class="yx-c-cmt"># 2. 使用 Docker 启动</span>
 docker compose up --build
@@ -474,7 +474,7 @@ open http://localhost:5173</code></pre>
           <h2 class="yx-head__title">由开源社区共同构建</h2>
         </header>
         <a v-reveal :href="GITHUB + '/graphs/contributors'" target="_blank" rel="noreferrer" class="yx-contrib">
-          <img src="https://contrib.rocks/image?repo=xerrors/Yuxi&max=60&columns=12" alt="Yuxi 贡献者头像墙" loading="lazy" />
+          <img src="https://contrib.rocks/image?repo=xerrors/Yuxi&max=60&columns=12" alt="Linko AI 贡献者头像墙" loading="lazy" />
         </a>
         <p v-reveal class="yx-credits">
           站在巨人的肩上 ——

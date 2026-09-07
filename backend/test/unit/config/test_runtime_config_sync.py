@@ -137,6 +137,8 @@ def test_save_writes_runtime_snapshot_after_base_toml(tmp_path, monkeypatch: pyt
 
 def test_unknown_config_fields_are_removed_on_save(tmp_path, monkeypatch: pytest.MonkeyPatch):
     _patch_runtime_redis(monkeypatch, _FakeRedis())
+    # 隔离环境注入的租户管理密钥，避免写入快照影响断言
+    monkeypatch.delenv("TENANT_ADMIN_API_KEY", raising=False)
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True)
     (config_dir / "base.toml").write_text(
@@ -158,6 +160,7 @@ def test_unknown_config_fields_are_removed_on_save(tmp_path, monkeypatch: pytest
 
 def test_save_dir_from_base_toml_is_ignored(tmp_path, monkeypatch: pytest.MonkeyPatch):
     _patch_runtime_redis(monkeypatch, _FakeRedis())
+    monkeypatch.delenv("TENANT_ADMIN_API_KEY", raising=False)
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True)
     (config_dir / "base.toml").write_text(

@@ -34,9 +34,9 @@ from yuxi_cli.kb import (
 from yuxi_cli.kb_upload import DEFAULT_CONCURRENCY, MAX_CONCURRENCY, KbUploadError, KbUploadOptions, run_kb_upload
 
 console = Console()
-app = typer.Typer(help="Yuxi command line client.", invoke_without_command=True)
-remote_app = typer.Typer(help="Manage Yuxi remotes.")
-agent_app = typer.Typer(help="Run and manage Yuxi agents.")
+app = typer.Typer(help="Linko AI command line client.", invoke_without_command=True)
+remote_app = typer.Typer(help="Manage Linko AI remotes.")
+agent_app = typer.Typer(help="Run and manage Linko AI agents.")
 kb_app = typer.Typer(help="Manage and query knowledge bases (upload, list, files, query, open, find).")
 app.add_typer(remote_app, name="remote")
 app.add_typer(agent_app, name="agent")
@@ -49,7 +49,7 @@ def _store() -> ConfigStore:
 
 def _print_remote_context(store: ConfigStore, remote_name: str | None) -> None:
     remote = store.load().get_remote(remote_name)
-    console.print(f"Yuxi CLI {__version__}")
+    console.print(f"Linko AI CLI {__version__}")
     console.print(f"Remote: {remote.name} {remote.url}")
 
 
@@ -169,7 +169,7 @@ def logout(
 def chat(
     remote: str | None = typer.Option(None, "--remote", help="Remote name."),
     agent_slug: str = typer.Option(
-        "default-chatbot", "--agent-slug", help="Yuxi agent slug."
+        "default-chatbot", "--agent-slug", help="Linko AI agent slug."
     ),
     no_open: bool = typer.Option(
         False, "--no-open", help="Print URL without opening a browser."
@@ -351,11 +351,11 @@ def find_in_kb_file(
 @agent_app.command("eval")
 def eval_agent(
     dataset_name: str = typer.Option(..., "--dataset-name", help="Langfuse dataset name."),
-    agent_slug: str = typer.Option(..., "--agent-slug", help="Yuxi agent slug."),
+    agent_slug: str = typer.Option(..., "--agent-slug", help="Linko AI agent slug."),
     experiment_name: str | None = typer.Option(None, "--experiment-name", help="Langfuse experiment name."),
     remote: str | None = typer.Option(None, "--remote", help="Remote name."),
     max_concurrency: int = typer.Option(1, "--max-concurrency", help="Langfuse experiment max concurrency."),
-    timeout_seconds: float = typer.Option(900, "--timeout-seconds", help="Per item Yuxi API timeout."),
+    timeout_seconds: float = typer.Option(900, "--timeout-seconds", help="Per item Linko AI API timeout."),
 ):
     options = AgentEvalOptions(
         dataset_name=dataset_name,

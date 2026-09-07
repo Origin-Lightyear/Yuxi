@@ -9,7 +9,7 @@ from typing import Any
 from langfuse import Langfuse
 from rich.console import Console
 
-from yuxi_cli.client import YuxiClient
+from yuxi_cli.client import Linko AIClient
 from yuxi_cli.config import ConfigStore
 
 
@@ -60,7 +60,7 @@ def run_langfuse_agent_experiment(
     console: Console,
     *,
     langfuse_factory=build_langfuse_client,
-    client_factory=YuxiClient,
+    client_factory=Linko AIClient,
 ) -> None:
     config = store.load()
     remote = config.get_remote(remote_name)

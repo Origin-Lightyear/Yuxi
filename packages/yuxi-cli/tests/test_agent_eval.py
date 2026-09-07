@@ -64,7 +64,7 @@ class FakeLangfuse:
         self.flushed += 1
 
 
-class FakeYuxiClient:
+class FakeLinko AIClient:
     calls = []
 
     def __init__(self, remote: Remote, timeout: float = 30.0):
@@ -107,7 +107,7 @@ def test_run_langfuse_agent_experiment_uses_remote_api_key(tmp_path):
     dataset = FakeDataset(SimpleNamespace(id="item-1", input={"query": "2+2=?"}))
     langfuse = FakeLangfuse(dataset)
     console = _console()
-    FakeYuxiClient.calls = []
+    FakeLinko AIClient.calls = []
 
     run_langfuse_agent_experiment(
         store,
@@ -121,7 +121,7 @@ def test_run_langfuse_agent_experiment_uses_remote_api_key(tmp_path):
         ),
         console,
         langfuse_factory=lambda: langfuse,
-        client_factory=FakeYuxiClient,
+        client_factory=FakeLinko AIClient,
     )
 
     assert dataset.run_kwargs["name"] == "exp-1"
@@ -132,7 +132,7 @@ def test_run_langfuse_agent_experiment_uses_remote_api_key(tmp_path):
         "dataset_name": "agent-eval-smoke",
         "remote": "local",
     }
-    call = FakeYuxiClient.calls[0]
+    call = FakeLinko AIClient.calls[0]
     assert call["remote"].name == "local"
     assert call["client_timeout"] == 123
     assert call["kwargs"]["query"] == "2+2=?"
@@ -159,7 +159,7 @@ def test_run_langfuse_agent_experiment_requires_login(tmp_path):
             AgentEvalOptions(dataset_name="agent-eval-smoke", agent_slug="default-chatbot"),
             _console(),
             langfuse_factory=lambda: FakeLangfuse(FakeDataset(SimpleNamespace(id="1", input="hello"))),
-            client_factory=FakeYuxiClient,
+            client_factory=FakeLinko AIClient,
         )
 
 
@@ -169,7 +169,7 @@ def test_run_langfuse_agent_experiment_rejects_partial_langfuse_results(tmp_path
     config.get_remote("local").api_key = "yxkey_local"
     store.save(config)
     langfuse = FakeLangfuse(FakePartialDataset())
-    FakeYuxiClient.calls = []
+    FakeLinko AIClient.calls = []
 
     with pytest.raises(AgentEvalError, match="1/2 个 item 成功写入"):
         run_langfuse_agent_experiment(
@@ -182,5 +182,5 @@ def test_run_langfuse_agent_experiment_rejects_partial_langfuse_results(tmp_path
             ),
             _console(),
             langfuse_factory=lambda: langfuse,
-            client_factory=FakeYuxiClient,
+            client_factory=FakeLinko AIClient,
         )

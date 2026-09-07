@@ -1,6 +1,6 @@
 # 命令行工具
 
-`yuxi-cli` 是 Yuxi 的命令行客户端，适合在本地脚本或终端中管理远程实例、登录账号、上传知识库文件，以及运行部分智能体任务。
+`yuxi-cli` 是 Linko AI 的命令行客户端，适合在本地脚本或终端中管理远程实例、登录账号、上传知识库文件，以及运行部分智能体任务。
 
 ## 安装
 
@@ -20,7 +20,7 @@ uvx --from yuxi-cli yuxi --help
 
 ## 配置远程实例
 
-先添加一个 Yuxi 实例地址，再设为当前默认 remote：
+先添加一个 Linko AI 实例地址，再设为当前默认 remote：
 
 ```bash
 yuxi remote add local http://localhost:5173
@@ -38,7 +38,7 @@ yuxi remote ping
 yuxi login --browser
 ```
 
-如果已经在 Yuxi 中创建了 API Key，也可以直接导入：
+如果已经在 Linko AI 中创建了 API Key，也可以直接导入：
 
 ```bash
 yuxi login --api-key yxkey_xxx
@@ -99,4 +99,4 @@ yuxi agent eval \
   --experiment-name cli-demo
 ```
 
-该命令会读取 Langfuse 数据集输入，调用 Yuxi 智能体运行，并把结果回传到对应实验中。
+该命令会读取 Langfuse 数据集输入，调用 Linko AI 智能体运行，并把结果回传到对应实验中。

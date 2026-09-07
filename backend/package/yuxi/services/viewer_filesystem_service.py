@@ -148,8 +148,8 @@ def _preview_binary_response(path: str, raw_content: bytes, preview_type: str) -
     media_type = detect_media_type(file_name, raw_content)
     headers = {
         "Content-Disposition": f"inline; filename*=UTF-8''{quote(file_name)}",
-        "X-Yuxi-Preview-Type": preview_type,
-        "X-Yuxi-Preview-Filename": quote(file_name),
+        "X-Linko AI-Preview-Type": preview_type,
+        "X-Linko AI-Preview-Filename": quote(file_name),
     }
     return StreamingResponse(io.BytesIO(raw_content), media_type=media_type, headers=headers)
 

@@ -1,4 +1,4 @@
-"""Token usage observation middleware for Yuxi agents."""
+"""Token usage observation middleware for Linko AI agents."""
 
 from __future__ import annotations
 

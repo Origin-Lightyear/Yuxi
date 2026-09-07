@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Yuxi Chat</title>
+    <title>Linko AI Chat</title>
     <style>
       :root {
         color-scheme: light;
@@ -289,7 +289,7 @@
     <main class="shell">
       <header>
         <div>
-          <h1>Yuxi Chat</h1>
+          <h1>Linko AI Chat</h1>
           <p class="meta">Agent <span id="agent"></span></p>
         </div>
         <button id="new-chat" class="secondary" type="button">新对话</button>
@@ -334,7 +334,7 @@
         bubble.className = "bubble";
         const label = document.createElement("span");
         label.className = "label";
-        label.textContent = role === "user" ? "You" : role === "error" ? "Error" : "Yuxi";
+        label.textContent = role === "user" ? "You" : role === "error" ? "Error" : "Linko AI";
         const text = document.createElement("pre");
         text.className = "content";
         text.textContent = content;
@@ -403,7 +403,7 @@
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "X-Yuxi-Chat-Token": sessionToken
+              "X-Linko AI-Chat-Token": sessionToken
             },
             body: JSON.stringify({ message, thread_id: threadId })
           });

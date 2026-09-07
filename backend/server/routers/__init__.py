@@ -53,9 +53,11 @@ if not _LITE_MODE:
     from server.routers.graph_router import graph
     from server.routers.knowledge_eval_router import evaluation
     from server.routers.knowledge_router import knowledge
+    from server.routers.tenant_knowledge_router import tenant_knowledge
 
     # 知识库与图谱能力依赖较重，LITE 模式下跳过这组接口。
     router.include_router(external_kb)  # /api/knowledge/databases/external* CLI 与外部 Agent 调用
     router.include_router(knowledge)  # /api/knowledge/* 知识库管理与检索
+    router.include_router(tenant_knowledge)  # /api/tenant/knowledge/* 租户知识库管理（Tenant 服务调用）
     router.include_router(evaluation)  # /api/evaluation/* 知识库评估
     router.include_router(graph)  # /api/graph/* 图谱查询与管理

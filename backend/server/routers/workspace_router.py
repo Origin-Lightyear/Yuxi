@@ -116,8 +116,8 @@ def _binary_preview_response(data: dict) -> StreamingResponse:
         media_type=data.get("media_type") or "application/octet-stream",
         headers={
             "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
-            "X-Yuxi-Preview-Type": preview_type,
-            "X-Yuxi-Preview-Filename": quote(filename),
+            "X-Linko AI-Preview-Type": preview_type,
+            "X-Linko AI-Preview-Filename": quote(filename),
         },
     )
 

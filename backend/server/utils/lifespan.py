@@ -124,7 +124,7 @@ async def lifespan(app: FastAPI):
     ░██      ░█████░██ ░██    ░██ ░██  v{get_version()}
 
     """)
-    logger.info("Yuxi backend startup complete")
+    logger.info("Linko AI backend startup complete")
     yield
     await tasker.shutdown()
     shutdown_sandbox_provider()

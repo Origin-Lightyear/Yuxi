@@ -32,7 +32,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'apiKeys' }"
             @click="activeTab = 'apiKeys'"
-            v-if="userStore.isLoggedIn"
+            v-if="false"
           >
             <Key class="icon" :size="18" />
             <span>API Keys</span>
@@ -59,7 +59,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'user' }"
             @click="activeTab = 'user'"
-            v-if="userStore.isAdmin"
+            v-if="false"
           >
             <User class="icon" :size="18" />
             <span>用户管理</span>
@@ -132,7 +132,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'apiKeys' }"
           @click="activeTab = 'apiKeys'"
-          v-if="userStore.isLoggedIn"
+          v-if="false"
         >
           API Keys
         </div>
@@ -164,7 +164,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'user' }"
           @click="activeTab = 'user'"
-          v-if="userStore.isAdmin"
+          v-if="false"
         >
           用户管理
         </div>
@@ -185,7 +185,7 @@
             <AccountSettingsComponent />
           </div>
 
-          <div v-if="activeTab === 'apiKeys' && userStore.isLoggedIn">
+          <div v-if="false">
             <ApiKeyManagementComponent />
           </div>
 
@@ -201,7 +201,7 @@
             <OCRSettingsSection />
           </div>
 
-          <div v-show="activeTab === 'user'" v-if="userStore.isAdmin">
+          <div v-if="false">
             <UserManagementComponent />
           </div>
 

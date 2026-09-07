@@ -17,13 +17,9 @@
     <!-- 顶部导航：品牌名称 & 操作按钮 -->
     <nav class="login-navbar">
       <div class="navbar-content">
-        <div class="brand-container" @click="goHome" style="cursor: pointer">
+        <div class="brand-container">
           <img v-if="brandLogo" :src="brandLogo" alt="logo" class="brand-logo" />
-          <h1 class="brand-text">
-            <span v-if="brandOrgName" class="brand-org">{{ brandOrgName }}</span>
-            <span v-if="brandOrgName && brandName !== brandOrgName" class="brand-separator"></span>
-            <span class="brand-main">{{ brandName }}</span>
-          </h1>
+          <h1 class="brand-text">{{ brandName }}</h1>
         </div>
       </div>
     </nav>
@@ -227,7 +223,7 @@
                 </a-form>
 
                 <!-- OIDC 登录选项  -->
-                <div v-if="oidcChecking || oidcEnabled" class="third-party-login">
+                <div v-if="false" class="third-party-login">
                   <div class="divider">
                     <span>或使用以下方式登录</span>
                   </div>
@@ -254,6 +250,23 @@
                 </div>
               </div>
 
+              <!-- 多租户选择 -->
+              <div v-if="showTenantSelect" class="tenant-select">
+                <p class="tenant-title">请选择要登录的租户</p>
+                <div
+                  v-for="t in tenantList"
+                  :key="t.tenant_id"
+                  class="tenant-item"
+                  @click="handleSelectTenant(t)"
+                >
+                  <div class="tenant-name">{{ t.tenant_name || '租户 ' + t.tenant_id }}</div>
+                  <div class="tenant-info">{{ t.employee_name }} · {{ t.department_name }}</div>
+                </div>
+                <a-button type="link" block @click="showTenantSelect = false" :loading="selectingTenant">
+                  返回
+                </a-button>
+              </div>
+
               <!-- 错误提示 -->
               <div v-if="errorMessage" class="error-message">
                 {{ errorMessage }}
@@ -267,9 +280,7 @@
     <!-- 页面底部：版权信息等 -->
     <footer class="page-footer">
       <div class="footer-links">
-        <a href="https://github.com/xerrors" target="_blank">联系我们</a>
         <span class="divider">|</span>
-        <a href="https://github.com/xerrors/Yuxi" target="_blank">使用帮助</a>
       </div>
       <div class="copyright">
         &copy; {{ new Date().getFullYear() }} {{ brandName }}. All Rights Reserved.
@@ -304,7 +315,7 @@ const agentStore = useAgentStore()
 
 // 品牌展示数据
 const loginBgImage = computed(() => {
-  return infoStore.organization?.login_bg || '/login-bg.jpg'
+  return infoStore.organization?.login_bg || './login_bg.png'
 })
 const brandLogo = computed(() => {
   return infoStore.organization?.logo || ''
@@ -351,6 +362,12 @@ const oidcButtonText = ref('OIDC 登录')
 const isLocked = ref(false)
 const lockRemainingTime = ref(0)
 const lockCountdown = ref(null)
+
+// 多租户选择状态
+const showTenantSelect = ref(false)
+const tenantList = ref([])
+const tenantMobile = ref('')
+const selectingTenant = ref(false)
 
 // 登录表单
 const loginForm = reactive({
@@ -433,9 +450,46 @@ const ensureAgreementAccepted = () => {
   return false
 }
 
+// 选择租户后登录
+const handleSelectTenant = async (tenant) => {
+  try {
+    selectingTenant.value = true
+    errorMessage.value = ''
+
+    await userStore.login({
+      loginId: loginForm.loginId,
+      password: loginForm.password,
+      tenantId: tenant.tenant_id
+    })
+
+    message.success('登录成功')
+    showTenantSelect.value = false
+    await doRedirect()
+  } catch (error) {
+    errorMessage.value = error.message || '登录失败'
+  } finally {
+    selectingTenant.value = false
+  }
+}
+
+const doRedirect = async () => {
+  const redirectPath = sessionStorage.getItem('redirect') || '/'
+  sessionStorage.removeItem('redirect')
+  if (redirectPath === '/') {
+    try {
+      await agentStore.initialize()
+      router.push('/agent')
+    } catch (error) {
+      console.error('获取智能体信息失败:', error)
+      router.push('/agent')
+    }
+  } else {
+    router.push(redirectPath)
+  }
+}
+
 // 处理登录
 const handleLogin = async () => {
-  // 如果当前被锁定，不允许登录
   if (isLocked.value) {
     message.warning(`账户被锁定，请等待 ${formatTime(lockRemainingTime.value)}`)
     return
@@ -450,31 +504,21 @@ const handleLogin = async () => {
     errorMessage.value = ''
     clearLockCountdown()
 
-    await userStore.login({
+    const result = await userStore.login({
       loginId: loginForm.loginId,
       password: loginForm.password
     })
 
-    message.success('登录成功')
-
-    // 获取重定向路径
-    const redirectPath = sessionStorage.getItem('redirect') || '/'
-    sessionStorage.removeItem('redirect') // 清除重定向信息
-
-    // 根据用户角色决定重定向目标
-    if (redirectPath === '/') {
-      // 统一跳转到聊天页面（管理员与普通用户共享同一聊天界面）
-      try {
-        await agentStore.initialize()
-        router.push('/agent')
-      } catch (error) {
-        console.error('获取智能体信息失败:', error)
-        router.push('/agent')
-      }
-    } else {
-      // 跳转到其他预设的路径
-      router.push(redirectPath)
+    // 多租户选择
+    if (result?.needSelectTenant) {
+      tenantList.value = result.tenants
+      tenantMobile.value = result.mobile
+      showTenantSelect.value = true
+      return
     }
+
+    message.success('登录成功')
+    await doRedirect()
   } catch (error) {
     console.error('登录失败:', error)
 
@@ -789,7 +833,7 @@ onUnmounted(() => {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    object-position: center;
+    object-position: left center;
   }
 }
 
@@ -935,6 +979,39 @@ onUnmounted(() => {
 
   &:hover {
     text-decoration: underline;
+  }
+}
+
+.tenant-select {
+  margin-top: 16px;
+  .tenant-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--gray-700);
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .tenant-item {
+    padding: 12px 16px;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    &:hover {
+      border-color: var(--main-color);
+      background-color: var(--main-10);
+    }
+    .tenant-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--gray-800);
+    }
+    .tenant-info {
+      font-size: 12px;
+      color: var(--gray-500);
+      margin-top: 4px;
+    }
   }
 }
 

@@ -32,7 +32,16 @@ x-api-worker-env: &api-worker-env
   RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
   RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
   YUXI_CORS_ORIGINS: ${YUXI_CORS_ORIGINS:-}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+  YUXI_INSTANCE_ID: ${YUXI_INSTANCE_ID:-}
   YUXI_DATASET_PERSIST_BATCH_SIZE: ${YUXI_DATASET_PERSIST_BATCH_SIZE:-1}
+  # SaaS 多租户模式（Platform / Tenant 内部服务）
+  SAAS_ENABLED: ${SAAS_ENABLED:-false}
+  TENANT_SERVICE_URL: ${TENANT_SERVICE_URL:-http://10.69.188.230:8002}
+  PLATFORM_SERVICE_URL: ${PLATFORM_SERVICE_URL:-http://10.69.188.230:8001}
+  TENANT_ID: ${TENANT_ID:-10008}
+  # 租户知识库管理 API 的静态密钥（Tenant 服务持有；未配置时管理 API 返回 404）
+  TENANT_ADMIN_API_KEY: ${TENANT_ADMIN_API_KEY:-}
   # 其他环境变量
   NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
   no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
@@ -310,7 +319,7 @@ services:
     image: postgres:16
     container_name: postgres
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
@@ -331,7 +340,7 @@ services:
     image: redis:7-alpine
     container_name: redis
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:6380:6379"
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

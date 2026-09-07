@@ -19,6 +19,9 @@ class KnowledgeBaseRepository:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
             return result.scalar_one_or_none()
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
+            return result.scalar_one_or_none()
 
     async def create(self, data: dict[str, Any]) -> KnowledgeBase:
         kb = KnowledgeBase(**data)

@@ -11,7 +11,7 @@
     />
 
     <div v-if="!isDetailPage" class="extensions-content">
-      <div v-if="userStore.isAdmin && activeTab === 'knowledge'" class="tab-panel">
+      <div v-if="showKnowledgeTab && activeTab === 'knowledge'" class="tab-panel">
         <DataBaseView ref="knowledgeRef" embedded />
       </div>
       <div v-if="userStore.isAdmin && activeTab === 'tools'" class="tab-panel">
@@ -54,8 +54,16 @@ const adminExtensionTabs = [
   { key: 'tools', label: '工具' },
   { key: 'mcp', label: 'MCP' }
 ]
-const userExtensionTabs = [{ key: 'skills', label: '技能' }]
-const extensionTabs = computed(() => (userStore.isAdmin ? adminExtensionTabs : userExtensionTabs))
+const userExtensionTabs = computed(() => {
+  const tabs = [{ key: 'skills', label: '技能' }]
+  if (userStore.saasMode) {
+    // SaaS 员工可见知识库 tab（只读 + 有权限目录内上传/删除文档）
+    tabs.unshift({ key: 'knowledge', label: '知识库' })
+  }
+  return tabs
+})
+const extensionTabs = computed(() => (userStore.isAdmin ? adminExtensionTabs : userExtensionTabs.value))
+const showKnowledgeTab = computed(() => userStore.isAdmin || userStore.saasMode)
 const allowedTabKeys = computed(() => extensionTabs.value.map((tab) => tab.key))
 const defaultTabKey = computed(() => extensionTabs.value[0]?.key || 'skills')
 

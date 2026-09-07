@@ -29,7 +29,7 @@ async def health_check():
 async def discovery():
     """系统能力发现接口（公开接口）"""
     return {
-        "name": "Yuxi",
+        "name": "Linko AI",
         "version": get_version(),
         "api_prefix": "/api",
         "capabilities": {
@@ -133,6 +133,144 @@ async def get_system_logs(levels: str | None = None, current_user: User = Depend
     except Exception as e:
         logger.error(f"获取系统日志失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取系统日志失败: {str(e)}")
+
+
+# =============================================================================
+# === SaaS 租户配置分组 ===
+# =============================================================================
+
+
+@system.get("/tenant-config")
+async def get_tenant_config(
+    current_user: User = Depends(get_required_user),
+    tenant_id: int | None = None,
+):
+    """获取 SaaS 租户配置（含 MCP URL 等），从 Platform 服务拉取。
+
+    tenant_id 可选：未传时尝试从当前用户推断（SaaS 模式下 uid 为手机号对应的租户）。
+    """
+    from yuxi.config import config as app_config
+    from yuxi.services.saas_client import SaasAPIError, get_saas_client
+
+    if not app_config.is_saas_enabled:
+        raise HTTPException(status_code=404, detail="SaaS 模式未启用")
+
+    saas = get_saas_client()
+    try:
+        tenant_cfg = await saas.get_tenant_config(tenant_id)
+    except SaasAPIError as exc:
+        raise HTTPException(status_code=502, detail=f"租户配置服务错误: {exc.msg}")
+    except Exception as exc:
+        logger.error(f"获取租户配置失败: {exc}")
+        raise HTTPException(status_code=502, detail="租户配置服务不可用")
+
+    return {
+        "tenant_id": tenant_cfg.id,
+        "llm_url": tenant_cfg.llm_url,
+        "mcp_url": tenant_cfg.mcp_url,
+        "status": tenant_cfg.status,
+        "emp_num": tenant_cfg.emp_num,
+        "auth_end_time": tenant_cfg.auth_end_time,
+        "version": tenant_cfg.version,
+    }
+
+
+@system.get("/saas-status")
+async def get_saas_status():
+    """查询 SaaS 模式启用状态（公开接口）。"""
+    from yuxi.config import config as app_config
+
+    return {
+        "saas_enabled": app_config.is_saas_enabled,
+    }
+
+
+# =============================================================================
+# === SaaS 定时任务分组 ===
+# =============================================================================
+
+
+class ScheduleCreate(BaseModel):
+    name: str
+    prompt: str
+    cronExpression: str
+    timezone: str
+    description: str | None = None
+    enabled: bool | None = None
+
+
+class ScheduleUpdate(BaseModel):
+    version: int
+    name: str | None = None
+    prompt: str | None = None
+    description: str | None = None
+    cronExpression: str | None = None
+    timezone: str | None = None
+    enabled: bool | None = None
+
+
+async def _require_saas_employee_context(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """解析当前登录用户的 SaaS 员工上下文，非 SaaS 用户返回 404。"""
+    from yuxi.config import config as app_config
+    from yuxi.services.saas_identity import get_saas_employee_context
+
+    if not app_config.is_agent_data_sync_enabled:
+        raise HTTPException(status_code=404, detail="SaaS 模式未启用")
+    ctx = await get_saas_employee_context(db, current_user.uid)
+    if ctx is None:
+        raise HTTPException(status_code=404, detail="当前用户未绑定 SaaS 员工身份")
+    return ctx
+
+
+@system.get("/schedules")
+async def list_schedules(ctx=Depends(_require_saas_employee_context)):
+    """查询当前员工的全部定时任务（透传 Tenant 服务）。"""
+    from yuxi.services import schedule_service
+
+    return {"items": await schedule_service.list_schedules(ctx)}
+
+
+@system.post("/schedules")
+async def create_schedule(data: ScheduleCreate, ctx=Depends(_require_saas_employee_context)):
+    """创建定时任务（透传 Tenant 服务，本地先校验 Cron 与时区）。"""
+    from yuxi.services import schedule_service
+
+    return await schedule_service.create_schedule(ctx, data.model_dump())
+
+
+@system.get("/schedules/{schedule_id}")
+async def get_schedule(schedule_id: int, ctx=Depends(_require_saas_employee_context)):
+    """查询单个定时任务。"""
+    from yuxi.services import schedule_service
+
+    return await schedule_service.get_schedule(ctx, schedule_id)
+
+
+@system.patch("/schedules/{schedule_id}")
+async def update_schedule(schedule_id: int, data: ScheduleUpdate, ctx=Depends(_require_saas_employee_context)):
+    """修改或启停定时任务。"""
+    from yuxi.services import schedule_service
+
+    return await schedule_service.update_schedule(ctx, schedule_id, data.model_dump(exclude_none=True))
+
+
+@system.delete("/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: int, version: int, ctx=Depends(_require_saas_employee_context)):
+    """删除定时任务。"""
+    from yuxi.services import schedule_service
+
+    return await schedule_service.delete_schedule(ctx, schedule_id, version)
+
+
+@system.get("/timezones")
+async def get_timezones(ctx=Depends(_require_saas_employee_context)):
+    """时区字典（透传 Tenant 服务）。"""
+    from yuxi.services import schedule_service
+
+    return {"items": await schedule_service.get_timezones(ctx)}
 
 
 # =============================================================================

@@ -30,7 +30,7 @@ class LangChainChatAdapter:
             if stream:
                 return self._stream_response(messages)
             response = await self.model.ainvoke(messages)
-            return GeneralResponse(response.text)
+            return GeneralResponse(response.text if hasattr(response, 'text') else str(response.content))
         except Exception as e:
             err = f"Error calling model: {e}, URL: {self.base_url}, Model: {self.model_name}"
             logger.error(err)
@@ -38,8 +38,14 @@ class LangChainChatAdapter:
 
     async def _stream_response(self, messages):
         async for chunk in self.model.astream(messages):
-            if chunk.text:
-                yield GeneralResponse(chunk.text)
+            text = chunk.text if hasattr(chunk, 'text') else ''
+            if not text and hasattr(chunk, 'message'):
+                text = chunk.message.content if hasattr(chunk.message, 'content') else ''
+            if not text:
+                reasoning = getattr(chunk, 'additional_kwargs', {}) or {}
+                text = reasoning.get('reasoning_content', '')
+            if text:
+                yield GeneralResponse(text)
 
 
 def _langchain_kwargs(provider_type: str, kwargs: dict) -> dict:

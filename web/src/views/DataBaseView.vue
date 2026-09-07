@@ -25,7 +25,9 @@
         </a-select>
       </template>
       <template #actions>
+        <!-- SaaS 员工只有只读+文档操作权限，不提供创建知识库入口 -->
         <a-button
+          v-if="userStore.isAdmin"
           type="primary"
           class="lucide-icon-btn"
           :disabled="!kbTypes.length"
@@ -197,6 +199,7 @@
     >
       <template #actions>
         <a-button
+          v-if="userStore.isAdmin"
           type="primary"
           size="large"
           class="lucide-icon-btn"
@@ -233,14 +236,14 @@
                 <span>复制 ID</span>
               </span>
             </a-menu-item>
-            <a-menu-item v-if="database.can_manage" key="edit">
+            <a-menu-item v-if="database.can_manage && userStore.isAdmin" key="edit">
               <span class="lucide-menu-item">
                 <Pencil :size="15" />
                 <span>编辑知识库</span>
               </span>
             </a-menu-item>
             <a-menu-divider />
-            <a-menu-item v-if="database.can_manage" key="delete" danger>
+            <a-menu-item v-if="database.can_manage && userStore.isAdmin" key="delete" danger>
               <span class="lucide-menu-item">
                 <Trash2 :size="15" />
                 <span>删除知识库</span>
@@ -259,6 +262,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useConfigStore } from '@/stores/config'
 import { useDatabaseStore } from '@/stores/database'
+import { useUserStore } from '@/stores/user'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { Copy, Pencil, Plus, Trash2 } from 'lucide-vue-next'
 import { message, Modal } from 'ant-design-vue'
@@ -281,6 +285,7 @@ const route = useRoute()
 const router = useRouter()
 const configStore = useConfigStore()
 const databaseStore = useDatabaseStore()
+const userStore = useUserStore()
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
   chunkPresetLoading,

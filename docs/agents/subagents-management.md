@@ -1,6 +1,6 @@
 # 子智能体
 
-Yuxi 的子智能体是 Agent-backed 形态：它仍然是 `agents` 表中的一级 Agent，只是额外带有 `is_subagent=true` 标记，并使用专用后端 `SubAgentBackend`。子智能体不再有独立的创建入口、独立表或独立管理接口。
+Linko AI 的子智能体是 Agent-backed 形态：它仍然是 `agents` 表中的一级 Agent，只是额外带有 `is_subagent=true` 标记，并使用专用后端 `SubAgentBackend`。子智能体不再有独立的创建入口、独立表或独立管理接口。
 
 ## 用户视角
 
@@ -65,7 +65,7 @@ Yuxi 的子智能体是 Agent-backed 形态：它仍然是 `agents` 表中的一
 
 ### 运行时调用链
 
-主 Agent 构图时，会先把 `context.subagents` 归一化为当前用户可见的允许列表；允许列表非空时挂载 Yuxi 的 task middleware。middleware 会把允许的子智能体列表注入模型提示，并暴露一个 `task` 工具。
+主 Agent 构图时，会先把 `context.subagents` 归一化为当前用户可见的允许列表；允许列表非空时挂载 Linko AI 的 task middleware。middleware 会把允许的子智能体列表注入模型提示，并暴露一个 `task` 工具。
 
 工具参数为：
 

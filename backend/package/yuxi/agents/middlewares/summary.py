@@ -1,4 +1,4 @@
-"""Yuxi adapter for DeepAgents conversation summarization middleware."""
+"""Linko AI adapter for DeepAgents conversation summarization middleware."""
 
 from __future__ import annotations
 
@@ -294,7 +294,7 @@ def sanitize_messages_for_summary(
 
 
 class YuxiSummarizationMiddleware(SummarizationMiddleware):
-    """DeepAgents summarization middleware with Yuxi-specific tool-call sanitization."""
+    """DeepAgents summarization middleware with Linko AI-specific tool-call sanitization."""
 
     def __init__(
         self,
@@ -758,7 +758,7 @@ def create_summary_middleware(
     tool_result_offload_token_limit: int | None = _DEFAULT_SUMMARY_TOOL_RESULT_LIMIT_TOKENS,
     l1_l2_trigger_ratio: float = _DEFAULT_L1_L2_TRIGGER_RATIO,
 ) -> SummarizationMiddleware:
-    """Create DeepAgents summarization middleware using Yuxi's virtual outputs root."""
+    """Create DeepAgents summarization middleware using Linko AI's virtual outputs root."""
     middleware_kwargs = {
         "model": model,
         "backend": create_agent_composite_backend,

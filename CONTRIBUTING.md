@@ -1,6 +1,6 @@
-# Contributing to Yuxi
+# Contributing to Linko AI
 
-感谢你关注 Yuxi。欢迎提交 Issue、改进文档、修复 Bug 或贡献新功能。
+感谢你关注 Linko AI。欢迎提交 Issue、改进文档、修复 Bug 或贡献新功能。
 
 更完整的开发文档可参考 [docs/develop-guides/contributing.md](docs/develop-guides/contributing.md)。
 

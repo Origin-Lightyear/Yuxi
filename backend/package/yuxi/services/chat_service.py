@@ -30,6 +30,7 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
+from yuxi.services import agent_data_sync
 from yuxi.services.conversation_service import serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.langfuse_service import (
@@ -555,6 +556,12 @@ async def save_messages_from_langgraph_state(
         run_repo = AgentRunRepository(conv_repo.db)
         await run_repo.set_output_message(run_id, last_ai_message.id)
         await conv_repo.db.commit()
+
+    # SaaS 模式下把最终回复双写到 Tenant 服务（fail-soft）
+    if last_ai_message and conf.is_agent_data_sync_enabled:
+        conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
+        if conversation is not None:
+            await agent_data_sync.sync_assistant_message(conv_repo.db, conversation, last_ai_message, run_id)
 
 
 def _extract_interrupt_info(state) -> Any | None:

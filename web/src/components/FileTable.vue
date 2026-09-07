@@ -90,7 +90,7 @@
 
             <a-button
               type="text"
-              v-if="!readonly"
+              v-if="!readonly && allowFolderOps"
               @click="toggleSelectionMode"
               title="多选"
               class="panel-action-btn"
@@ -140,7 +140,7 @@
                   <div
                     class="overflow-action-item"
                     :class="{ active: isSelectionMode }"
-                    v-if="!readonly"
+                    v-if="!readonly && allowFolderOps"
                     @click="toggleSelectionMode"
                   >
                     <CheckSquare size="16" />
@@ -154,7 +154,7 @@
       </template>
 
       <template #before-table>
-        <div class="batch-actions" v-if="!readonly && isSelectionMode">
+        <div class="batch-actions" v-if="!readonly && allowFolderOps && isSelectionMode">
           <div class="batch-info">
             <a-checkbox
               :checked="isAllSelected"
@@ -292,7 +292,7 @@
               <div class="file-action-list">
                 <template v-if="row.is_folder">
                   <a-button
-                    v-if="!readonly"
+                    v-if="!readonly && allowFolderOps"
                     type="text"
                     block
                     @click="showCreateFolderModal(row.file_id)"
@@ -301,7 +301,7 @@
                     新建子文件夹
                   </a-button>
                   <a-button
-                    v-if="!readonly"
+                    v-if="!readonly && allowFolderOps"
                     type="text"
                     block
                     danger
@@ -423,10 +423,13 @@ import {
 const store = useDatabaseStore()
 
 const props = defineProps({
-  readonly: { type: Boolean, default: false }
+  readonly: { type: Boolean, default: false },
+  // 员工 MANAGE 只覆盖文档操作：文件夹操作与批量操作仅管理员可用
+  allowFolderOps: { type: Boolean, default: true }
 })
 
 const readonly = computed(() => props.readonly)
+const allowFolderOps = computed(() => props.allowFolderOps)
 
 const applyFilters = async (overrides = {}) => {
   const nextStatus = overrides.status ?? statusFilter.value

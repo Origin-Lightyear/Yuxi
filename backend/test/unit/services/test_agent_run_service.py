@@ -1439,6 +1439,12 @@ def _patch_agent_run_creation(
     monkeypatch.setattr(agent_run_service, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", _CreateRunRepo)
     monkeypatch.setattr(agent_run_service, "get_arq_pool", fake_get_arq_pool)
+    # 本组测试聚焦本地 run 创建；关闭 Agent 数据双写，避免依赖容器 SaaS 配置
+    monkeypatch.setattr(
+        type(agent_run_service.agent_data_sync.app_config),
+        "is_agent_data_sync_enabled",
+        property(lambda self: False),
+    )
     return db
 
 

@@ -1,0 +1,16 @@
+{
+	"name": "yuxi-desktop",
+	"version": "0.1.0",
+	"description": "Yuxi 桌面客户端（服务与网页版共用）",
+	"main": "main.js",
+	"private": true,
+	"scripts": {
+		"start": "electron .",
+		"dist:mac": "electron-builder --mac",
+		"dist:win": "electron-builder --win"
+	},
+	"devDependencies": {
+		"electron": "^37.2.0",
+		"electron-builder": "^26.0.12"
+	}
+}

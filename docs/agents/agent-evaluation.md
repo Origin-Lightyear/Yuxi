@@ -1,6 +1,6 @@
 # 智能体评估
 
-Yuxi 的智能体评估用于回答一个具体问题：某个 Agent 在一组固定任务上能不能稳定完成工作。它不在 Yuxi 内部维护评估数据集、评分规则或对比报表，而是把这些能力交给 Langfuse；Yuxi 只负责按真实 Agent 运行链路执行每条样例，并把结果回写到 Langfuse experiment。
+Linko AI 的智能体评估用于回答一个具体问题：某个 Agent 在一组固定任务上能不能稳定完成工作。它不在 Linko AI 内部维护评估数据集、评分规则或对比报表，而是把这些能力交给 Langfuse；Linko AI 只负责按真实 Agent 运行链路执行每条样例，并把结果回写到 Langfuse experiment。
 
 ## 适用边界
 
@@ -9,12 +9,12 @@ Yuxi 的智能体评估用于回答一个具体问题：某个 Agent 在一组�
 评估链路保持三个边界：
 
 - Langfuse 负责 dataset、experiment、score、对比和可视化。
-- Yuxi 后端负责创建正常 conversation 和 AgentRun，并复用 worker 执行链路。
-- `yuxi` CLI 只负责读取 Langfuse dataset、运行 experiment、调用 Yuxi eval API，不负责创建或上传 dataset。
+- Linko AI 后端负责创建正常 conversation 和 AgentRun，并复用 worker 执行链路。
+- `yuxi` CLI 只负责读取 Langfuse dataset、运行 experiment、调用 Linko AI eval API，不负责创建或上传 dataset。
 
 ## 前置条件
 
-1. Yuxi 后端已经启用 Langfuse tracing，并在 `.env` 中配置：
+1. Linko AI 后端已经启用 Langfuse tracing，并在 `.env` 中配置：
 
 ```bash
 LANGFUSE_PUBLIC_KEY=...
@@ -24,7 +24,7 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 
 2. 本机 CLI 环境也能读取同一组 Langfuse 环境变量。`yuxi agent eval` 需要直接调用 Langfuse SDK 读取 dataset 和创建 experiment。
 
-3. 已经登录 Yuxi CLI：
+3. 已经登录 Linko AI CLI：
 
 ```bash
 yuxi remote add local http://localhost:5173
@@ -69,7 +69,7 @@ yuxi agent eval \
 1. 从 Langfuse 读取 dataset。
 2. 对每条 dataset item 提取任务文本。
 3. 调用 `POST /api/agent-invocation/eval/runs`。
-4. Yuxi 后端创建正常 conversation 和 AgentRun。
+4. Linko AI 后端创建正常 conversation 和 AgentRun。
 5. worker 按真实 Agent 链路执行任务。
 6. 接口阻塞到 run 终态后返回最终 assistant output。
 7. CLI 将 output 写回 Langfuse experiment item。
@@ -78,11 +78,11 @@ yuxi agent eval \
 
 ## 查看结果
 
-评估完成后，在 Langfuse 控制台打开对应 dataset，可以看到刚创建的 experiment run。每条 item 会保存本次 Yuxi Agent 的最终输出。Yuxi 后端会在运行内部使用 `agent_invocation_meta.evaluation` 保存评估上下文，并给 Langfuse trace 写入 `agent_evaluation` 标记，方便筛选：
+评估完成后，在 Langfuse 控制台打开对应 dataset，可以看到刚创建的 experiment run。每条 item 会保存本次 Linko AI Agent 的最终输出。Linko AI 后端会在运行内部使用 `agent_invocation_meta.evaluation` 保存评估上下文，并给 Langfuse trace 写入 `agent_evaluation` 标记，方便筛选：
 
 - `source=agent_evaluation`
 - `evaluation_dataset_name=<dataset name>`
 - `evaluation_dataset_item_id=<item id>`
 - `evaluation_experiment_name=<experiment name>`
 
-如果没有看到 experiment，先确认 CLI 环境中的 Langfuse key 和 dataset name 是否正确。如果 experiment 有记录但 Yuxi trace 缺失，检查 `api-dev` 容器是否读取到了同一组 Langfuse 配置。
+如果没有看到 experiment，先确认 CLI 环境中的 Langfuse key 和 dataset name 是否正确。如果 experiment 有记录但 Linko AI trace 缺失，检查 `api-dev` 容器是否读取到了同一组 Langfuse 配置。

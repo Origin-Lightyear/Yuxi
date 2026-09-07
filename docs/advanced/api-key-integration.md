@@ -1,10 +1,10 @@
 # API Key 外部集成
 
-Yuxi 平台提供了 API Key 认证机制，允许外部系统在无需用户登录的情况下调用智能体对话接口。本文档详细介绍 API Key 的使用方法、接口调用方式以及安全注意事项。
+Linko AI 平台提供了 API Key 认证机制，允许外部系统在无需用户登录的情况下调用智能体对话接口。本文档详细介绍 API Key 的使用方法、接口调用方式以及安全注意事项。
 
 ## API Key 概述
 
-API Key 是一种用于身份验证的密钥字符串，外部系统可以通过它在请求头中携带凭据来访问 Yuxi 的对话接口。与传统的用户名密码登录方式相比，API Key 更加适合用于系统间的自动化调用场景。Yuxi 的 API Key 以 `yxkey_` 为前缀，长度为 54 个字符，采用 SHA-256 哈希存储，确保密钥本身不会在数据库中明文保存。系统会记录每个 API Key 的最后使用时间，方便管理员追踪使用情况。
+API Key 是一种用于身份验证的密钥字符串，外部系统可以通过它在请求头中携带凭据来访问 Linko AI 的对话接口。与传统的用户名密码登录方式相比，API Key 更加适合用于系统间的自动化调用场景。Linko AI 的 API Key 以 `yxkey_` 为前缀，长度为 54 个字符，采用 SHA-256 哈希存储，确保密钥本身不会在数据库中明文保存。系统会记录每个 API Key 的最后使用时间，方便管理员追踪使用情况。
 
 ## 创建 API Key
 
@@ -21,7 +21,7 @@ API Key 是一种用于身份验证的密钥字符串，外部系统可以通过
 
 ## 确定 API 访问地址
 
-Yuxi 后端服务绑定在 `0.0.0.0:5050`，不会自动探测或对外宣告本机 IP。实际访问地址取决于部署环境：
+Linko AI 后端服务绑定在 `0.0.0.0:5050`，不会自动探测或对外宣告本机 IP。实际访问地址取决于部署环境：
 
 - **本地开发**：`http://localhost:5050`
 - **生产部署（Nginx 反向代理）**：**强烈建议使用 HTTPS**，即 `https://<服务器域名>`（443 端口）。由于 API Key 会在请求头中以明文形式传输，使用 HTTP（80 端口）会导致密钥在网络传输过程中被窃听或篡改，必须避免
@@ -32,7 +32,7 @@ Yuxi 后端服务绑定在 `0.0.0.0:5050`，不会自动探测或对外宣告本
 
 > **关于 `agent_id` / `agent_slug` 的说明**：创建会话线程时仍使用 `agent_id` 绑定目标 Agent；创建运行任务时使用 `agent_slug` 快照本次运行目标。二者的取值都是智能体的 **slug**（如 `default-chatbot`），不是数据库自增 ID 或 `agent_config_id`。
 
-外部系统通过 HTTP 请求调用 Yuxi 接口时，需要在请求头中携带 API Key：
+外部系统通过 HTTP 请求调用 Linko AI 接口时，需要在请求头中携带 API Key：
 
 ```http
 Authorization: Bearer yxkey_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -133,7 +133,7 @@ GET /api/agent/runs/{run_id}/result
 
 ### 外部系统调用入口
 
-除通用 `/api/agent/runs` 之外，Yuxi 还提供专为外部系统设计的 `agent-invocation` 路由，复用同一套 AgentRun 队列与结果读取能力：
+除通用 `/api/agent/runs` 之外，Linko AI 还提供专为外部系统设计的 `agent-invocation` 路由，复用同一套 AgentRun 队列与结果读取能力：
 
 | 接口 | 用途 | 关键字段 |
 |------|------|----------|
@@ -159,7 +159,7 @@ agent-call 的 `messages[].content` 兼容 OpenAI 风格的 `text`/`image_url` �
 
 ## 认证方式
 
-Yuxi 的 API 接口统一支持两种认证方式：
+Linko AI 的 API 接口统一支持两种认证方式：
 
 1. **API Key 认证**：使用 `Authorization: Bearer <api_key>` 格式，其中 API Key 必须以 `yxkey_` 前缀开头
 2. **JWT Token 认证**：使用 `Authorization: Bearer <jwt_token>` 格式
