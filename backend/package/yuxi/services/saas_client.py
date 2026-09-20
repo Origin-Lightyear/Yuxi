@@ -60,6 +60,8 @@ class TenantEmployee:
     enabled: int
     llm_key: str
     llm_url: str
+    agent_session_token: str = field(repr=False)
+    agent_session_expires_at: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +101,8 @@ def _parse_tenant_employee(data: dict[str, Any]) -> TenantEmployee:
         enabled=int(data.get("enabled", 0)),
         llm_key=str(data.get("llmKey") or ""),
         llm_url=str(data.get("llmUrl") or ""),
+        agent_session_token=str(data.get("agentSessionToken") or ""),
+        agent_session_expires_at=str(data.get("agentSessionExpiresAt") or ""),
     )
 
 
@@ -112,14 +116,14 @@ def _parse_employee_auth(data: dict[str, Any]) -> EmployeeAuthResult:
 
 def _parse_tenant_config_data(data: dict[str, Any]) -> TenantConfigResult:
     return TenantConfigResult(
-        id=int(data.get("id", 0)),
+        id=int(data.get("id") or 0),
         llm_key=str(data.get("llmKey") or ""),
         llm_url=str(data.get("llmUrl") or ""),
         mcp_url=str(data.get("mcpUrl") or ""),
-        status=int(data.get("status", 0)),
-        emp_num=int(data.get("empNum", 0)),
+        status=int(data.get("status") or 0),
+        emp_num=int(data.get("empNum") or 0),
         auth_end_time=str(data.get("authEndTime") or ""),
-        version=int(data.get("version", 0)),
+        version=int(data.get("version") or 0),
     )
 
 
@@ -195,6 +199,46 @@ class SaasClient:
         data = _check_response(payload)
         logger.info(f"SaaS employee llm config loaded: tenant_id={tenant_id}, employee_id={employee_id}")
         return data
+
+    async def list_mcp_servers(self, tenant_id: int) -> list[dict[str, Any]]:
+        """读取当前员工可用 MCP 列表及其 Runtime instanceId。"""
+        url = _build_url(self._tenant_url, f"/api/v1/agent/inner/system-settings/tenants/{tenant_id}/endpoints")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+        data = _check_response(payload)
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        for key in ("mcps", "mcpServers", "servers", "items"):
+            values = data.get(key) if isinstance(data, dict) else None
+            if isinstance(values, list):
+                return [item for item in values if isinstance(item, dict)]
+        return []
+
+    async def request_mcp_credentials(self, agent_session_token: str, mcp_instance_id: str) -> dict[str, str]:
+        """申请一组只能使用一次的 MCP Runtime 请求 Header。"""
+        url = _build_url(self._tenant_url, "/api/v1/agent/inner/mcp-credentials")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                url,
+                headers={"Authorization": f"AgentSession {agent_session_token}"},
+                json={"mcpInstanceId": mcp_instance_id},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        data = _check_response(payload)
+        headers = data.get("headers") if isinstance(data, dict) else None
+        if not isinstance(headers, dict):
+            raise SaasAPIError(code=50000, msg="MCP 凭证响应缺少 headers")
+        return {str(key): str(value) for key, value in headers.items()}
+
+    async def logout_agent_session(self, agent_session_token: str) -> None:
+        """注销 Tenant AgentSession。"""
+        url = _build_url(self._tenant_url, "/api/v1/agent/inner/logout")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(url, headers={"Authorization": f"AgentSession {agent_session_token}"})
+            response.raise_for_status()
 
 
 _saas_client: SaasClient | None = None

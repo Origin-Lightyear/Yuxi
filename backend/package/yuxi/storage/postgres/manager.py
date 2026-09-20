@@ -566,6 +566,7 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS enable_memory BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS tenant_id INTEGER",
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS employee_id INTEGER",
+            "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS instance_id VARCHAR(128)",
             """
             UPDATE cli_auth_sessions
             SET api_key_id = NULL

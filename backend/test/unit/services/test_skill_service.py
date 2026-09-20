@@ -513,8 +513,12 @@ def test_mysql_reporter_builtin_skill_spec_replaces_reporter_and_deep_reporter()
     mysql_reporter = specs["mysql-reporter"]
     assert mysql_reporter["name"] == "mysql reporter"
     assert mysql_reporter["tool_dependencies"] == []
-    assert mysql_reporter["mcp_dependencies"] == ["mcp-server-chart"]
+    assert mysql_reporter["mcp_dependencies"] == ["saas-mcp", "mcp-server-chart"]
     assert (mysql_reporter["source_dir"] / "SKILL.md").exists()
+    skill_content = (mysql_reporter["source_dir"] / "SKILL.md").read_text(encoding="utf-8")
+    assert "select_all" in skill_content
+    assert "AgentSession" in skill_content
+    assert "不要回退到沙盒 MySQL" in skill_content
     for script_name in ("list_tables.py", "describe_table.py", "query.py"):
         script_path = mysql_reporter["source_dir"] / "scripts" / script_name
         assert script_path.exists()

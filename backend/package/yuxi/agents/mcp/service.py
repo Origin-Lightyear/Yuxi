@@ -14,12 +14,17 @@ import re
 from collections.abc import Callable
 from typing import Any, cast
 
+import httpx
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import MCPServer
 from yuxi.utils import logger
+
+from .saas_credentials import create_saas_mcp_auth
+
+SAAS_MCP_SERVER_SLUG = "saas-mcp"
 
 # =============================================================================
 # === Global Cache & State ===
@@ -200,6 +205,8 @@ async def get_mcp_tools(
     disabled_tools: list[str] = None,
     cache: bool = True,
     force_refresh: bool = False,
+    raise_on_error: bool = False,
+    request_auth: httpx.Auth | None = None,
 ) -> list[Callable[..., Any]]:
     """Get MCP tools for a specific server.
 
@@ -214,6 +221,8 @@ async def get_mcp_tools(
         disabled_tools: List of tool names to filter out from the RETURN value (does not affect cache)
         cache: Whether to use/update the cache (default: True)
         force_refresh: Whether to force a refresh from the server (default: False)
+        raise_on_error: Whether to propagate connection and tool discovery errors
+        request_auth: Request-level HTTP authentication
     """
     if additional_servers and server_slug in additional_servers:
         server_config = additional_servers[server_slug]
@@ -240,9 +249,14 @@ async def get_mcp_tools(
         try:
             # disabled_tools 只影响返回值过滤，不参与 MCP client 建连参数。
             client_config = {k: v for k, v in server_config.items() if k not in ("disabled_tools",)}
+            if request_auth is not None:
+                client_config.pop("headers", None)
+                client_config["auth"] = request_auth
 
             client = await get_mcp_client({server_slug: client_config})
             if client is None:
+                if raise_on_error:
+                    raise RuntimeError(f"Failed to initialize MCP client for '{server_slug}'")
                 return []
 
             raw_tools = cast(list[Any], await client.get_tools())
@@ -284,6 +298,8 @@ async def get_mcp_tools(
 
         except Exception as e:
             logger.exception(f"Failed to load tools from MCP server '{server_slug}': {e}")
+            if raise_on_error:
+                raise
             return []
 
     # 3. Filtering (Apply to Return Value Only)
@@ -547,7 +563,7 @@ async def toggle_tool_enabled(
 # =============================================================================
 
 
-async def get_enabled_mcp_tools(server_slug: str) -> list:
+async def get_enabled_mcp_tools(server_slug: str, *, uid: str | None = None) -> list:
     """Get MCP server tools (auto-filtering disabled_tools).
 
     Unified entry point for Agents, automatically:
@@ -557,6 +573,7 @@ async def get_enabled_mcp_tools(server_slug: str) -> list:
 
     Args:
         server_slug: Server slug
+        uid: 当前用户 UID；SaaS MCP 用它解析租户员工身份
 
     Returns:
         List of enabled tools
@@ -567,6 +584,19 @@ async def get_enabled_mcp_tools(server_slug: str) -> list:
         return []
 
     disabled_tools = config.get("disabled_tools") or []
+    if server_slug == SAAS_MCP_SERVER_SLUG:
+        if not uid:
+            raise RuntimeError("调用 SaaS MCP 时缺少当前用户 UID")
+        request_auth = await create_saas_mcp_auth(uid)
+        return await get_mcp_tools(
+            server_slug,
+            additional_servers={server_slug: config},
+            disabled_tools=disabled_tools,
+            cache=False,
+            force_refresh=True,
+            request_auth=request_auth,
+        )
+
     return await get_mcp_tools(server_slug, additional_servers={server_slug: config}, disabled_tools=disabled_tools)
 
 
@@ -582,7 +612,7 @@ async def get_servers_config(names: list[str]) -> dict[str, dict[str, Any]]:
     return await _load_enabled_mcp_server_configs(names=names)
 
 
-async def get_all_mcp_tools(server_slug: str) -> list:
+async def get_all_mcp_tools(server_slug: str, *, uid: str | None = None) -> list:
     """Get all tools of an MCP server (no filtering).
 
     For management UI to display tool list, supports viewing all tools and their enabled status.
@@ -600,10 +630,18 @@ async def get_all_mcp_tools(server_slug: str) -> list:
         return []
 
     # Get all tools (no filtering, force refresh, no cache update)
+    request_auth = None
+    if server_slug == SAAS_MCP_SERVER_SLUG:
+        if not uid:
+            raise RuntimeError("调用 SaaS MCP 时缺少当前用户 UID")
+        request_auth = await create_saas_mcp_auth(uid)
+
     return await get_mcp_tools(
         server_slug,
         additional_servers={server_slug: config},
         disabled_tools=[],
         cache=False,
         force_refresh=True,
+        raise_on_error=True,
+        request_auth=request_auth,
     )

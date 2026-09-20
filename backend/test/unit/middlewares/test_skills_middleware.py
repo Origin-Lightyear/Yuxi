@@ -241,6 +241,46 @@ async def test_resolve_configured_runtime_tools_registers_skill_gated_tools():
     assert _KB_TOOL_NAMES <= {tool.name for tool in tools}
 
 
+@pytest.mark.asyncio
+async def test_resolve_configured_runtime_tools_passes_uid_to_mcp(monkeypatch):
+    captured: list[tuple[str, str | None]] = []
+
+    async def fake_get_enabled_mcp_tools(server_name: str, uid: str | None = None):
+        captured.append((server_name, uid))
+        return [SimpleNamespace(name="select_all")]
+
+    monkeypatch.setattr("yuxi.agents.mcp.service.get_enabled_mcp_tools", fake_get_enabled_mcp_tools)
+    context = SimpleNamespace(
+        uid="employee-001",
+        tools=None,
+        mcps=["saas-mcp"],
+        _readable_skills=[],
+        _runtime_skill_dependency_map={},
+    )
+
+    tools = await resolve_configured_runtime_tools(context)
+
+    assert [tool.name for tool in tools] == ["select_all"]
+    assert captured == [("saas-mcp", "employee-001")]
+
+
+@pytest.mark.asyncio
+async def test_skills_middleware_passes_uid_to_mcp(monkeypatch):
+    captured: list[tuple[str, str | None]] = []
+
+    async def fake_get_enabled_mcp_tools(server_name: str, uid: str | None = None):
+        captured.append((server_name, uid))
+        return [SimpleNamespace(name="select_all")]
+
+    monkeypatch.setattr(skills_middleware, "get_enabled_mcp_tools", fake_get_enabled_mcp_tools)
+    context = SimpleNamespace(uid="employee-001", mcps=["saas-mcp"])
+
+    tools = await SkillsMiddleware()._get_mcp_tools_from_context(context)
+
+    assert [tool.name for tool in tools] == ["select_all"]
+    assert captured == [("saas-mcp", "employee-001")]
+
+
 def _make_gated_request(activated):
     base = SimpleNamespace(name="read_file")
     gated = [SimpleNamespace(name="list_kbs"), SimpleNamespace(name="query_kb")]

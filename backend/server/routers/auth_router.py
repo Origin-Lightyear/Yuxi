@@ -276,13 +276,17 @@ async def _upsert_saas_model_provider(db, llm_key, llm_url):
     await db.flush()
 
 
-async def _upsert_saas_mcp_server(db, mcp_url: str) -> None:
+async def _upsert_saas_mcp_server(db, mcp_url: str, instance_id: str) -> None:
     """根据 SaaS 下发的 MCP URL 创建或更新 MCP 服务器配置。"""
     if not mcp_url:
         return
     from yuxi.storage.postgres.models_business import MCPServer
 
     slug = "saas-mcp"
+    endpoint_url = mcp_url.rstrip("/")
+    if not endpoint_url.endswith("/mcp"):
+        endpoint_url = f"{endpoint_url}/mcp"
+
     result = await db.execute(select(MCPServer).filter(MCPServer.slug == slug))
     server = result.scalar_one_or_none()
 
@@ -290,8 +294,9 @@ async def _upsert_saas_mcp_server(db, mcp_url: str) -> None:
         server = MCPServer(
             slug=slug,
             name="SaaS MCP",
-            transport="sse",
-            url=mcp_url,
+            transport="streamable_http",
+            url=endpoint_url,
+            instance_id=instance_id,
             description="SaaS 平台 MCP 服务",
             icon="🏭",
             enabled=True,
@@ -299,11 +304,13 @@ async def _upsert_saas_mcp_server(db, mcp_url: str) -> None:
             updated_by="saas",
         )
         db.add(server)
-        logger.info(f"SaaS MCP server created: {slug} -> {mcp_url}")
+        logger.info(f"SaaS MCP server created: {slug} -> {endpoint_url}")
     else:
-        server.url = mcp_url
+        server.transport = "streamable_http"
+        server.url = endpoint_url
+        server.instance_id = instance_id
         server.enabled = True
-        logger.info(f"SaaS MCP server updated: {slug} -> {mcp_url}")
+        logger.info(f"SaaS MCP server updated: {slug} -> {endpoint_url}")
 
     await db.flush()
 
@@ -311,9 +318,20 @@ async def _upsert_saas_mcp_server(db, mcp_url: str) -> None:
 async def _find_or_create_saas_user(
     db: AsyncSession, mobile: str, employee_code: str, employee_name: str, department_name: str
 ) -> User:
-    """按手机号查找本地用户，不存在则在当前会话中创建。"""
-    result = await db.execute(select(User).filter(User.phone_number == mobile, User.is_deleted == 0))
-    user = result.scalar_one_or_none()
+    """按员工编码或手机号同步 SaaS 用户，不存在则创建。"""
+    result = await db.execute(select(User).filter(User.uid == employee_code))
+    user_by_uid = result.scalar_one_or_none()
+
+    result = await db.execute(select(User).filter(User.phone_number == mobile))
+    user_by_phone = result.scalar_one_or_none()
+
+    if user_by_uid is not None and user_by_phone is not None and user_by_uid.id != user_by_phone.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="员工编码与手机号已绑定不同账户，请联系管理员",
+        )
+
+    user = user_by_uid or user_by_phone
 
     if user is not None:
         if user.is_deleted:
@@ -322,15 +340,20 @@ async def _find_or_create_saas_user(
                 detail="该账户已注销",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        dept = await _resolve_department(db, department_name) if department_name else None
         user.username = employee_name
+        user.uid = employee_code
+        user.phone_number = mobile
+        if dept is not None:
+            user.department = dept
         user.reset_failed_login()
         user.last_login = utc_now_naive()
         await db.flush()
         return user
 
-    # 创建新用户，uid 使用手机号
     hashed_pw = AuthUtils.hash_password(AuthUtils.generate_api_key()[0])
-    dept = await _resolve_department(db, employee_name)
+    dept = await _resolve_department(db, department_name) if department_name else None
 
     new_user = User(
         username=employee_name,
@@ -346,6 +369,35 @@ async def _find_or_create_saas_user(
     await db.refresh(new_user)
     logger.info(f"SaaS local user created: mobile={mobile}, name={employee_name}")
     return new_user
+
+
+def _select_saas_mcp_server(servers: list[dict], fallback_url: str = "") -> tuple[str, str] | None:
+    """从 Tenant MCP 列表中选择当前 Agent 可用的 Runtime。"""
+    for server in servers:
+        if server.get("enabled") in (False, 0, "0", "DISABLED"):
+            continue
+        instance_id = str(server.get("instanceId") or server.get("mcpInstanceId") or "").strip()
+        mcp_url = str(server.get("url") or server.get("mcpUrl") or server.get("endpoint") or fallback_url).strip()
+        if instance_id and mcp_url:
+            return mcp_url, instance_id
+    return None
+
+
+@auth.post("/logout")
+async def logout(
+    current_user: User = Depends(get_required_user),
+):
+    """注销本地 JWT 对应的 SaaS AgentSession。"""
+    from yuxi.services.saas_session import clear_saas_agent_session, get_saas_agent_session
+
+    session = await get_saas_agent_session(current_user.uid)
+    if session is not None:
+        try:
+            await get_saas_client().logout_agent_session(session.token)
+        except Exception as exc:
+            logger.warning(f"Failed to logout SaaS AgentSession: {exc}")
+        await clear_saas_agent_session(current_user.uid)
+    return {"success": True}
 
 
 async def _resolve_department(db: AsyncSession, name: str) -> Department | None:
@@ -420,6 +472,9 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
             detail="该员工未绑定任何租户",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if not emp.agent_session_token or not emp.agent_session_expires_at:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="SaaS 登录响应缺少 AgentSession")
     if emp.enabled != 1:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -433,11 +488,16 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
         logger.warning(f"Failed to fetch tenant config: {exc}")
         tenant_cfg = None
 
-    # 同步 MCP 配置
-    mcp_url = tenant_cfg.mcp_url if tenant_cfg else ""
-    if mcp_url:
+    # MCP Runtime 实例和 URL 由 Tenant MCP 列表下发，不能由 Agent 自行推断。
+    try:
+        mcp_servers = await saas.list_mcp_servers(emp.tenant_id)
+    except Exception as exc:
+        logger.warning(f"Failed to load SaaS MCP servers: {exc}")
+        mcp_servers = []
+    selected_mcp = _select_saas_mcp_server(mcp_servers, fallback_url=tenant_cfg.mcp_url if tenant_cfg else "")
+    if selected_mcp:
         try:
-            await _upsert_saas_mcp_server(db, mcp_url)
+            await _upsert_saas_mcp_server(db, selected_mcp[0], selected_mcp[1])
         except Exception as exc:
             logger.warning(f"Failed to upsert SaaS MCP server: {exc}")
 
@@ -459,9 +519,22 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
 
     # 持久化 SaaS 员工身份，供 Agent 数据双写与定时任务使用
     from yuxi.services.saas_identity import save_saas_employee_context
+    from yuxi.services.saas_session import SaasAgentSession, save_saas_agent_session
 
     await save_saas_employee_context(db, user.uid, emp.tenant_id, emp.employee_id)
     await db.commit()
+
+    if selected_mcp:
+        await save_saas_agent_session(
+            user.uid,
+            SaasAgentSession(
+                token=emp.agent_session_token,
+                expires_at=emp.agent_session_expires_at,
+                tenant_id=emp.tenant_id,
+                employee_id=emp.employee_id,
+                mcp_instance_id=selected_mcp[1],
+            ),
+        )
 
     token_data = {"sub": str(user.id)}
     access_token = AuthUtils.create_access_token(token_data)

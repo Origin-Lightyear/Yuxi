@@ -543,6 +543,7 @@ class MCPServer(Base):
     headers = Column(JSON, nullable=True, comment="HTTP 请求头")
     timeout = Column(Integer, nullable=True, comment="HTTP 超时时间（秒）")
     sse_read_timeout = Column(Integer, nullable=True, comment="SSE 读取超时（秒）")
+    instance_id = Column(String(128), nullable=True, comment="SaaS MCP Runtime 实例标识")
 
     # UI 增强字段
     tags = Column(JSON, nullable=True, comment="标签数组")
@@ -574,6 +575,7 @@ class MCPServer(Base):
             "headers": self.headers or {},
             "timeout": self.timeout,
             "sse_read_timeout": self.sse_read_timeout,
+            "instance_id": self.instance_id,
             "tags": self.tags or [],
             "icon": self.icon,
             "enabled": bool(self.enabled),

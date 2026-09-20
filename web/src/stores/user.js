@@ -77,7 +77,18 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  function logout() {
+  async function logout() {
+    if (token.value) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: getAuthHeaders()
+        })
+      } catch (error) {
+        console.warn('注销 SaaS 会话失败:', error)
+      }
+    }
+
     // 清除状态
     token.value = ''
     userId.value = null

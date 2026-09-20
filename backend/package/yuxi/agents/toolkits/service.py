@@ -117,7 +117,7 @@ async def resolve_configured_runtime_tools(context) -> list[Any]:
             continue
         selected_mcp_servers.add(server_name)
         try:
-            mcp_tools = await get_enabled_mcp_tools(server_name)
+            mcp_tools = await get_enabled_mcp_tools(server_name, uid=getattr(context, "uid", None))
         except Exception as e:
             logger.warning(f"Failed to load configured MCP tools '{server_name}': {e}")
             continue

@@ -257,7 +257,7 @@ async def test_mcp_server(
         await get_server_or_404(db, slug)
 
         try:
-            tools = await get_all_mcp_tools(slug)
+            tools = await get_all_mcp_tools(slug, uid=current_user.uid)
             return {
                 "success": True,
                 "message": f"连接成功，共发现 {len(tools)} 个工具",
@@ -313,7 +313,7 @@ async def get_mcp_server_tools(
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(slug)
+            tools = await get_all_mcp_tools(slug, uid=current_user.uid)
             tool_list = []
 
             for tool in tools:
@@ -363,7 +363,7 @@ async def refresh_mcp_server_tools(
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(slug)
+            tools = await get_all_mcp_tools(slug, uid=current_user.uid)
 
             # 获取统计信息
             stats = get_mcp_tools_stats(slug)
