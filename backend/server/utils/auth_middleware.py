@@ -101,6 +101,18 @@ async def get_current_user(
             headers={"X-Lock-Remaining": str(user.get_remaining_lock_time())},
         )
 
+    from yuxi.services.saas_identity import get_saas_employee_context
+    from yuxi.services.saas_session import get_saas_agent_session
+
+    if await get_saas_employee_context(db, user.uid) is not None:
+        session = await get_saas_agent_session(user.uid)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Agent登录状态已失效，请重新登录",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     return user
 
 

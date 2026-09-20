@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import time
+from types import SimpleNamespace
+
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from server.routers import auth_router
 from server.routers.auth_router import _find_or_create_saas_user, _select_saas_mcp_server, _upsert_saas_mcp_server
+from yuxi.services.saas_client import EmployeeAuthResult, TenantEmployee
 from yuxi.storage.postgres.models_business import Base, Department, MCPServer, User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
@@ -122,3 +127,71 @@ async def test_select_saas_mcp_server_uses_platform_url_when_item_only_has_insta
     assert _select_saas_mcp_server(
         [{"instanceId": "runtime-1"}], fallback_url="https://mcp.example.com"
     ) == ("https://mcp.example.com", "runtime-1")
+
+
+async def test_saas_login_limits_jwt_to_agent_session_lifetime(monkeypatch):
+    expires_at = str(time.time() + 3600)
+    employee = TenantEmployee(
+        tenant_id=1,
+        tenant_name="测试租户",
+        employee_id=2,
+        employee_code="E001",
+        employee_name="测试员工",
+        department_name="研发部",
+        enabled=1,
+        llm_key="",
+        llm_url="",
+        agent_session_token="session-token",
+        agent_session_expires_at=expires_at,
+    )
+
+    class SaasClient:
+        async def authenticate_employee(self, mobile, password):
+            del mobile, password
+            return EmployeeAuthResult(mobile="13800000000", tenants=[employee])
+
+        async def get_tenant_config(self, tenant_id):
+            del tenant_id
+            raise RuntimeError("未配置 Platform")
+
+        async def list_mcp_servers(self, tenant_id):
+            del tenant_id
+            return [{"instanceId": "runtime-1", "url": "https://mcp.example.com"}]
+
+    user = SimpleNamespace(
+        id=10,
+        uid="E001",
+        username="测试员工",
+        phone_number="13800000000",
+        avatar=None,
+        role="user",
+        department_id=None,
+    )
+    captured: dict = {}
+
+    async def no_op(*_args, **_kwargs):
+        return None
+
+    def create_access_token(data, expires_delta=None):
+        captured["data"] = data
+        captured["expires_delta"] = expires_delta
+        return "yuxi-token"
+
+    monkeypatch.setattr(auth_router, "get_saas_client", lambda: SaasClient())
+    monkeypatch.setattr(auth_router, "_upsert_saas_mcp_server", no_op)
+    monkeypatch.setattr(auth_router, "_find_or_create_saas_user", lambda *_args, **_kwargs: _async_value(user))
+    monkeypatch.setattr(auth_router, "log_operation", no_op)
+    monkeypatch.setattr(auth_router.AuthUtils, "create_access_token", create_access_token)
+    monkeypatch.setattr("yuxi.services.saas_identity.save_saas_employee_context", no_op)
+    monkeypatch.setattr("yuxi.services.saas_session.save_saas_agent_session", no_op)
+
+    db = SimpleNamespace(commit=no_op)
+    result = await auth_router._saas_login(db, "13800000000", "password")
+
+    assert result["access_token"] == "yuxi-token"
+    assert captured["data"] == {"sub": "10"}
+    assert 3500 <= captured["expires_delta"].total_seconds() <= 3600
+
+
+async def _async_value(value):
+    return value

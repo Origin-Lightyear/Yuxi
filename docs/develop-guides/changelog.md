@@ -7,8 +7,8 @@
 ## v0.7.2 (current)
 
 - 新增租户知识库管理：知识库按租户隔离，SaaS 员工仅见本租户 KB；权限完全由 KB 级 `share_config` 表达（manage_scope 命中授予员工「文档级管理」，KB 结构操作保持管理员门槛，空 `user_uids` 合法表达无权限，`user_uids` 用员工 `employeeCode`）；新增 `/api/tenant/knowledge/**` 租户管理 API（静态 Key + `X-Tenant-Id` 鉴权：KB CRUD、目录创建/重命名/移动/仅空目录删除、文档分页/元数据/删除，跨租户 404）；Agent 新增 `upload_kb_file`/`delete_kb_file` 工具；前端 SaaS 员工可见知识库 tab 并按 MANAGE 边界显隐文档操作。
-- 新增 SaaS Agent 数据双写与定时任务：SaaS 登录迁移到 Tenant 服务新内部路径 `/api/v1/agent/inner/auth`，按员工编码复用本地账号并同步手机号、姓名与部门；MCP Runtime 从租户 endpoints 接口同步，使用 `AgentSession` 为每次 HTTP 请求申请一次性六 Header，Session token 不进入异常 repr，工具发现失败不再误报成功空列表；`tenant_id/employee_id` 持久化到 `user_config`（可 `AGENT_DATA_SYNC=false` 关闭）；SaaS 模式下本地线程与消息按 fail-soft 镜像到 Tenant，并记录整轮 `consumedScore`；新增五段式 Cron 调度与 `/api/system/schedules`、`/api/system/timezones` 透传接口。
-- 修复内置 `mysql-reporter` 的数据源路由：企业业务查询优先调用 SaaS MCP `select_all`，会话失效时提示重新登录，不再误导用户配置沙盒 `MYSQL_*`；独立外部 MySQL 仍使用只读脚本。
+- 新增 SaaS Agent 数据双写与定时任务：SaaS 登录迁移到 Tenant 服务新内部路径 `/api/v1/agent/inner/auth`，按员工编码复用本地账号并同步手机号、姓名与部门；MCP Runtime 从租户 endpoints 接口同步，使用 `AgentSession` 为每次 HTTP 请求申请一次性六 Header；Yuxi JWT 有效期与 AgentSession 对齐，Session 缺失时统一返回 401 并触发重新登录，避免模型误判为数据源未配置；`tenant_id/employee_id` 持久化到 `user_config`（可 `AGENT_DATA_SYNC=false` 关闭）；SaaS 模式下本地线程与消息按 fail-soft 镜像到 Tenant，并记录整轮 `consumedScore`；新增五段式 Cron 调度与任务接口透传。
+- 修复内置 `mysql-reporter` 的数据源路由：企业业务查询调用 SaaS MCP `linko_ent`，会话失效时提示重新登录，不再误导用户配置沙盒 `MYSQL_*`；独立外部 MySQL 仍使用只读脚本。
 
 - 收窄知识库状态边界：读取模型统一收口至 `read_models.py`；创建、列表、详情与更新由 Manager 统一返回 `KnowledgeBaseSummary/Detail`，Router 只转换 HTTP 响应；Manager 协调查询配置、主记录与聚合统计，Repository 在行锁内合并统计投影；executor 接收 frozen `KnowledgeBaseConfig`，负责类型资源、文档操作与类型专属一致性检测，不再写知识库主记录。
 - 修复 Agent worker 知识库运行配置不一致：`get_kb_config` 从 Redis 读取最小 Config 快照，未命中时在 KB 级分布式锁内回源 PostgreSQL，Redis 连接故障时只读请求直接回源且不回填；更新与删除先可靠失效缓存再提交数据库，避免旧请求回填过期配置。查询参数在数据库行锁内合并，并发保存不再互相覆盖。

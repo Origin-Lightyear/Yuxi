@@ -84,7 +84,7 @@ Content-Type: application/json
 }
 ```
 
-同一手机号和密码可能匹配多个租户。接口只返回可选租户，不签发 token；员工必须在 Agent Client 中选择一个租户。上次选择由 Agent Client 本地保存和提示。
+同一手机号和密码可能匹配多个租户。每个租户条目会签发与该租户和员工绑定的 `agentSessionToken`；员工必须在 Agent Client 中选择一个租户。上次选择由 Agent Client 本地保存和提示。
 
 ```json
 {
@@ -102,12 +102,16 @@ Content-Type: application/json
         "departmentName": "销售部",
         "enabled": 1,
         "llmKey": "<employee-llm-key>",
-        "llmUrl": "https://new-api.example.com"
+        "llmUrl": "https://new-api.example.com",
+        "agentSessionToken": "<agent-session-token>",
+        "agentSessionExpiresAt": "2026-08-20T15:00:00Z"
       }
     ]
   }
 }
 ```
+
+`AgentSession` 默认有效 12 小时。Agent Client 自身登录令牌的有效期不得超过 `agentSessionExpiresAt`；Session 缺失或过期时应清除本地登录态并要求员工重新登录。
 
 ### 2.2 员工权限快照
 

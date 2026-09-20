@@ -26,8 +26,8 @@ def _session_key(uid: str) -> str:
     return f"{SESSION_KEY_PREFIX}{uid}"
 
 
-def _ttl_seconds(expires_at: str) -> int:
-    # Tenant 返回的时间格式可能带时区；只用它计算 Redis TTL，不改变原值。
+def get_saas_session_ttl_seconds(expires_at: str) -> int:
+    """计算 Tenant AgentSession 的剩余有效秒数。"""
     from datetime import datetime
 
     try:
@@ -50,7 +50,7 @@ async def save_saas_agent_session(uid: str, session: SaasAgentSession) -> None:
     await redis.set(
         _session_key(uid),
         json.dumps(asdict(session), ensure_ascii=False),
-        ex=_ttl_seconds(session.expires_at),
+        ex=get_saas_session_ttl_seconds(session.expires_at),
     )
 
 

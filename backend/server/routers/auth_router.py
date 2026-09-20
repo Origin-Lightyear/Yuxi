@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 from yuxi.utils import logger
 
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status, UploadFile, File
@@ -519,7 +520,11 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
 
     # 持久化 SaaS 员工身份，供 Agent 数据双写与定时任务使用
     from yuxi.services.saas_identity import save_saas_employee_context
-    from yuxi.services.saas_session import SaasAgentSession, save_saas_agent_session
+    from yuxi.services.saas_session import (
+        SaasAgentSession,
+        get_saas_session_ttl_seconds,
+        save_saas_agent_session,
+    )
 
     await save_saas_employee_context(db, user.uid, emp.tenant_id, emp.employee_id)
     await db.commit()
@@ -537,7 +542,10 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
         )
 
     token_data = {"sub": str(user.id)}
-    access_token = AuthUtils.create_access_token(token_data)
+    access_token = AuthUtils.create_access_token(
+        token_data,
+        expires_delta=timedelta(seconds=get_saas_session_ttl_seconds(emp.agent_session_expires_at)),
+    )
 
     await log_operation(
         db,
