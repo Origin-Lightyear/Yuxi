@@ -121,11 +121,10 @@ const userRoleText = computed(() => {
 })
 
 // 退出登录
-const logout = () => {
-  userStore.logout()
+const logout = async () => {
+  await userStore.logout()
   message.success('已退出登录')
-  // 跳转到首页
-  router.push('/login')
+  router.replace('/login')
 }
 
 // 前往登录页

@@ -97,3 +97,28 @@ test('saas profile uses department and employee name instead of local role', asy
     await server.close()
   }
 })
+
+test('logout clears token before a slow server response resolves', async () => {
+  const { server, module } = await loadUserModule()
+  try {
+    setActivePinia(createPinia())
+    const deferred = {}
+    deferred.promise = new Promise((resolve) => {
+      deferred.resolve = resolve
+    })
+    globalThis.fetch = async () => deferred.promise
+
+    storageValues.set('user_token', 'token')
+    const store = module.useUserStore()
+    const pending = store.logout()
+
+    assert.equal(store.isLoggedIn, false)
+    assert.equal(store.token, '')
+    assert.equal(localStorage.getItem('user_token'), null)
+
+    deferred.resolve(new Response(null, { status: 200 }))
+    await pending
+  } finally {
+    await server.close()
+  }
+})

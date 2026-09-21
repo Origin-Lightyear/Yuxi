@@ -85,16 +85,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function logout() {
-    if (token.value) {
-      try {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: getAuthHeaders()
-        })
-      } catch (error) {
-        console.warn('注销 SaaS 会话失败:', error)
-      }
-    }
+    const tokenBeforeLogout = token.value
 
     // 清除状态
     token.value = ''
@@ -115,6 +106,19 @@ export const useUserStore = defineStore('user', () => {
 
     // 只清除 token
     localStorage.removeItem('user_token')
+
+    if (tokenBeforeLogout) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${tokenBeforeLogout}`
+          }
+        })
+      } catch (error) {
+        console.warn('注销 SaaS 会话失败:', error)
+      }
+    }
   }
 
   async function initialize(admin) {
