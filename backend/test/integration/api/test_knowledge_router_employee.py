@@ -50,6 +50,7 @@ async def employee_env():
     kb_readonly_id = f"kb_{uuid.uuid4().hex[:10]}"
     kb_foreign_id = f"kb_{uuid.uuid4().hex[:10]}"
     kb_hidden_id = f"kb_{uuid.uuid4().hex[:10]}"
+    redis = None
     try:
         dept_id = await conn.fetchval(
             "INSERT INTO departments (name, description) VALUES ($1, $2) RETURNING id",
@@ -142,15 +143,22 @@ async def employee_env():
             },
         )
     finally:
-        redis.delete(f"saas:agent-session:{uid}")
-        redis.close()
-        for target_kb_id in (kb_manage_id, kb_readonly_id, kb_foreign_id, kb_hidden_id):
-            await conn.execute("DELETE FROM knowledge_files WHERE kb_id = $1", target_kb_id)
-            await conn.execute("DELETE FROM knowledge_bases WHERE kb_id = $1", target_kb_id)
-        await conn.execute("DELETE FROM user_config WHERE uid = $1", uid)
-        await conn.execute("DELETE FROM users WHERE uid = $1", uid)
-        await conn.execute("DELETE FROM departments WHERE id = $1", dept_id)
-        await conn.close()
+        try:
+            if redis is not None:
+                try:
+                    redis.delete(f"saas:agent-session:{uid}")
+                finally:
+                    redis.close()
+        finally:
+            try:
+                for target_kb_id in (kb_manage_id, kb_readonly_id, kb_foreign_id, kb_hidden_id):
+                    await conn.execute("DELETE FROM knowledge_files WHERE kb_id = $1", target_kb_id)
+                    await conn.execute("DELETE FROM knowledge_bases WHERE kb_id = $1", target_kb_id)
+                await conn.execute("DELETE FROM user_config WHERE uid = $1", uid)
+                await conn.execute("DELETE FROM users WHERE uid = $1", uid)
+                await conn.execute("DELETE FROM departments WHERE id = $1", dept_id)
+            finally:
+                await conn.close()
 
 
 async def test_accessible_databases_filtered_by_tenant(test_client, employee_env):
@@ -354,6 +362,92 @@ async def test_document_from_another_kb_returns_404(test_client, employee_env, s
         f"/api/knowledge/databases/{kbs['readonly']}/documents/{kbs['document']}{suffix}", headers=headers
     )
     assert response.status_code == 404, response.text
+
+
+@pytest.mark.parametrize("endpoint", ["documents", "documents/add"])
+@pytest.mark.parametrize("source", ["foreign", "readonly", "bucket", "override"])
+async def test_ingest_rejects_objects_outside_target_kb(test_client, employee_env, endpoint, source):
+    """客户端提供 hash 不能授权跨库对象或预处理路径覆盖。"""
+    headers, kbs = employee_env
+    item = f"minio://knowledgebases/{kbs['manage']}/upload/test.txt"
+    source_path = (
+        f"minio://knowledgebases/{kbs['foreign' if source == 'override' else source]}/upload/test.txt"
+        if source in {"foreign", "readonly", "override"}
+        else f"minio://chat-attachments/{kbs['manage']}/upload/test.txt"
+    )
+    if source != "override":
+        item = source_path
+    params = {"content_type": "file", "content_hashes": {item: "fake-hash"}, "file_sizes": {item: 1}}
+    if source == "override":
+        params["_preprocessed_map"] = {item: {"path": source_path, "content_hash": "fake-hash", "file_size": 1}}
+    response = await test_client.post(
+        f"/api/knowledge/databases/{kbs['manage']}/{endpoint}",
+        json={"items": [item], "params": params},
+        headers=headers,
+    )
+    assert response.status_code == 403, response.text
+    conn = await _db_conn()
+    try:
+        assert await conn.fetchval("SELECT COUNT(*) FROM knowledge_files WHERE kb_id = $1", kbs["manage"]) == 2
+    finally:
+        await conn.close()
+
+
+@pytest.mark.parametrize(
+    "method,suffix,payload",
+    [
+        ("POST", "documents/add", {"items": [], "params": {}}),
+        ("POST", "documents/parse", ["file"]),
+        ("POST", "documents/index", {"file_ids": ["file"]}),
+        ("DELETE", "documents/file", None),
+        ("DELETE", "documents/batch", ["file"]),
+    ],
+)
+async def test_foreign_connector_authorization_precedes_type_check(test_client, employee_env, method, suffix, payload):
+    """外租户只读连接器不得通过文档写接口暴露名称或类型。"""
+    headers, kbs = employee_env
+    conn = await _db_conn()
+    try:
+        await conn.execute(
+            "UPDATE knowledge_bases SET kb_type = 'dify', additional_params = $2 WHERE kb_id = $1",
+            kbs["foreign"],
+            json.dumps({"dify_api_url": "https://example.com/v1", "dify_token": "test", "dify_dataset_id": "test"}),
+        )
+    finally:
+        await conn.close()
+    response = await test_client.request(
+        method, f"/api/knowledge/databases/{kbs['foreign']}/{suffix}", json=payload, headers=headers
+    )
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.parametrize("source_kb", ["foreign", "readonly"])
+async def test_rejected_ingest_preserves_real_source_object(test_client, employee_env, source_kb):
+    """跨租户和只读库真实对象不得被重新建档，且源字节保持不变。"""
+    from yuxi.storage.minio.client import get_minio_client
+
+    headers, kbs = employee_env
+    storage = get_minio_client()
+    object_name = f"{kbs[source_kb]}/upload/round1-{uuid.uuid4().hex}.txt"
+    source = f"minio://knowledgebases/{object_name}"
+    content = b"protected source object"
+    storage.upload_file("knowledgebases", object_name, content)
+    try:
+        for endpoint in ("documents", "documents/add"):
+            for override in (False, True):
+                item = f"minio://knowledgebases/{kbs['manage']}/upload/valid.txt" if override else source
+                params = {"content_type": "file", "content_hashes": {item: "untrusted-hash"}}
+                if override:
+                    params["_preprocessed_map"] = {item: {"path": source, "content_hash": "untrusted-hash"}}
+                response = await test_client.post(
+                    f"/api/knowledge/databases/{kbs['manage']}/{endpoint}",
+                    json={"items": [item], "params": params},
+                    headers=headers,
+                )
+                assert response.status_code == 403, response.text
+        assert storage.download_file("knowledgebases", object_name) == content
+    finally:
+        storage.delete_file("knowledgebases", object_name)
 
 
 async def test_employee_cannot_create_or_delete_folders_even_with_manage(test_client, employee_env):

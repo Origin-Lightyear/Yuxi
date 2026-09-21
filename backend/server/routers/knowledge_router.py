@@ -173,7 +173,8 @@ def _ensure_document_params(params: dict | None) -> dict:
     return params
 
 
-def _validate_uploaded_document_items(items: list[str], params: dict) -> None:
+def _validate_uploaded_document_items(kb_id: str, items: list[str], params: dict) -> None:
+    """校验最终存储路径归属，客户端 hash 和预处理信息不授予源对象访问权。"""
     if not items:
         raise HTTPException(status_code=400, detail="items must not be empty")
 
@@ -200,6 +201,24 @@ def _validate_uploaded_document_items(items: list[str], params: dict) -> None:
         has_preprocessed_hash = isinstance(preprocessed, dict) and bool(preprocessed.get("content_hash"))
         if not has_content_hash and not has_preprocessed_hash:
             raise HTTPException(status_code=400, detail=f"Missing content_hash for file: {item}")
+
+        source_path = item
+        if isinstance(preprocessed_map, dict) and item in preprocessed_map:
+            if not isinstance(preprocessed, dict):
+                raise HTTPException(status_code=400, detail="预处理文件信息必须是对象")
+            source_path = preprocessed.get("path")
+        if not isinstance(source_path, str) or not is_minio_url(source_path):
+            raise HTTPException(status_code=400, detail="File source must be a MinIO URL")
+        bucket, object_name = parse_minio_url(source_path)
+        # parse_minio_url 与实际下载/删除使用相同的一次解码规则。
+        segments = object_name.split("/")
+        if (
+            bucket != MinIOClient.KB_BUCKETS["documents"]
+            or len(segments) < 2
+            or segments[0] != kb_id
+            or any(segment in {"", ".", ".."} for segment in segments)
+        ):
+            raise HTTPException(status_code=403, detail="文件来源不属于当前知识库")
 
 
 def _params_for_uploaded_document_item(item: str, params: dict) -> dict:
@@ -767,7 +786,7 @@ async def add_documents(
     if content_type != "file":
         raise HTTPException(status_code=400, detail=f"Unsupported content_type: {content_type}")
 
-    _validate_uploaded_document_items(items, params)
+    _validate_uploaded_document_items(kb_id, items, params)
 
     async def run_ingest(context: TaskContext):
         await context.set_message("任务初始化")
@@ -931,6 +950,7 @@ async def add_uploaded_documents(
     current_user: User = Depends(get_required_user),
 ):
     """将已上传的 MinIO 文件同步添加为知识库文档记录，不解析、不入库。"""
+    await require_kb_manage_for_documents(kb_id, current_user)
     logger.debug(f"Add uploaded documents for kb_id {kb_id}: {payload.items} params={payload.params}")
     await _ensure_database_supports_documents(kb_id, "文档添加")
 
@@ -941,11 +961,8 @@ async def add_uploaded_documents(
     if content_type != "file":
         raise HTTPException(status_code=400, detail=f"Unsupported content_type: {content_type}")
 
-    # 管理员与员工统一 KB 级 MANAGE（员工的 MANAGE 仅表达文档级管理）
-    await require_kb_manage_for_documents(kb_id, current_user)
-
     await ensure_kb_folder(kb_id, params.get("parent_id"))
-    _validate_uploaded_document_items(payload.items, params)
+    _validate_uploaded_document_items(kb_id, payload.items, params)
 
     added_items: list[dict] = []
     failed_items: list[dict] = []
@@ -1394,8 +1411,8 @@ async def parse_documents(
     """手动触发文档解析（员工需对每个文档所在目录有 edit 权限）"""
     file_ids = _validate_direct_document_action_file_ids(file_ids)
     logger.debug(f"Parse documents for kb_id {kb_id}: {file_ids}")
-    db_info = await _ensure_database_supports_documents(kb_id, "文档解析")
     await require_documents_edit_or_kb_manage(kb_id, file_ids, current_user)
+    db_info = await _ensure_database_supports_documents(kb_id, "文档解析")
     return await _enqueue_parse_task(kb_id, file_ids, current_user.uid, db_info)
 
 
@@ -1418,8 +1435,8 @@ async def index_documents(
     file_ids = _validate_direct_document_action_file_ids(file_ids)
     params = params or {}
     logger.debug(f"Index documents for kb_id {kb_id}: {file_ids} {params=}")
-    db_info = await _ensure_database_supports_documents(kb_id, "文档入库")
     await require_documents_edit_or_kb_manage(kb_id, file_ids, current_user)
+    db_info = await _ensure_database_supports_documents(kb_id, "文档入库")
     return await _enqueue_index_task(kb_id, file_ids, params, current_user.uid, db_info)
 
 
@@ -1493,8 +1510,8 @@ async def batch_delete_documents(
 ):
     """批量删除文档或文件夹（员工仅能删除有 edit 权限目录下的文档，文件夹目标一律拒绝）"""
     logger.debug(f"BATCH DELETE documents {file_ids} in {kb_id}")
-    await _ensure_database_supports_documents(kb_id, "批量文档删除")
     await require_documents_edit_or_kb_manage(kb_id, file_ids, current_user)
+    await _ensure_database_supports_documents(kb_id, "批量文档删除")
 
     deleted_count = 0
     failed_items = []
@@ -1546,8 +1563,8 @@ async def batch_delete_documents(
 async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(get_required_user)):
     """删除文档或文件夹（员工仅能删除有 edit 权限目录下的文档，文件夹目标一律拒绝）"""
     logger.debug(f"DELETE document {doc_id} info in {kb_id}")
-    await _ensure_database_supports_documents(kb_id, "文档删除")
     await require_documents_edit_or_kb_manage(kb_id, [doc_id], current_user)
+    await _ensure_database_supports_documents(kb_id, "文档删除")
     try:
         file_meta_info = await knowledge_base.get_file_basic_info(kb_id, doc_id)
 
