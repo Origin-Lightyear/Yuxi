@@ -159,10 +159,12 @@ import { ref, computed, onMounted, watch, h } from 'vue'
 import { useDatabaseStore } from '@/stores/database'
 import { message } from 'ant-design-vue'
 import { queryApi } from '@/apis/knowledge_api'
+import { useUserStore } from '@/stores/user'
 import { SearchOutlined } from '@ant-design/icons-vue'
 import { Braces, RefreshCw } from 'lucide-vue-next'
 
 const store = useDatabaseStore()
+const userStore = useUserStore()
 const MAX_VISIBLE_EXAMPLES = 10
 
 defineProps({
@@ -185,7 +187,9 @@ const showRawData = ref(false)
 const showQuerySuggestions = computed(() => !searchLoading.value && !queryResult.value)
 
 // 示例问题生成属于写操作，仅对拥有管理权限（非只读权限）的知识库开放
-const canGenerateQuestions = computed(() => store.database?.can_manage === true)
+const canGenerateQuestions = computed(
+  () => store.database?.can_manage === true && userStore.isAdmin && !userStore.saasMode
+)
 
 // 查询测试
 const queryText = ref('')

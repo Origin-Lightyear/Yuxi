@@ -14,6 +14,7 @@ from server.utils.auth_middleware import get_required_user
 from server.utils.knowledge_permissions import ensure_knowledge_base_permission
 from yuxi.knowledge.runtime import knowledge_base
 from yuxi.permissions import ResourcePermission, ResourcePermissionDenied, require_knowledge_base_permission
+from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
 
@@ -29,7 +30,9 @@ async def ensure_employee_kb(kb_id: str, current_user: User):
     """校验 SaaS 员工身份 + KB 级 READ + 本租户归属；返回知识库信息。"""
     from yuxi.services.saas_identity import get_saas_employee_context
 
-    db_info = await ensure_knowledge_base_permission(kb_id, current_user, ResourcePermission.READ)
+    db_info = await knowledge_base.get_database_info(kb_id)
+    if not db_info:
+        raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
     async with pg_manager.get_async_session_context() as session:
         saas_ctx = await get_saas_employee_context(session, current_user.uid)
     if saas_ctx is None:
@@ -37,6 +40,10 @@ async def ensure_employee_kb(kb_id: str, current_user: User):
     if (db_info.tenant_id or None) != saas_ctx.tenant_id:
         # 跨租户访问不暴露资源存在性
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
+    try:
+        require_knowledge_base_permission(current_user, db_info, ResourcePermission.READ)
+    except ResourcePermissionDenied:
+        raise HTTPException(status_code=403, detail="无权读取该知识库") from None
     return db_info
 
 
@@ -49,22 +56,45 @@ async def require_kb_read_or_employee(kb_id: str, current_user: User = Depends(g
     return current_user
 
 
+async def require_document_read_or_employee(
+    kb_id: str, doc_id: str, current_user: User = Depends(require_kb_read_or_employee)
+) -> User:
+    """先校验知识库读取权限，再校验文档归属，避免跨库文档返回伪成功。"""
+    record = await KnowledgeFileRepository().get_by_file_id(doc_id)
+    if record is None or record.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return current_user
+
+
 async def _require_kb_document_manage(kb_id: str, current_user: User) -> None:
     """KB 级 MANAGE（管理员或 manage_scope 命中的员工）+ 本租户校验；否则 403。"""
-    db_info = await knowledge_base.get_database_info(kb_id)
+    db_info = (
+        await ensure_employee_kb(kb_id, current_user)
+        if is_employee(current_user)
+        else await knowledge_base.get_database_info(kb_id)
+    )
     if not db_info:
         raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
     try:
         require_knowledge_base_permission(current_user, db_info, ResourcePermission.MANAGE)
     except ResourcePermissionDenied:
         raise HTTPException(status_code=403, detail="无权编辑该知识库的文档") from None
-    if is_employee(current_user):
-        await ensure_employee_kb(kb_id, current_user)
 
 
 async def require_kb_manage_for_documents(kb_id: str, current_user: User) -> None:
     """文档建档（add）的权限：KB 级 MANAGE（员工为 manage_scope 命中的文档级管理）。"""
     await _require_kb_document_manage(kb_id, current_user)
+
+
+async def ensure_kb_folder(kb_id: str, folder_id: str | None) -> None:
+    """校验目标目录属于当前知识库，跨库或不存在的目录统一返回 404。"""
+    if folder_id is None:
+        return
+    record = await KnowledgeFileRepository().get_by_file_id(folder_id)
+    if record is None or record.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="目录不存在")
+    if not record.is_folder:
+        raise HTTPException(status_code=400, detail="目标不是目录")
 
 
 async def require_documents_edit_or_kb_manage(
@@ -73,8 +103,6 @@ async def require_documents_edit_or_kb_manage(
     current_user: User,
 ) -> None:
     """文档批量操作的权限：KB 级 MANAGE；文件夹目标一律拒绝员工。"""
-    from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
-
     await _require_kb_document_manage(kb_id, current_user)
     if current_user.role in ADMIN_ROLES:
         return

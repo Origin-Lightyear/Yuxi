@@ -51,7 +51,9 @@ from server.utils.knowledge_permissions import (
     require_knowledge_base_read,
 )
 from server.utils.employee_kb_permissions import (
+    ensure_kb_folder,
     is_employee,
+    require_document_read_or_employee,
     require_documents_edit_or_kb_manage,
     require_kb_manage_for_documents,
     require_kb_read_or_employee,
@@ -290,11 +292,7 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
 
         accessible = [
             {
-                "name": db.name,
-                "kb_id": db.kb_id,
-                "description": db.description or "",
-                "created_by": db.created_by,
-                "kb_type": db.kb_type,
+                **serialize_knowledge_base(db, redact_secrets=True, row_count_fallback=True),
                 "supports_documents": knowledge_base.database_type_supports_documents(db.kb_type),
             }
             for db in databases
@@ -677,6 +675,7 @@ async def list_documents(
     current_user: User = Depends(require_kb_read_or_employee),
 ):
     """分页获取知识库文件列表（KB 级 READ 即可，目录仅作组织不分权限）。"""
+    await ensure_kb_folder(kb_id, parent_id)
     await _ensure_database_supports_documents(kb_id, "文档查看")
     try:
         return await knowledge_base.list_document_files(
@@ -723,7 +722,7 @@ async def search_documents(
 async def document_file_exists(
     kb_id: str,
     filename: str = Query(..., min_length=1, description="知识库文件展示名或相对路径"),
-    current_user: User = Depends(require_knowledge_base_read),
+    current_user: User = Depends(require_kb_read_or_employee),
 ):
     """检查知识库中是否已存在指定文件名或相对路径的文件。"""
     await _ensure_database_supports_documents(kb_id, "文档存在性检查")
@@ -742,13 +741,15 @@ async def add_documents(
     kb_id: str,
     items: list[str] = Body(...),
     params: dict = Body(...),
-    current_user: User = Depends(require_knowledge_base_manage),
+    current_user: User = Depends(get_required_user),
 ):
     """添加文档到知识库（上传 -> 解析 -> 可选入库）"""
+    await require_kb_manage_for_documents(kb_id, current_user)
     logger.debug(f"Add documents for kb_id {kb_id}: {items} {params=}")
     await _ensure_database_supports_documents(kb_id, "文档添加/解析/入库")
 
     params = _ensure_document_params(params)
+    await ensure_kb_folder(kb_id, params.get("parent_id"))
     content_type = params.get("content_type", "file")
     # 自动入库参数
     auto_index = params.get("auto_index", False)
@@ -943,6 +944,7 @@ async def add_uploaded_documents(
     # 管理员与员工统一 KB 级 MANAGE（员工的 MANAGE 仅表达文档级管理）
     await require_kb_manage_for_documents(kb_id, current_user)
 
+    await ensure_kb_folder(kb_id, params.get("parent_id"))
     _validate_uploaded_document_items(payload.items, params)
 
     added_items: list[dict] = []
@@ -1435,7 +1437,7 @@ async def index_pending_documents(
 
 
 @knowledge.get("/databases/{kb_id}/documents/{doc_id}")
-async def get_document_info(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
+async def get_document_info(kb_id: str, doc_id: str, current_user: User = Depends(require_document_read_or_employee)):
     """获取文档详细信息（包含基本信息和内容信息）"""
     logger.debug(f"GET document {doc_id} info in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "文档查看")
@@ -1449,7 +1451,9 @@ async def get_document_info(kb_id: str, doc_id: str, current_user: User = Depend
 
 
 @knowledge.get("/databases/{kb_id}/documents/{doc_id}/basic")
-async def get_document_basic_info(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
+async def get_document_basic_info(
+    kb_id: str, doc_id: str, current_user: User = Depends(require_document_read_or_employee)
+):
     """获取文档基本信息（仅元数据）"""
     logger.debug(f"GET document {doc_id} basic info in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "文档查看")
@@ -1463,7 +1467,9 @@ async def get_document_basic_info(kb_id: str, doc_id: str, current_user: User = 
 
 
 @knowledge.get("/databases/{kb_id}/documents/{doc_id}/content")
-async def get_document_content(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
+async def get_document_content(
+    kb_id: str, doc_id: str, current_user: User = Depends(require_document_read_or_employee)
+):
     """获取文档内容信息（chunks和lines）"""
     logger.debug(f"GET document {doc_id} content in {kb_id}")
     await _ensure_database_supports_documents(kb_id, "文档查看")
@@ -1568,7 +1574,7 @@ async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(
 
 
 @knowledge.get("/databases/{kb_id}/documents/{doc_id}/download")
-async def download_document(kb_id: str, doc_id: str, current_user: User = Depends(require_knowledge_base_read)):
+async def download_document(kb_id: str, doc_id: str, current_user: User = Depends(require_document_read_or_employee)):
     """下载原始文件"""
     logger.debug(f"Download document {doc_id} from {kb_id}")
     await _ensure_database_supports_documents(kb_id, "文档下载")
@@ -1713,7 +1719,7 @@ async def update_knowledge_base_query_params(
 
 
 @knowledge.get("/databases/{kb_id}/query-params")
-async def get_knowledge_base_query_params(kb_id: str, current_user: User = Depends(require_knowledge_base_read)):
+async def get_knowledge_base_query_params(kb_id: str, current_user: User = Depends(require_kb_read_or_employee)):
     """获取知识库类型特定的查询参数"""
     try:
         params = await knowledge_base.get_kb_query_params_config(kb_id)
@@ -1747,7 +1753,7 @@ async def generate_sample_questions(
 
 
 @knowledge.get("/databases/{kb_id}/sample-questions")
-async def get_sample_questions(kb_id: str, current_user: User = Depends(require_knowledge_base_read)):
+async def get_sample_questions(kb_id: str, current_user: User = Depends(require_kb_read_or_employee)):
     """获取知识库的测试问题。"""
     try:
         return await get_database_sample_questions(kb_id)
@@ -1785,11 +1791,13 @@ async def create_folder(
 async def move_document(
     kb_id: str,
     doc_id: str,
-    new_parent_id: str | None = Body(..., embed=True),
-    current_user: User = Depends(require_knowledge_base_manage),
+    new_parent_id: str | None = Body(None, embed=True),
+    current_user: User = Depends(get_required_user),
 ):
     """移动文件或文件夹"""
     logger.debug(f"Move document {doc_id} to {new_parent_id} in {kb_id}")
+    await require_documents_edit_or_kb_manage(kb_id, [doc_id], current_user)
+    await ensure_kb_folder(kb_id, new_parent_id)
     try:
         await _ensure_database_supports_documents(kb_id, "文件移动")
         return await knowledge_base.move_file(kb_id, doc_id, new_parent_id)
@@ -2021,7 +2029,7 @@ async def upload_file(
 
 
 @knowledge.get("/files/supported-types")
-async def get_supported_file_types(current_user: User = Depends(get_admin_user)):
+async def get_supported_file_types(current_user: User = Depends(get_required_user)):
     """获取当前支持的文件类型"""
     return {"message": "success", "file_types": sorted(SUPPORTED_FILE_EXTENSIONS)}
 

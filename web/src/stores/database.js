@@ -85,7 +85,7 @@ export const useDatabaseStore = defineStore('database', () => {
   async function loadDatabases() {
     state.listLoading = true
     try {
-      const data = userStore.isAdmin
+      const data = userStore.isAdmin && !userStore.saasMode
         ? await databaseApi.getDatabases()
         : await databaseApi.getAccessibleDatabases()
       const list = data?.databases || []

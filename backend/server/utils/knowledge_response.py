@@ -61,6 +61,7 @@ def serialize_knowledge_base(
     effective_permission = permission or database.effective_permission
     if effective_permission is not None:
         response["effective_permission"] = effective_permission.value
+        response["can_read"] = effective_permission != ResourcePermission.NONE
         response["can_manage"] = effective_permission == ResourcePermission.MANAGE
 
     if isinstance(database, KnowledgeBaseDetail):

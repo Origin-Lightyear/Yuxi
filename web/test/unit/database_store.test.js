@@ -12,6 +12,63 @@ globalThis.localStorage = {
   clear: () => storageValues.clear()
 }
 
+test('database SaaS 模式强制使用 accessible 列表并保留权限字段', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
+  try {
+    setActivePinia(createPinia())
+    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { databaseApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
+    const { useDatabaseStore } = await server.ssrLoadModule('/src/stores/database.js')
+    const user = useUserStore()
+    user.saasMode = true
+    user.userRole = 'admin'
+    databaseApi.getDatabases = async () => { throw new Error('SaaS 不应调用管理员列表') }
+    databaseApi.getAccessibleDatabases = async () => ({ databases: [{ kb_id: 'tenant-kb', can_manage: false }] })
+    const store = useDatabaseStore()
+    await store.loadDatabases()
+    assert.deepEqual(store.databases, [{ kb_id: 'tenant-kb', can_manage: false }])
+  } finally {
+    await server.close()
+  }
+})
+
+test('database 员工读取目录、文档及上传请求由后端授权', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
+  const originalFetch = globalThis.fetch
+  try {
+    setActivePinia(createPinia())
+    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { databaseApi, documentApi, fileApi, queryApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
+    const user = useUserStore()
+    user.userRole = 'user'
+    user.saasMode = true
+    user.token = 'employee-token'
+    const paths = []
+    globalThis.fetch = async (url, options) => {
+      paths.push(url)
+      if (options.body instanceof FormData) {
+        assert.equal(options.headers['Content-Type'], undefined, '浏览器必须自动补全 multipart boundary')
+      }
+      return new Response(JSON.stringify({ status: 'success', items: [] }), { status: 200 })
+    }
+    await databaseApi.getDatabaseInfo('tenant-kb')
+    await documentApi.listDocuments('tenant-kb')
+    await documentApi.getDocumentBasicInfo('tenant-kb', 'doc')
+    await documentApi.getDocumentContent('tenant-kb', 'doc')
+    await documentApi.addUploadedDocuments('tenant-kb', ['minio://doc'])
+    await documentApi.addDocuments('tenant-kb', ['minio://doc'])
+    await documentApi.deleteDocument('tenant-kb', 'doc')
+    await documentApi.moveDocument('tenant-kb', 'doc', 'folder')
+    await fileApi.uploadFile(new File(['content'], 'file.txt'), 'tenant-kb')
+    await queryApi.getKnowledgeBaseQueryParams('tenant-kb')
+    assert.equal(paths.length, 10)
+    assert.ok(paths.every((path) => path.includes('tenant-kb')))
+  } finally {
+    globalThis.fetch = originalFetch
+    await server.close()
+  }
+})
+
 test('从二级目录点击全部文件会清空 parent_id 并返回根目录', async () => {
   const server = await createServer({
     server: { middlewareMode: true },

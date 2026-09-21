@@ -52,7 +52,7 @@
               <span>复制 ID</span>
             </button>
             <button
-              v-if="canManageDatabase && userStore.isAdmin"
+              v-if="canManageStructure"
               type="button"
               class="lucide-icon-btn extension-panel-action extension-panel-action-primary"
               @click="showEditModal"
@@ -98,7 +98,7 @@
                     <span>上传</span>
                   </button>
                   <button
-                    v-if="canManageDatabase && userStore.isAdmin"
+                    v-if="canManageStructure"
                     type="button"
                     class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
                     @click="showCreateFolderModal"
@@ -118,7 +118,7 @@
               </div>
               <div class="file-panel-status">
                 <button
-                  v-if="canManageDatabase && pendingParseCount > 0"
+                  v-if="canManageStructure && pendingParseCount > 0"
                   type="button"
                   class="file-stat-card file-stat-action file-stat-summary"
                   :disabled="store.state.chunkLoading"
@@ -131,7 +131,7 @@
                   </div>
                 </button>
                 <button
-                  v-if="canManageDatabase && pendingIndexCount > 0"
+                  v-if="canManageStructure && pendingIndexCount > 0"
                   type="button"
                   class="file-stat-card file-stat-action file-stat-summary"
                   :disabled="store.state.chunkLoading"
@@ -158,7 +158,7 @@
                   </div>
                 </div>
                 <button
-                  v-if="canManageDatabase && userStore.isAdmin"
+                  v-if="canManageStructure"
                   type="button"
                   class="file-stat-card file-stat-summary file-stat-repair"
                   :disabled="statsRepairing"
@@ -175,7 +175,7 @@
                   </div>
                 </button>
                 <button
-                  v-if="canManageDatabase && userStore.isAdmin"
+                  v-if="canManageStructure"
                   type="button"
                   class="file-stat-card file-stat-summary file-stat-repair"
                   :disabled="statsRepairing"
@@ -193,7 +193,11 @@
                 </button>
               </div>
             </div>
-            <FileTable ref="fileTableRef" :readonly="!canManageDatabase" :allow-folder-ops="userStore.isAdmin" />
+            <FileTable
+              ref="fileTableRef"
+              :readonly="!canManageDatabase"
+              :allow-folder-ops="canManageStructure"
+            />
           </div>
 
           <div v-show="activeTab === 'query'" class="tab-panel query-config-panel">
@@ -424,6 +428,9 @@ const {
 const kbId = computed(() => store.kbId)
 const database = computed(() => store.database)
 const canManageDatabase = computed(() => database.value?.can_manage === true)
+const canManageStructure = computed(
+  () => canManageDatabase.value && userStore.isAdmin && !userStore.saasMode
+)
 const isCurrentDatabaseLoaded = computed(() => database.value?.kb_id === kbId.value)
 const kbType = computed(() =>
   isCurrentDatabaseLoaded.value ? database.value.kb_type?.toLowerCase() || 'milvus' : ''
@@ -464,11 +471,11 @@ const tabs = computed(() => {
 })
 
 const visibleTabs = computed(() => {
-  if (canManageDatabase.value) return tabs.value
   if (userStore.saasMode) {
-    // SaaS 员工：文档（目录过滤）+ 检索测试；图谱/导图等管理类 tab 不可见
+    // 文档管理权不包含知识库的图谱、导图和评估配置。
     return tabs.value.filter((tab) => ['filetable', 'query'].includes(tab.key))
   }
+  if (canManageDatabase.value) return tabs.value
   return tabs.value.filter((tab) => ['filetable', 'query', 'graph', 'mindmap'].includes(tab.key))
 })
 const activeTab = ref('filetable')
@@ -672,7 +679,7 @@ watch(
     }
 
     if (newFileCount !== oldFileCount) {
-      if (newFileCount > 0 && canManageDatabase.value) {
+      if (newFileCount > 0 && canManageStructure.value) {
         setTimeout(async () => {
           if (querySectionRef.value) {
             if (database.value.additional_params?.auto_generate_questions) {
@@ -758,7 +765,7 @@ const fileList = computed(() => {
   return (store.documentFiles || []).map((f) => f.filename).filter(Boolean)
 })
 
-const canEditShareConfig = computed(() => canManageDatabase.value)
+const canEditShareConfig = computed(() => canManageStructure.value)
 
 const shareConfigDisplay = computed(() => {
   const shareConfig = database.value?.share_config || {}
@@ -817,6 +824,7 @@ const loadUsers = async () => {
 }
 
 const showEditModal = () => {
+  if (!canManageStructure.value) return
   editModalTab.value = 'basic'
   editForm.name = database.value.name || ''
   editForm.description = database.value.description || ''
@@ -924,6 +932,7 @@ const handleEditSubmit = async () => {
 }
 
 onMounted(() => {
+  if (userStore.saasMode || !userStore.isAdmin) return
   loadChunkPresetOptions()
   loadDepartments()
   loadUsers()

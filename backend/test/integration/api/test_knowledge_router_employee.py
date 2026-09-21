@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 
 import pytest
@@ -37,6 +38,7 @@ async def _db_conn():
 async def employee_env():
     """准备员工用户与本租户两个知识库（可管理/只读）+ 他租户知识库；返回上下文。"""
     from yuxi.utils.auth_utils import AuthUtils
+    from yuxi.storage.redis import create_sync_redis_client
 
     if not os.environ.get("JWT_SECRET_KEY"):
         pytest.skip("JWT_SECRET_KEY 未配置，跳过员工端点集成测试")
@@ -47,6 +49,7 @@ async def employee_env():
     kb_manage_id = f"kb_{uuid.uuid4().hex[:10]}"
     kb_readonly_id = f"kb_{uuid.uuid4().hex[:10]}"
     kb_foreign_id = f"kb_{uuid.uuid4().hex[:10]}"
+    kb_hidden_id = f"kb_{uuid.uuid4().hex[:10]}"
     try:
         dept_id = await conn.fetchval(
             "INSERT INTO departments (name, description) VALUES ($1, $2) RETURNING id",
@@ -78,6 +81,7 @@ async def employee_env():
             ),
             # 他租户知识库（tenant 999）
             (kb_foreign_id, _share_config(GLOBAL_SCOPE, GLOBAL_SCOPE)),
+            (kb_hidden_id, _share_config({"access_level": "user", "user_uids": []}, None)),
         ]
         for target_kb_id, share_config in kb_configs:
             tenant_id = 999 if target_kb_id == kb_foreign_id else 100
@@ -102,8 +106,29 @@ async def employee_env():
             f"fld_{uuid.uuid4().hex[:10]}",
             kb_manage_id,
         )
+        doc_id = await conn.fetchval(
+            "INSERT INTO knowledge_files (file_id, kb_id, filename, is_folder, status) "
+            "VALUES ($1, $2, '员工文档.txt', FALSE, 'uploaded') RETURNING file_id",
+            f"file_{uuid.uuid4().hex[:10]}",
+            kb_manage_id,
+        )
 
         access_token = AuthUtils.create_access_token({"sub": str(user_id)})
+        # 真实认证还检查 Redis 会话；与 JWT 一起准备，避免所有权限断言退化为 401。
+        redis = create_sync_redis_client()
+        redis.set(
+            f"saas:agent-session:{uid}",
+            json.dumps(
+                {
+                    "token": "pytest-session",
+                    "expires_at": str(time.time() + 300),
+                    "tenant_id": 100,
+                    "employee_id": 200,
+                    "mcp_instance_id": "pytest",
+                }
+            ),
+            ex=300,
+        )
         yield (
             {"Authorization": f"Bearer {access_token}"},
             {
@@ -111,11 +136,15 @@ async def employee_env():
                 "manage": kb_manage_id,
                 "readonly": kb_readonly_id,
                 "foreign": kb_foreign_id,
+                "hidden": kb_hidden_id,
                 "folder": folder_id,
+                "document": doc_id,
             },
         )
     finally:
-        for target_kb_id in (kb_manage_id, kb_readonly_id, kb_foreign_id):
+        redis.delete(f"saas:agent-session:{uid}")
+        redis.close()
+        for target_kb_id in (kb_manage_id, kb_readonly_id, kb_foreign_id, kb_hidden_id):
             await conn.execute("DELETE FROM knowledge_files WHERE kb_id = $1", target_kb_id)
             await conn.execute("DELETE FROM knowledge_bases WHERE kb_id = $1", target_kb_id)
         await conn.execute("DELETE FROM user_config WHERE uid = $1", uid)
@@ -132,6 +161,175 @@ async def test_accessible_databases_filtered_by_tenant(test_client, employee_env
     assert kbs["manage"] in visible_ids
     assert kbs["readonly"] in visible_ids
     assert kbs["foreign"] not in visible_ids
+    assert kbs["hidden"] not in visible_ids
+    databases = {item["kb_id"]: item for item in response.json()["databases"]}
+    assert databases[kbs["manage"]]["can_manage"] is True
+    assert databases[kbs["readonly"]]["can_manage"] is False
+    assert databases[kbs["readonly"]]["can_read"] is True
+    assert databases[kbs["manage"]]["tenant_id"] == 100
+    assert "stats" in databases[kbs["manage"]]
+
+
+async def test_employee_opens_and_moves_document_but_not_folder(test_client, employee_env):
+    """员工文档管理必须能完成移动并从目录中读取实际结果。"""
+    headers, kbs = employee_env
+    base = f"/api/knowledge/databases/{kbs['manage']}"
+    basic = await test_client.get(f"{base}/documents/{kbs['document']}/basic", headers=headers)
+    assert basic.status_code == 200, basic.text
+    assert basic.json()["meta"]["filename"] == "员工文档.txt"
+    moved = await test_client.put(
+        f"{base}/documents/{kbs['document']}/move",
+        json={"new_parent_id": kbs["folder"]},
+        headers=headers,
+    )
+    assert moved.status_code == 200, moved.text
+    listed = await test_client.get(f"{base}/documents", params={"parent_id": kbs["folder"]}, headers=headers)
+    assert [item["file_id"] for item in listed.json()["items"]] == [kbs["document"]]
+    deleted = await test_client.delete(f"{base}/documents/{kbs['document']}", headers=headers)
+    assert deleted.status_code == 200, deleted.text
+    listed = await test_client.get(f"{base}/documents", params={"parent_id": kbs["folder"]}, headers=headers)
+    assert listed.json()["items"] == []
+
+
+@pytest.mark.parametrize("scope", [GLOBAL_SCOPE, {"access_level": "user", "user_uids": []}])
+async def test_cross_tenant_is_hidden_before_scope_check(test_client, employee_env, scope):
+    """跨租户的读取和文档写入统一 404，不通过 403 暴露存在性。"""
+    headers, kbs = employee_env
+    conn = await _db_conn()
+    try:
+        await conn.execute(
+            "UPDATE knowledge_bases SET share_config = $1 WHERE kb_id = $2",
+            json.dumps(_share_config(scope, scope)),
+            kbs["foreign"],
+        )
+    finally:
+        await conn.close()
+    base = f"/api/knowledge/databases/{kbs['foreign']}"
+    for method, suffix, payload in [
+        ("GET", "", None),
+        ("GET", "/documents/no-file/basic", None),
+        ("DELETE", "/documents/no-file", None),
+        ("PUT", "/documents/no-file/move", {"new_parent_id": None}),
+    ]:
+        response = await test_client.request(method, base + suffix, json=payload, headers=headers)
+        assert response.status_code == 404, (method, suffix, response.text)
+
+
+async def test_employee_upload_and_kb_structure_permissions(test_client, employee_env):
+    """只读员工不能上传、移动文档，文档管理员也不能修改知识库结构。"""
+    headers, kbs = employee_env
+    denied = await test_client.post(
+        "/api/knowledge/files/upload",
+        params={"kb_id": kbs["readonly"]},
+        files={"file": ("denied.txt", b"denied", "text/plain")},
+        headers=headers,
+    )
+    assert denied.status_code == 403
+    moved = await test_client.put(
+        f"/api/knowledge/databases/{kbs['readonly']}/documents/no-file/move",
+        json={"new_parent_id": None},
+        headers=headers,
+    )
+    assert moved.status_code == 403
+    for method, path, payload in [
+        ("POST", "/api/knowledge/databases", {"database_name": "forbidden", "description": "", "kb_type": "milvus"}),
+        ("PUT", f"/api/knowledge/databases/{kbs['manage']}", {"name": "forbidden"}),
+        ("DELETE", f"/api/knowledge/databases/{kbs['manage']}", None),
+    ]:
+        response = await test_client.request(method, path, json=payload, headers=headers)
+        assert response.status_code == 403, response.text
+
+
+async def test_employee_upload_download_and_delete_document(test_client, employee_env):
+    """真实上传、建档、下载和删除验证员工文档管理闭环。"""
+    headers, kbs = employee_env
+    content = f"employee document {uuid.uuid4().hex}".encode()
+    uploaded = await test_client.post(
+        "/api/knowledge/files/upload",
+        params={"kb_id": kbs["manage"]},
+        files={"file": ("employee.txt", content, "text/plain")},
+        headers=headers,
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    item = uploaded.json()
+    invalid_parent = await test_client.post(
+        f"/api/knowledge/databases/{kbs['manage']}/documents/add",
+        json={
+            "items": [item["file_path"]],
+            "params": {
+                "content_type": "file",
+                "content_hashes": {item["file_path"]: item["content_hash"]},
+                "parent_id": "foreign-or-missing-folder",
+            },
+        },
+        headers=headers,
+    )
+    assert invalid_parent.status_code == 404, invalid_parent.text
+    added = await test_client.post(
+        f"/api/knowledge/databases/{kbs['manage']}/documents/add",
+        json={
+            "items": [item["file_path"]],
+            "params": {
+                "content_type": "file",
+                "content_hashes": {item["file_path"]: item["content_hash"]},
+                "parent_id": kbs["folder"],
+            },
+        },
+        headers=headers,
+    )
+    assert added.status_code == 200, added.text
+    assert added.json()["status"] == "success", added.text
+    files = await test_client.get(
+        f"/api/knowledge/databases/{kbs['manage']}/documents", params={"parent_id": kbs["folder"]}, headers=headers
+    )
+    doc_id = files.json()["items"][0]["file_id"]
+    base = f"/api/knowledge/databases/{kbs['manage']}/documents/{doc_id}"
+    downloaded = await test_client.get(f"{base}/download", headers=headers)
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == content
+    deleted = await test_client.delete(base, headers=headers)
+    assert deleted.status_code == 200, deleted.text
+
+
+async def test_local_admin_still_manages_kb_and_folders(test_client, employee_env):
+    """临时本地管理员通过真实 HTTP 保留知识库与目录管理能力。"""
+    headers, kbs = employee_env
+    conn = await _db_conn()
+    try:
+        await conn.execute("DELETE FROM user_config WHERE uid = $1", kbs["uid"])
+        await conn.execute("UPDATE users SET role = 'admin' WHERE uid = $1", kbs["uid"])
+        response = await test_client.post(
+            "/api/knowledge/databases",
+            json={
+                "database_name": f"pytest_local_{uuid.uuid4().hex[:8]}",
+                "description": "local regression",
+                "kb_type": "milvus",
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        kb_id = response.json()["kb_id"]
+        try:
+            created = await test_client.post(
+                f"/api/knowledge/databases/{kb_id}/folders", json={"folder_name": "目录"}, headers=headers
+            )
+            assert created.status_code == 200, created.text
+            folder_id = created.json()["file_id"]
+            moved = await test_client.put(
+                f"/api/knowledge/databases/{kb_id}/documents/{folder_id}/move",
+                json={"new_parent_id": None},
+                headers=headers,
+            )
+            assert moved.status_code == 200, moved.text
+            deleted = await test_client.delete(
+                f"/api/knowledge/databases/{kb_id}/documents/{folder_id}", headers=headers
+            )
+            assert deleted.status_code == 200, deleted.text
+        finally:
+            deleted_kb = await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=headers)
+            assert deleted_kb.status_code == 200, deleted_kb.text
+    finally:
+        await conn.close()
 
 
 async def test_employee_kb_detail_and_cross_tenant_404(test_client, employee_env):
@@ -146,6 +344,16 @@ async def test_employee_kb_detail_and_cross_tenant_404(test_client, employee_env
 
     cross_tenant = await test_client.get(f"/api/knowledge/databases/{kbs['foreign']}", headers=headers)
     assert cross_tenant.status_code == 404
+
+
+@pytest.mark.parametrize("suffix", ["", "/basic", "/content", "/download"])
+async def test_document_from_another_kb_returns_404(test_client, employee_env, suffix):
+    """即使两个库均可读，也不能借另一库的 URL 打开文档。"""
+    headers, kbs = employee_env
+    response = await test_client.get(
+        f"/api/knowledge/databases/{kbs['readonly']}/documents/{kbs['document']}{suffix}", headers=headers
+    )
+    assert response.status_code == 404, response.text
 
 
 async def test_employee_cannot_create_or_delete_folders_even_with_manage(test_client, employee_env):
@@ -195,6 +403,14 @@ async def test_employee_add_document_requires_kb_manage(test_client, employee_en
         headers=headers,
     )
     assert allowed.status_code == 400
+
+    # 上传弹窗当前使用的解析入口也必须接受文档管理员。
+    queued = await test_client.post(
+        f"/api/knowledge/databases/{kbs['manage']}/documents",
+        json={"items": [], "params": {"content_type": "file"}},
+        headers=headers,
+    )
+    assert queued.status_code == 400, queued.text
 
 
 async def test_employee_delete_document_requires_kb_manage(test_client, employee_env):

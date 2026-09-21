@@ -154,6 +154,11 @@
       </template>
 
       <template #before-table>
+        <div v-if="movingFile && !readonly" class="batch-actions">
+          <span>正在移动 {{ movingFile.filename }}，请选择目标目录</span>
+          <a-button type="link" :loading="moving" @click="confirmMoveFile">移动到此目录</a-button>
+          <a-button type="text" :disabled="moving" @click="movingFile = null">取消</a-button>
+        </div>
         <div class="batch-actions" v-if="!readonly && allowFolderOps && isSelectionMode">
           <div class="batch-info">
             <a-checkbox
@@ -362,6 +367,21 @@
                     v-if="!readonly"
                     type="text"
                     block
+                    @click="
+                      () => {
+                        movingFile = row
+                        popoverVisibleMap[row.file_id] = false
+                      }
+                    "
+                    :disabled="lock"
+                  >
+                    <template #icon><component :is="h(FolderOpen)" size="14" /></template>
+                    移动文件
+                  </a-button>
+                  <a-button
+                    v-if="!readonly"
+                    type="text"
+                    block
                     danger
                     @click="handleDeleteFile(row.file_id)"
                     :disabled="!canDeleteFile(row, lock)"
@@ -413,6 +433,7 @@ import {
   RotateCw,
   Ellipsis,
   FolderPlus,
+  FolderOpen,
   CheckSquare,
   FileText,
   Database,
@@ -421,6 +442,30 @@ import {
 } from 'lucide-vue-next'
 
 const store = useDatabaseStore()
+const movingFile = ref(null)
+const moving = ref(false)
+
+/** 将选中文档移动到文件浏览器当前目录，复用现有目录导航。 */
+const confirmMoveFile = async () => {
+  moving.value = true
+  try {
+    await documentApi.moveDocument(store.kbId, movingFile.value.file_id, store.fileBrowser.parentId)
+    movingFile.value = null
+    await store.loadDocumentFiles()
+    message.success('文件已移动')
+  } catch (error) {
+    message.error(error.message || '移动失败')
+  } finally {
+    moving.value = false
+  }
+}
+
+watch(
+  () => store.kbId,
+  () => {
+    movingFile.value = null
+  }
+)
 
 const props = defineProps({
   readonly: { type: Boolean, default: false },
