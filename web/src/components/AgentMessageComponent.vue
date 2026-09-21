@@ -276,13 +276,16 @@ const parsedData = computed(() => {
     reasoning_content: reasoningContent
   }
 })
+const validToolCalls = computed(() => enrichTaskToolCalls(props.message.tool_calls))
 
 // 推理面板展开状态
 const reasoningExpanded = ref(false)
 const reasoningPresentation = computed(() =>
   resolveReasoningPresentation({
     isProcessing: props.isProcessing,
-    hasReasoning: Boolean(parsedData.value.reasoning_content)
+    hasReasoning: Boolean(parsedData.value.reasoning_content),
+    hasContent: Boolean(parsedData.value.content),
+    hasToolCalls: validToolCalls.value.length > 0
   })
 )
 const isReasoningActive = computed(() => reasoningPresentation.value.active)
@@ -351,8 +354,6 @@ const messageSources = computed(() => {
   }
   return { knowledgeChunks: [], webSources: [] }
 })
-
-const validToolCalls = computed(() => enrichTaskToolCalls(props.message.tool_calls))
 
 </script>
 

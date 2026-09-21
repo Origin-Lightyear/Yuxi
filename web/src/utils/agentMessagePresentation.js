@@ -1,8 +1,15 @@
 /**
  * 根据整轮处理状态和推理内容决定推理面板的默认展示状态。
  */
-export const resolveReasoningPresentation = ({ isProcessing = false, hasReasoning = false } = {}) => {
-  const active = isProcessing && hasReasoning
+export const resolveReasoningPresentation = (
+  {
+    isProcessing = false,
+    hasReasoning = false,
+    hasContent = false,
+    hasToolCalls = false
+  } = {}
+) => {
+  const active = isProcessing && hasReasoning && !hasContent && !hasToolCalls
   return { active, expanded: active }
 }
 
@@ -15,7 +22,7 @@ export const resolveToolPresentation = (toolCalls = [], activeIds = new Set(), i
     const isTerminal = ['success', 'finished', 'error', 'cancelled', 'completed'].includes(
       toolCall?.status
     )
-    if (!isTerminal && (activeIds.has(id) || (isActive && toolCall?.status === 'running'))) {
+    if (isActive && !isTerminal && (activeIds.has(id) || toolCall?.status === 'running')) {
       indexes.push(index)
     }
     return indexes
