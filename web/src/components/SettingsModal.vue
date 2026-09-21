@@ -205,7 +205,7 @@
             <UserManagementComponent />
           </div>
 
-          <div v-show="activeTab === 'department'" v-if="userStore.isSuperAdmin">
+          <div v-show="activeTab === 'department'" v-if="userStore.isSuperAdmin && !userStore.saasMode">
             <DepartmentManagementComponent />
           </div>
         </div>

@@ -5,10 +5,20 @@ Integration tests for authentication-related API routes.
 from __future__ import annotations
 
 import uuid
+import os
 
 import pytest
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def _db_conn():
+    import asyncpg
+
+    from yuxi.storage.postgres.manager import pg_manager
+
+    dsn = os.environ[pg_manager.KB_DATABASE_URL_ENV].replace("postgresql+asyncpg://", "postgresql://")
+    return await asyncpg.connect(dsn)
 
 
 async def _require_superadmin(test_client, headers):
@@ -108,6 +118,27 @@ async def test_admin_can_login_and_fetch_profile(test_client, admin_headers):
     assert data["role"] in {"admin", "superadmin"}
     assert data["username"]
     assert data["id"]
+
+
+async def test_saas_employee_profile_exposes_identity_fields(test_client, standard_user):
+    uid = standard_user["user"]["uid"]
+    conn = await _db_conn()
+    try:
+        await conn.execute(
+            "INSERT INTO user_config (uid, enable_memory, tenant_id, employee_id) VALUES ($1, FALSE, $2, $3)",
+            uid,
+            100,
+            200,
+        )
+
+        response = await test_client.get("/api/auth/me", headers=standard_user["headers"])
+
+        assert response.status_code == 200, response.text
+        assert response.json()["saas_mode"] is True
+        assert response.json()["employee_code"] == uid
+    finally:
+        await conn.execute("DELETE FROM user_config WHERE uid = $1", uid)
+        await conn.close()
 
 
 async def test_profile_requires_authentication(test_client):

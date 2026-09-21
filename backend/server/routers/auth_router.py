@@ -100,6 +100,8 @@ class UserResponse(BaseModel):
     role: str
     department_id: int | None = None
     department_name: str | None = None  # 部门名称
+    saas_mode: bool = False
+    employee_code: str | None = None
     created_at: str
     last_login: str | None = None
 
@@ -834,6 +836,12 @@ async def read_users_me(current_user: User = Depends(get_required_user), db: Asy
     if current_user.department_id:
         result = await db.execute(select(Department.name).filter(Department.id == current_user.department_id))
         user_dict["department_name"] = result.scalar_one_or_none()
+
+    from yuxi.services.saas_identity import get_saas_employee_context
+
+    saas_context = await get_saas_employee_context(db, current_user.uid)
+    user_dict["saas_mode"] = saas_context is not None
+    user_dict["employee_code"] = current_user.uid if saas_context is not None else None
 
     return user_dict
 

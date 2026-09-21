@@ -53,3 +53,19 @@ built successfully
 
 - 本次设置导航以 `saasMode` 为总开关；若未来 SaaS 管理员需要使用本地管理员配置入口，需要新增明确的权限/租户策略，而不能直接复用本地 `isAdmin`。
 - 工作区存在其他代理或用户的未提交改动，本次提交仅包含上述 Task 2 文件和报告。
+
+## 复审 Round 1 修复
+
+### RED
+
+新增 `backend/test/unit/routers/test_auth_router_cli_auth.py::test_auth_router_me_exposes_persisted_saas_identity`，通过真实 FastAPI `/api/auth/me` 路由请求带有 `UserConfig.tenant_id/employee_id` 的用户。修复前测试失败：响应缺少 `saas_mode`，抛出 `KeyError`。
+
+### GREEN
+
+- `UserResponse` 新增 `saas_mode` 和 `employee_code` 字段。
+- `/api/auth/me` 使用现有 `get_saas_employee_context` 持久化身份判断 SaaS 模式，并以用户 UID 返回 employee code；本地用户返回 `false`/`null`。
+- 部门管理内容补充 `!saasMode`，与导航入口一致。
+
+验证结果：后端 auth router 单测 `2 passed`；前端 SaaS 测试 `3 passed`；前端全量单测 `20 passed`；ESLint 通过；构建成功。auth 集成测试因未配置 `TEST_USERNAME/TEST_PASSWORD` 跳过。构建保留已有依赖注释和 chunk 大小警告。
+
+复审修复提交 SHA：待提交后填写。
