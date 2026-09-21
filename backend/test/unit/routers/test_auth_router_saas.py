@@ -109,8 +109,16 @@ async def test_upsert_saas_model_provider_updates_models_from_newapi(monkeypatch
         _Client(error=RuntimeError("NewAPI unavailable")),
         _Client(response=_Response({"data": None})),
         _Client(response=_Response({"error": "missing model list"})),
+        _Client(response=_Response({"data": [None]})),
+        _Client(response=_Response({"data": [{"name": "missing-model-id"}]})),
     ],
-    ids=["request-error", "invalid-model-list", "missing-model-list"],
+    ids=[
+        "request-error",
+        "invalid-model-list",
+        "missing-model-list",
+        "invalid-model-item",
+        "missing-model-id",
+    ],
 )
 async def test_upsert_saas_model_provider_keeps_existing_models_when_newapi_fails(monkeypatch, db, client):
     """请求或响应解析失败时保留数据库中的最后一版模型清单。"""

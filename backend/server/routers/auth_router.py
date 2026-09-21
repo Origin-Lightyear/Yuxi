@@ -235,19 +235,24 @@ async def _upsert_saas_model_provider(db, llm_key, llm_url):
             if not isinstance(raw_models, list):
                 raise ValueError("NewAPI model response must contain a model list")
             for m_data in raw_models:
-                if isinstance(m_data, dict) and m_data.get("id"):
-                    model_cfg = {
-                        "id": m_data["id"],
-                        "type": "chat",
-                        "source": "remote",
-                        "display_name": m_data.get("name", m_data["id"]),
-                    }
-                    # 保留已有 overrides 并添加默认 thinking disable
-                    if m_data["id"] in existing_overrides:
-                        model_cfg["request_body_overrides"] = existing_overrides[m_data["id"]]
-                    else:
-                        model_cfg["request_body_overrides"] = {"thinking": {"type": "disabled"}}
-                    enabled_models.append(model_cfg)
+                if not isinstance(m_data, dict):
+                    raise ValueError("NewAPI model list contains an invalid item")
+                model_id = m_data.get("id")
+                if not isinstance(model_id, str) or not model_id.strip():
+                    raise ValueError("NewAPI model item must contain a valid id")
+
+                model_cfg = {
+                    "id": model_id,
+                    "type": "chat",
+                    "source": "remote",
+                    "display_name": m_data.get("name", model_id),
+                }
+                # 保留已有 overrides 并添加默认 thinking disable
+                if model_id in existing_overrides:
+                    model_cfg["request_body_overrides"] = existing_overrides[model_id]
+                else:
+                    model_cfg["request_body_overrides"] = {"thinking": {"type": "disabled"}}
+                enabled_models.append(model_cfg)
             logger.info(f"SaaS NewAPI models fetched: {len(enabled_models)}")
     except Exception as exc:
         logger.warning(f"Failed to fetch SaaS NewAPI models: {exc}")
