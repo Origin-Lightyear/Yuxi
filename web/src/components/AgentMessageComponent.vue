@@ -42,7 +42,7 @@
           type="button"
           class="reasoning-summary"
           :class="{ 'is-expanded': reasoningExpanded }"
-          :aria-expanded="!isReasoningActive && reasoningExpanded"
+          :aria-expanded="reasoningExpanded"
           :disabled="isReasoningActive"
           @click="toggleReasoningExpanded"
         >
@@ -56,7 +56,7 @@
             <ChevronRight v-else size="14" />
           </span>
         </button>
-        <div v-if="!isReasoningActive && reasoningExpanded" class="reasoning-panel">
+        <div v-if="reasoningExpanded" class="reasoning-panel">
           <p class="reasoning-content">{{ parsedData.reasoning_content }}</p>
         </div>
       </div>
@@ -269,13 +269,26 @@ const copyToClipboard = async (text) => {
   }
 }
 
+const parsedData = computed(() => {
+  const { content, reasoningContent } = MessageProcessor.parseAssistantMessageBody(props.message)
+  return {
+    content,
+    reasoning_content: reasoningContent
+  }
+})
+
 // 推理面板展开状态
 const reasoningExpanded = ref(false)
-const reasoningPresentation = computed(() => resolveReasoningPresentation(props.message))
+const reasoningPresentation = computed(() =>
+  resolveReasoningPresentation({
+    isProcessing: props.isProcessing,
+    hasReasoning: Boolean(parsedData.value.reasoning_content)
+  })
+)
 const isReasoningActive = computed(() => reasoningPresentation.value.active)
 
 watch(
-  () => props.message.status,
+  isReasoningActive,
   () => {
     reasoningExpanded.value = reasoningPresentation.value.expanded
   },
@@ -341,13 +354,6 @@ const messageSources = computed(() => {
 
 const validToolCalls = computed(() => enrichTaskToolCalls(props.message.tool_calls))
 
-const parsedData = computed(() => {
-  const { content, reasoningContent } = MessageProcessor.parseAssistantMessageBody(props.message)
-  return {
-    content,
-    reasoning_content: reasoningContent
-  }
-})
 </script>
 
 <style lang="less" scoped>

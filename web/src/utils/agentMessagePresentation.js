@@ -1,21 +1,23 @@
 /**
- * 根据消息终态决定推理面板的默认展示状态。
+ * 根据整轮处理状态和推理内容决定推理面板的默认展示状态。
  */
-export const resolveReasoningPresentation = (message = {}) => {
-  const active = message.status === 'reasoning'
+export const resolveReasoningPresentation = ({ isProcessing = false, hasReasoning = false } = {}) => {
+  const active = isProcessing && hasReasoning
   return { active, expanded: active }
 }
 
 /**
  * 为工具调用选择唯一的自动展开项，完成项默认保持收起。
  */
-export const resolveToolPresentation = (toolCalls = [], activeIds = new Set()) => {
+export const resolveToolPresentation = (toolCalls = [], activeIds = new Set(), isActive = true) => {
   const activeIndexes = toolCalls.reduce((indexes, toolCall, index) => {
     const id = toolCall?.id == null ? '' : String(toolCall.id)
     const isTerminal = ['success', 'finished', 'error', 'cancelled', 'completed'].includes(
       toolCall?.status
     )
-    if (!isTerminal && (toolCall?.status === 'running' || activeIds.has(id))) indexes.push(index)
+    if (!isTerminal && (activeIds.has(id) || (isActive && toolCall?.status === 'running'))) {
+      indexes.push(index)
+    }
     return indexes
   }, [])
   const activeIndex = activeIndexes.at(-1)

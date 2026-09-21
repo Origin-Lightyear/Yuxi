@@ -85,7 +85,8 @@ const toolPresentations = computed(() =>
       ...toolCall,
       status: toolRunState(toolCall) === 'running' ? 'running' : toolCall.status
     })),
-    activeSubagentToolCallIds?.value || new Set()
+    activeSubagentToolCallIds?.value || new Set(),
+    props.isActive
   )
 )
 const hasActiveToolCall = computed(() => toolPresentations.value.some((item) => item.active))
