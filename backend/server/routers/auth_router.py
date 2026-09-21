@@ -46,6 +46,7 @@ from yuxi.services.oidc_service import (
 # SaaS 多租户认证相关导入
 from yuxi.services.saas_client import SaasAPIError, get_saas_client
 from yuxi.config import config as app_config
+from server.routers.model_provider_router import _refresh_model_cache
 
 # 创建路由器
 auth = APIRouter(prefix="/auth", tags=["authentication"])
@@ -277,6 +278,12 @@ async def _upsert_saas_model_provider(db, llm_key, llm_url):
             logger.info(f"SaaS model provider updated: {provider_id}")
 
     await db.flush()
+
+
+async def _commit_saas_changes_and_refresh_model_cache(db) -> None:
+    """提交 SaaS 登录同步结果后，刷新跨进程模型缓存。"""
+    await db.commit()
+    await _refresh_model_cache()
 
 
 async def _upsert_saas_mcp_server(db, mcp_url: str, instance_id: str) -> None:
@@ -529,7 +536,7 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
     )
 
     await save_saas_employee_context(db, user.uid, emp.tenant_id, emp.employee_id)
-    await db.commit()
+    await _commit_saas_changes_and_refresh_model_cache(db)
 
     if selected_mcp:
         await save_saas_agent_session(
