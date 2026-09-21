@@ -121,8 +121,9 @@ const userRoleText = computed(() => {
 })
 
 // 退出登录
-const logout = async () => {
-  await userStore.logout()
+const logout = () => {
+  // Store 同步清理本地状态，后端注销请求不阻塞页面跳转。
+  void userStore.logout()
   message.success('已退出登录')
   router.replace('/login')
 }

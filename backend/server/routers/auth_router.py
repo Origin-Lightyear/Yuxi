@@ -231,8 +231,10 @@ async def _upsert_saas_model_provider(db, llm_key, llm_url):
             )
             resp.raise_for_status()
             payload = resp.json()
-            raw_models = payload.get("data", []) if isinstance(payload, dict) else payload
-            for m_data in raw_models if isinstance(raw_models, list) else []:
+            raw_models = payload.get("data") if isinstance(payload, dict) else payload
+            if not isinstance(raw_models, list):
+                raise ValueError("NewAPI model response must contain a model list")
+            for m_data in raw_models:
                 if isinstance(m_data, dict) and m_data.get("id"):
                     model_cfg = {
                         "id": m_data["id"],
@@ -250,7 +252,8 @@ async def _upsert_saas_model_provider(db, llm_key, llm_url):
     except Exception as exc:
         logger.warning(f"Failed to fetch SaaS NewAPI models: {exc}")
 
-    if enabled_models:
+    else:
+        # 成功返回空清单也要覆盖旧值；请求或解析失败时保留上一版配置。
         if provider is None:
             payload = _normalize_payload(
                 {

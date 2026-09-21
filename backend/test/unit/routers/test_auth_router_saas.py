@@ -67,7 +67,9 @@ async def test_saas_model_sync_refreshes_cache_after_commit(monkeypatch):
     assert events == ["commit", "refresh"]
 
 
-async def test_upsert_saas_model_provider_updates_models_from_newapi(monkeypatch, db):
+@pytest.mark.parametrize("models", [[{"id": "new-model", "name": "New Model"}], []], ids=["nonempty", "empty"])
+async def test_upsert_saas_model_provider_updates_models_from_newapi(monkeypatch, db, models):
+    """成功拉取的模型清单（包括空清单）必须覆盖数据库中的旧值。"""
     provider = ModelProvider(
         provider_id="saas-newapi",
         display_name="SaaS NewAPI",
@@ -81,14 +83,13 @@ async def test_upsert_saas_model_provider_updates_models_from_newapi(monkeypatch
     db.add(provider)
     await db.commit()
 
-    response = _Response({"data": [{"id": "new-model", "name": "New Model"}]})
+    response = _Response({"data": models})
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _Client(response=response))
 
     await auth_router._upsert_saas_model_provider(db, "new-key", "https://newapi.example")
+    await db.refresh(provider)
 
-    assert provider.base_url == "https://newapi.example"
-    assert provider.api_key == "new-key"
-    assert provider.enabled_models == [
+    expected_models = [
         {
             "id": "new-model",
             "type": "chat",
@@ -97,9 +98,22 @@ async def test_upsert_saas_model_provider_updates_models_from_newapi(monkeypatch
             "request_body_overrides": {"thinking": {"type": "disabled"}},
         }
     ]
+    assert provider.enabled_models == (expected_models if models else [])
+    assert provider.base_url == "https://newapi.example"
+    assert provider.api_key == "new-key"
 
 
-async def test_upsert_saas_model_provider_keeps_existing_models_when_newapi_fails(monkeypatch, db):
+@pytest.mark.parametrize(
+    "client",
+    [
+        _Client(error=RuntimeError("NewAPI unavailable")),
+        _Client(response=_Response({"data": None})),
+        _Client(response=_Response({"error": "missing model list"})),
+    ],
+    ids=["request-error", "invalid-model-list", "missing-model-list"],
+)
+async def test_upsert_saas_model_provider_keeps_existing_models_when_newapi_fails(monkeypatch, db, client):
+    """请求或响应解析失败时保留数据库中的最后一版模型清单。"""
     existing_models = [{"id": "existing-model", "type": "chat"}]
     provider = ModelProvider(
         provider_id="saas-newapi",
@@ -117,9 +131,10 @@ async def test_upsert_saas_model_provider_keeps_existing_models_when_newapi_fail
     monkeypatch.setattr(
         httpx,
         "AsyncClient",
-        lambda **kwargs: _Client(error=RuntimeError("NewAPI unavailable")),
+        lambda **kwargs: client,
     )
 
     await auth_router._upsert_saas_model_provider(db, "new-key", "https://newapi.example")
+    await db.refresh(provider)
 
     assert provider.enabled_models == existing_models
