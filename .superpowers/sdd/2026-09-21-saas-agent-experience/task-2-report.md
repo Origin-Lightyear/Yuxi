@@ -68,4 +68,4 @@ built successfully
 
 验证结果：后端 auth router 单测 `2 passed`；前端 SaaS 测试 `3 passed`；前端全量单测 `20 passed`；ESLint 通过；构建成功。auth 集成测试因未配置 `TEST_USERNAME/TEST_PASSWORD` 跳过。构建保留已有依赖注释和 chunk 大小警告。
 
-复审修复提交 SHA：待提交后填写。
+复审修复提交 SHA：`25d52019`。
