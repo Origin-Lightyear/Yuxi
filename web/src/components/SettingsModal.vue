@@ -41,7 +41,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'base' }"
             @click="activeTab = 'base'"
-            v-if="userStore.isAdmin"
+            v-if="userStore.isAdmin && !userStore.saasMode"
           >
             <Settings class="icon" :size="18" />
             <span>基本设置</span>
@@ -50,7 +50,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'ocr' }"
             @click="activeTab = 'ocr'"
-            v-if="userStore.isAdmin"
+            v-if="userStore.isAdmin && !userStore.saasMode"
           >
             <ScanText class="icon" :size="18" />
             <span>OCR 配置</span>
@@ -68,7 +68,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'department' }"
             @click="activeTab = 'department'"
-            v-if="userStore.isSuperAdmin"
+            v-if="userStore.isSuperAdmin && !userStore.saasMode"
           >
             <Users class="icon" :size="18" />
             <span>部门管理</span>
@@ -77,7 +77,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'agentEnv' }"
             @click="activeTab = 'agentEnv'"
-            v-if="userStore.isLoggedIn"
+            v-if="userStore.isLoggedIn && !userStore.saasMode"
           >
             <SquareTerminal class="icon" :size="18" />
             <span>环境变量</span>
@@ -140,7 +140,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'agentEnv' }"
           @click="activeTab = 'agentEnv'"
-          v-if="userStore.isLoggedIn"
+          v-if="userStore.isLoggedIn && !userStore.saasMode"
         >
           沙盒环境变量
         </div>
@@ -148,7 +148,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'base' }"
           @click="activeTab = 'base'"
-          v-if="userStore.isAdmin"
+          v-if="userStore.isAdmin && !userStore.saasMode"
         >
           基本设置
         </div>
@@ -156,7 +156,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'ocr' }"
           @click="activeTab = 'ocr'"
-          v-if="userStore.isAdmin"
+          v-if="userStore.isAdmin && !userStore.saasMode"
         >
           OCR 配置
         </div>
@@ -172,7 +172,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'department' }"
           @click="activeTab = 'department'"
-          v-if="userStore.isSuperAdmin"
+          v-if="userStore.isSuperAdmin && !userStore.saasMode"
         >
           部门管理
         </div>
@@ -189,15 +189,15 @@
             <ApiKeyManagementComponent />
           </div>
 
-          <div v-if="activeTab === 'agentEnv' && userStore.isLoggedIn">
+          <div v-if="activeTab === 'agentEnv' && userStore.isLoggedIn && !userStore.saasMode">
             <AgentEnvSettingsCard />
           </div>
 
-          <div v-show="activeTab === 'base'" v-if="userStore.isAdmin">
+          <div v-show="activeTab === 'base'" v-if="userStore.isAdmin && !userStore.saasMode">
             <BasicSettingsSection />
           </div>
 
-          <div v-show="activeTab === 'ocr'" v-if="userStore.isAdmin">
+          <div v-show="activeTab === 'ocr'" v-if="userStore.isAdmin && !userStore.saasMode">
             <OCRSettingsSection />
           </div>
 
@@ -264,9 +264,10 @@ const visible = computed({
 
 const availableTabs = computed(() => {
   const tabs = []
-  if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv')
-  if (userStore.isAdmin) tabs.push('base', 'ocr', 'user')
-  if (userStore.isSuperAdmin) tabs.push('department')
+  if (userStore.isLoggedIn) tabs.push('account', 'apiKeys')
+  if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('agentEnv')
+  if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user')
+  if (userStore.isSuperAdmin && !userStore.saasMode) tabs.push('department')
   return tabs
 })
 
@@ -275,7 +276,7 @@ const setActiveTab = (preferredTab) => {
     activeTab.value = preferredTab
     return
   }
-  activeTab.value = userStore.isAdmin ? 'base' : availableTabs.value[0]
+  activeTab.value = availableTabs.value[0]
 }
 
 const handleClose = () => {

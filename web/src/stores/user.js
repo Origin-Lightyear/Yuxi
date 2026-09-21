@@ -2,6 +2,13 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useAgentStore } from './agent'
 
+export function formatUserSummary({ saasMode, departmentName, username }) {
+  if (saasMode && departmentName) {
+    return `${departmentName} · ${username}`
+  }
+  return username
+}
+
 export const useUserStore = defineStore('user', () => {
   // 状态
   const token = ref(localStorage.getItem('user_token') || '')
@@ -137,6 +144,8 @@ export const useUserStore = defineStore('user', () => {
       userRole.value = data.role
       departmentId.value = data.department_id || null
       departmentName.value = data.department_name || ''
+      saasMode.value = data.saas_mode || false
+      employeeCode.value = data.employee_code || ''
 
       // 只保存 token 到本地存储
       localStorage.setItem('user_token', data.access_token)
@@ -350,6 +359,8 @@ export const useUserStore = defineStore('user', () => {
       userRole.value = userData.role
       departmentId.value = userData.department_id || null
       departmentName.value = userData.department_name || ''
+      saasMode.value = userData.saas_mode || false
+      employeeCode.value = userData.employee_code || ''
 
       return userData
     } catch (error) {
