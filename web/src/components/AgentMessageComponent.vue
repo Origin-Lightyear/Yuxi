@@ -156,7 +156,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onUnmounted } from 'vue'
+import { computed, ref, onUnmounted, watch } from 'vue'
 import RefsComponent from '@/components/RefsComponent.vue'
 import { Brain, Check, ChevronDown, ChevronRight, Copy, LoaderCircle, X } from 'lucide-vue-next'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
@@ -170,6 +170,7 @@ import { inferImageMimeTypeFromBase64, normalizeAttachmentPreviews } from '@/uti
 import { buildMentionDisplayLabels } from '@/utils/mention_utils'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { enrichTaskToolCalls } from '@/components/ToolCallingResult/toolRegistry'
+import { resolveReasoningPresentation } from '@/utils/agentMessagePresentation'
 
 const props = defineProps({
   // 消息角色：'user'|'assistant'|'sent'|'received'
@@ -270,7 +271,16 @@ const copyToClipboard = async (text) => {
 
 // 推理面板展开状态
 const reasoningExpanded = ref(false)
-const isReasoningActive = computed(() => props.message.status === 'reasoning')
+const reasoningPresentation = computed(() => resolveReasoningPresentation(props.message))
+const isReasoningActive = computed(() => reasoningPresentation.value.active)
+
+watch(
+  () => props.message.status,
+  () => {
+    reasoningExpanded.value = reasoningPresentation.value.expanded
+  },
+  { immediate: true }
+)
 
 const toggleReasoningExpanded = () => {
   if (isReasoningActive.value) return

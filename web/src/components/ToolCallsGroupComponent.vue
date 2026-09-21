@@ -29,10 +29,14 @@
     <div v-if="!shouldCollapseToolCalls || areToolCallsExpanded" class="tool-calls-panel">
       <div
         v-for="(toolCall, index) in normalizedToolCalls"
-        :key="toolCall.id || `${getToolCallId(toolCall)}-${index}`"
+        :key="`${toolCall.id || `${getToolCallId(toolCall)}-${index}`}-${toolPresentations[index]?.active ? 'active' : 'idle'}`"
         class="tool-call-container"
       >
-        <ToolCallRenderer :tool-call="toolCall" appearance="timeline" :default-expanded="false" />
+        <ToolCallRenderer
+          :tool-call="toolCall"
+          appearance="timeline"
+          :default-expanded="toolPresentations[index]?.expanded || false"
+        />
       </div>
     </div>
   </div>
@@ -47,12 +51,14 @@ import {
   isSubagentToolCall,
   normalizeToolCalls
 } from '@/components/ToolCallingResult/toolRegistry'
+import { resolveToolPresentation } from '@/utils/agentMessagePresentation'
 
 const activeSubagentToolCallIds = inject('activeSubagentToolCallIds', null)
 
 // task 工具结果不随流式返回，不能用 tool_call_result 判断运行中：只有「活跃」的 task 才算运行中。
 const toolRunState = (toolCall) => {
   if (toolCall.status === 'error') return 'error'
+  if (toolCall.status === 'cancelled') return 'completed'
   if (toolCall.tool_call_result || toolCall.status === 'success') return 'completed'
   if (isSubagentToolCall(toolCall)) {
     if (getToolCallId(toolCall) !== 'task') return 'running'
@@ -73,21 +79,34 @@ const props = defineProps({
 })
 
 const normalizedToolCalls = computed(() => normalizeToolCalls(props.toolCalls))
+const toolPresentations = computed(() =>
+  resolveToolPresentation(
+    normalizedToolCalls.value.map((toolCall) => ({
+      ...toolCall,
+      status: toolRunState(toolCall) === 'running' ? 'running' : toolCall.status
+    })),
+    activeSubagentToolCallIds?.value || new Set()
+  )
+)
+const hasActiveToolCall = computed(() => toolPresentations.value.some((item) => item.active))
 
 const shouldCollapseToolCalls = computed(() => normalizedToolCalls.value.length > 0)
 const areToolCallsExpanded = ref(false)
 
 watch(
-  [() => normalizedToolCalls.value.length, () => props.isActive],
-  ([, isActive], [, previousActive]) => {
+  [() => normalizedToolCalls.value.length, () => props.isActive, hasActiveToolCall],
+  ([, isActive, hasActive], [, previousActive, previousHasActive]) => {
     // 如果是活跃状态，强制展开
-    if (isActive) {
+    if (isActive || hasActive) {
       areToolCallsExpanded.value = true
       return
     }
 
     // 从活跃转为非活跃（例如：正文开始输出了），则收起
-    if (previousActive === true && isActive === false) {
+    if (
+      (previousActive === true && isActive === false) ||
+      (previousHasActive === true && hasActive === false)
+    ) {
       areToolCallsExpanded.value = false
       return
     }
