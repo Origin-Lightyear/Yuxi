@@ -31,6 +31,7 @@ async def saas_user_uid():
         if record is not None:
             record.tenant_id = None
             record.employee_id = None
+            record.tenant_department_id = None
             await db.commit()
 
 
@@ -38,7 +39,13 @@ async def test_save_and_read_employee_context_roundtrip(saas_user_uid):
     async with pg_manager.get_async_session_context() as db:
         assert await get_saas_employee_context(db, saas_user_uid) is None
 
-        await save_saas_employee_context(db, saas_user_uid, tenant_id=100, employee_id=200)
+        await save_saas_employee_context(
+            db,
+            saas_user_uid,
+            tenant_id=100,
+            employee_id=200,
+            tenant_department_id=300,
+        )
         await db.commit()
 
         ctx = await get_saas_employee_context(db, saas_user_uid)
@@ -47,4 +54,5 @@ async def test_save_and_read_employee_context_roundtrip(saas_user_uid):
     assert ctx.uid == saas_user_uid
     assert ctx.tenant_id == 100
     assert ctx.employee_id == 200
+    assert ctx.tenant_department_id == 300
     assert ctx.headers() == {"X-Tenant-Id": "100", "X-Employee-Id": "200"}

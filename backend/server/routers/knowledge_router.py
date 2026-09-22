@@ -173,6 +173,16 @@ def _ensure_document_params(params: dict | None) -> dict:
     return params
 
 
+async def _resolve_uploader_id(current_user: User) -> str:
+    """上传者：SaaS 员工为 Tenant 员工 ID，其余（管理员/租户后台操作）为 "0"。"""
+    from yuxi.services.saas_identity import get_saas_employee_context
+    from yuxi.storage.postgres.manager import pg_manager
+
+    async with pg_manager.get_async_session_context() as session:
+        ctx = await get_saas_employee_context(session, current_user.uid)
+    return str(ctx.employee_id) if ctx else "0"
+
+
 def _validate_uploaded_document_items(kb_id: str, items: list[str], params: dict) -> None:
     """校验最终存储路径归属，客户端 hash 和预处理信息不授予源对象访问权。"""
     if not items:
@@ -769,6 +779,7 @@ async def add_documents(
 
     params = _ensure_document_params(params)
     await ensure_kb_folder(kb_id, params.get("parent_id"))
+    params["uploader_id"] = await _resolve_uploader_id(current_user)
     content_type = params.get("content_type", "file")
     # 自动入库参数
     auto_index = params.get("auto_index", False)
@@ -955,6 +966,7 @@ async def add_uploaded_documents(
     await _ensure_database_supports_documents(kb_id, "文档添加")
 
     params = _ensure_document_params(payload.params)
+    params["uploader_id"] = await _resolve_uploader_id(current_user)
     content_type = params.get("content_type", "file")
     if content_type == "url":
         raise HTTPException(status_code=400, detail="URL 处理方式已变更，请使用 fetch-url 接口先获取内容")

@@ -37,6 +37,21 @@ def test_knowledge_base_global_read_and_department_manage():
     assert resolve_knowledge_base_permission(readonly_admin, resource) == ResourcePermission.READ
 
 
+def test_saas_tenant_department_takes_precedence_over_local_department():
+    resource = _resource(
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "department", "department_ids": [1]},
+            "manage_scope": {"access_level": "department", "department_ids": [1]},
+        }
+    )
+
+    # 42 是 Yuxi 本地部门主键，1 是租户平台部门主键；权限匹配使用后者。
+    user = _user(department_id=42)
+    user.tenant_department_id = 1
+    assert resolve_knowledge_base_permission(user, resource) == ResourcePermission.MANAGE
+
+
 def test_invalid_v2_scope_does_not_expand_read_access_when_reading():
     resource = _resource(
         share_config={

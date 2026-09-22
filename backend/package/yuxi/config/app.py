@@ -52,6 +52,10 @@ class Config(BaseModel):
         default="siliconflow-cn:Pro/BAAI/bge-m3",
         description="默认 Embedding 模型",
     )
+    embed_fallback_model: str = Field(
+        default="ollama:bge-m3",
+        description="Embedding 模型未注册时的降级模型",
+    )
     reranker: str = Field(
         default="siliconflow-cn:Pro/BAAI/bge-reranker-v2-m3",
         description="默认 Re-Ranker 模型",

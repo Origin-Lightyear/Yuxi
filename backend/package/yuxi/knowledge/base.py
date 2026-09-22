@@ -110,6 +110,7 @@ class KnowledgeBase(ABC):
             "error": record.error_message,
             "created_by": record.created_by,
             "updated_by": record.updated_by,
+            "uploader_id": getattr(record, "uploader_id", None) or "0",
             "created_at": utc_isoformat(record.created_at) if record.created_at else None,
             "updated_at": utc_isoformat(record.updated_at) if record.updated_at else None,
             "original_filename": record.original_filename,
@@ -138,6 +139,7 @@ class KnowledgeBase(ABC):
             "error_message": meta.get("error"),
             "created_by": str(meta.get("created_by")) if meta.get("created_by") else None,
             "updated_by": str(meta.get("updated_by")) if meta.get("updated_by") else None,
+            "uploader_id": meta.get("uploader_id"),
         }
 
     async def _load_file_meta(self, kb_id: str, file_id: str, *, refresh: bool = False) -> dict:
@@ -936,7 +938,13 @@ class KnowledgeBase(ABC):
         """检测当前知识库类型管理的外部资源不一致。"""
         return {"missing_collections": [], "missing_files": []}
 
-    async def create_folder(self, kb_id: str, folder_name: str, parent_id: str | None = None) -> dict:
+    async def create_folder(
+        self,
+        kb_id: str,
+        folder_name: str,
+        parent_id: str | None = None,
+        uploader_id: str = "0",
+    ) -> dict:
         """Create a folder in the database."""
         import uuid
 
@@ -957,6 +965,7 @@ class KnowledgeBase(ABC):
             "status": "done",
             "path": folder_name,
             "file_type": "folder",
+            "uploader_id": uploader_id,
         }
         await self._persist_file_meta(folder_id, folder_meta)
         return folder_meta

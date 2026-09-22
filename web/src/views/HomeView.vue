@@ -57,22 +57,6 @@
       <main class="hero-section">
         <div class="hero-layout">
           <div class="hero-content reveal-up">
-            <p v-if="typedBadge" class="hero-badge" :class="{ typing: isBadgeTyping }">
-              <span class="badge-dot"></span>
-              <template v-if="badgeParts.number">
-                <span>{{ badgeParts.prefix }}</span>
-                <a
-                  class="hero-badge-link"
-                  :href="repoUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span class="hero-badge-number">{{ badgeParts.number }}</span>
-                </a>
-                <span>{{ badgeParts.suffix }}</span>
-              </template>
-              <template v-else>{{ typedBadge }}</template>
-            </p>
             <h1 class="title reveal-up delay-1">{{ infoStore.branding.title }}</h1>
             <Transition name="subtitle-switch" mode="out-in">
               <p v-if="currentSubtitle" class="subtitle" :key="currentSubtitle">
@@ -178,15 +162,6 @@
                 <p class="flow-caption">智能体发起检索 · 引擎融合向量与图谱 · 召回知识增强生成</p>
               </div>
 
-              <div class="stat-row" v-if="realtimeStats.length">
-                <div class="stat-item" v-for="stat in realtimeStats" :key="stat.key">
-                  <span class="stat-item-value">
-                    <component :is="stat.icon" :size="15" />
-                    {{ stat.value }}
-                  </span>
-                  <span class="stat-item-label">{{ stat.label }}</span>
-                </div>
-              </div>
             </div>
           </aside>
         </div>
@@ -212,9 +187,6 @@ import { healthApi } from '@/apis/system_api'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
 import {
   BookText,
-  Star,
-  GitFork,
-  CircleDot,
   ArrowRight,
   Workflow,
   Library,
@@ -224,28 +196,12 @@ import {
 const router = useRouter()
 const userStore = useUserStore()
 const infoStore = useInfoStore()
-const repoUrl = 'https://github.com/xerrors/Yuxi'
 const faqUrl = 'https://xerrors.github.io/Yuxi/'
 
 // 加载状态
 const isLoading = ref(true)
 const error = ref(null)
-const typedBadge = ref('')
-const isBadgeTyping = ref(false)
-const githubStats = ref(null)
-let badgeTimer = null
 let subtitleTimer = null
-let starsFetchController = null
-
-const GITHUB_REPO_API = 'https://api.github.com/repos/xerrors/Yuxi'
-const GITHUB_STARS_TIMEOUT = 3000
-
-const formatStars = (count) => {
-  if (!Number.isFinite(count) || count <= 0) {
-    return ''
-  }
-  return `${count}`
-}
 
 const subtitleIndex = ref(0)
 
@@ -265,23 +221,6 @@ const subtitleOptions = computed(() => {
 })
 
 const currentSubtitle = computed(() => subtitleOptions.value[subtitleIndex.value] || '')
-const badgeParts = computed(() => {
-  const text = typedBadge.value || ''
-  const match = text.match(/^(.*?)(\d[\d,]*\+?)(\s+GitHub Stars.*)?$/)
-  if (!match) {
-    return {
-      prefix: text,
-      number: '',
-      suffix: ''
-    }
-  }
-
-  return {
-    prefix: match[1] || '',
-    number: match[2] || '',
-    suffix: match[3] || ''
-  }
-})
 
 const stopSubtitleCarousel = () => {
   if (subtitleTimer) {
@@ -301,76 +240,6 @@ const startSubtitleCarousel = () => {
   subtitleTimer = setInterval(() => {
     subtitleIndex.value = (subtitleIndex.value + 1) % subtitleOptions.value.length
   }, 2800)
-}
-
-const stopStarsFetch = () => {
-  if (starsFetchController) {
-    starsFetchController.abort()
-    starsFetchController = null
-  }
-}
-
-const fetchGithubRepo = async () => {
-  stopStarsFetch()
-  const controller = new AbortController()
-  starsFetchController = controller
-  const timer = setTimeout(() => {
-    controller.abort()
-  }, GITHUB_STARS_TIMEOUT)
-
-  try {
-    const response = await fetch(GITHUB_REPO_API, { signal: controller.signal })
-    if (!response.ok) {
-      return null
-    }
-
-    const data = await response.json()
-    return {
-      stars: Number(data?.stargazers_count) || 0,
-      forks: Number(data?.forks_count) || 0,
-      issues: Number(data?.open_issues_count) || 0
-    }
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-    if (starsFetchController === controller) {
-      starsFetchController = null
-    }
-  }
-}
-
-const getHeroBadgeText = (starsCount = null) => {
-  const realtimeStars = formatStars(starsCount)
-  return realtimeStars ? `已获得 ${realtimeStars} GitHub Stars` : ''
-}
-
-const stopBadgeTyping = () => {
-  if (badgeTimer) {
-    clearInterval(badgeTimer)
-    badgeTimer = null
-  }
-  isBadgeTyping.value = false
-}
-
-const startBadgeTyping = (starsCount = null) => {
-  stopBadgeTyping()
-  const text = getHeroBadgeText(starsCount)
-  typedBadge.value = ''
-
-  if (!text) {
-    return
-  }
-
-  let index = 0
-  isBadgeTyping.value = true
-  badgeTimer = setInterval(() => {
-    index += 1
-    typedBadge.value = text.slice(0, index)
-    if (index >= text.length) {
-      stopBadgeTyping()
-    }
-  }, 45)
 }
 
 const checkHealth = async () => {
@@ -398,15 +267,9 @@ const loadData = async () => {
     // 健康检查通过后加载配置
     await infoStore.loadInfoConfig()
     startSubtitleCarousel()
-    const repo = await fetchGithubRepo()
-    githubStats.value = repo
-    startBadgeTyping(repo?.stars ?? null)
   } catch (e) {
     console.error('加载失败:', e)
-    stopBadgeTyping()
     stopSubtitleCarousel()
-    stopStarsFetch()
-    typedBadge.value = ''
   } finally {
     isLoading.value = false
   }
@@ -432,26 +295,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  stopBadgeTyping()
   stopSubtitleCarousel()
-  stopStarsFetch()
-})
-
-const formatCount = (count) =>
-  Number.isFinite(count) && count >= 0 ? count.toLocaleString('en-US') : ''
-
-// 首页统计直接展示实时的 GitHub 仓库数据，不再依赖 branding 配置
-const realtimeStats = computed(() => {
-  const stats = githubStats.value
-  if (!stats) {
-    return []
-  }
-
-  return [
-    { key: 'stars', label: 'Stars', value: formatCount(stats.stars), icon: Star },
-    { key: 'forks', label: 'Forks', value: formatCount(stats.forks), icon: GitFork },
-    { key: 'issues', label: 'Open Issues', value: formatCount(stats.issues), icon: CircleDot }
-  ]
 })
 </script>
 
@@ -652,58 +496,6 @@ const realtimeStats = computed(() => {
 
 .reveal-up.delay-2 {
   animation-delay: 220ms;
-}
-
-.hero-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  align-self: flex-start;
-  padding: 0.4rem 0.9rem;
-  border-radius: 999px;
-  background: var(--main-0);
-  border: 1px solid var(--main-40);
-  color: var(--main-700);
-  font-size: 0.85rem;
-  letter-spacing: 0.02em;
-  font-weight: 600;
-  margin: 0;
-  box-shadow: 0 4px 14px -8px rgba(3, 80, 101, 0.4);
-}
-
-.badge-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--main-500);
-  box-shadow: 0 0 0 4px var(--main-50);
-  flex-shrink: 0;
-}
-
-.hero-badge-link {
-  color: inherit;
-  text-decoration: none;
-}
-
-.hero-badge-number {
-  color: var(--main-700);
-  font-weight: 700;
-  transition: color 0.2s ease;
-}
-
-.hero-badge-link:hover .hero-badge-number {
-  color: var(--main-800);
-}
-
-.hero-badge.typing::after {
-  content: '';
-  display: inline-block;
-  width: 1px;
-  height: 1em;
-  margin-left: 2px;
-  background: var(--main-600);
-  vertical-align: -0.1em;
-  animation: caretBlink 0.8s steps(1, end) infinite;
 }
 
 .title {
@@ -973,49 +765,6 @@ const realtimeStats = computed(() => {
   line-height: 1.5;
 }
 
-.stat-row {
-  position: relative;
-  display: flex;
-  margin-top: 1.5rem;
-  padding-top: 1.35rem;
-  border-top: 1px solid var(--main-40);
-}
-
-.stat-item {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-
-  &:not(:first-child) {
-    padding-left: 1.2rem;
-  }
-
-  &:not(:last-child) {
-    padding-right: 1.2rem;
-    border-right: 1px solid var(--main-40);
-  }
-}
-
-.stat-item-value {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: var(--main-800);
-  line-height: 1.1;
-
-  :deep(svg) {
-    color: var(--main-500);
-  }
-}
-
-.stat-item-label {
-  font-size: 0.8rem;
-  color: var(--gray-600);
-}
-
 // 页脚
 .footer {
   position: relative;
@@ -1043,12 +792,6 @@ const realtimeStats = computed(() => {
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-@keyframes caretBlink {
-  50% {
-    opacity: 0;
   }
 }
 
@@ -1114,14 +857,6 @@ const realtimeStats = computed(() => {
     background: var(--main-5);
   }
 
-  .hero-badge-number {
-    color: var(--main-200);
-  }
-
-  .hero-badge-link:hover .hero-badge-number {
-    color: var(--main-100);
-  }
-
   .button-base.secondary {
     color: var(--main-200);
 
@@ -1145,8 +880,7 @@ const realtimeStats = computed(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .reveal-up,
-  .orb,
-  .hero-badge.typing::after {
+  .orb {
     animation: none;
   }
 

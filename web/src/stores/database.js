@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, reactive } from 'vue'
+import { ref, reactive, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { databaseApi, documentApi, queryApi } from '@/apis/knowledge_api'
 import { useTaskerStore } from '@/stores/tasker'
@@ -107,6 +107,15 @@ export const useDatabaseStore = defineStore('database', () => {
       state.listLoading = false
     }
   }
+
+  // 用户身份由 /auth/me 异步恢复；身份变化后重新选择管理员/SaaS 列表接口。
+  watch(
+    [() => userStore.isAdmin, () => userStore.saasMode],
+    ([isAdmin, saasMode], [previousIsAdmin, previousSaasMode]) => {
+      if (isAdmin === previousIsAdmin && saasMode === previousSaasMode) return
+      void loadDatabases()
+    }
+  )
 
   async function createDatabase(formData) {
     // 验证

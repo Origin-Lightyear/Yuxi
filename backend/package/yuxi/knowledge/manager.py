@@ -292,6 +292,7 @@ class KnowledgeBaseManager:
             "share_config": self._normalize_share_config(row.share_config),
             "created_by": row.created_by,
             "tenant_id": row.tenant_id,
+            "uploader_id": row.uploader_id or "0",
             "created_at": row.created_at,
             **normalized_stats,
         }
@@ -394,6 +395,7 @@ class KnowledgeBaseManager:
                     "role": user.role,
                     "department_id": user.department_id,
                     "tenant_id": saas_ctx.tenant_id,
+                    "tenant_department_id": saas_ctx.tenant_department_id,
                 }
             )
         return await self.get_databases_by_user(user)
@@ -475,6 +477,7 @@ class KnowledgeBaseManager:
         created_by: str | None = None,
         created_by_department_id: int | str | None = None,
         tenant_id: int | None = None,
+        uploader_id: str = "0",
         **kwargs,
     ) -> KnowledgeBaseDetail:
         """
@@ -484,12 +487,13 @@ class KnowledgeBaseManager:
             database_name: 数据库名称
             description: 数据库描述
             kb_type: 知识库类型，默认为 milvus
-            embedding_model_spec: 嵌入模型 spec
+            embedding_model_spec: 嵌入模型 spec；缺省使用默认嵌入模型（config.embed_model）
             llm_model_spec: LLM 模型 spec
             share_config: 共享配置
             created_by: 创建者 uid
             created_by_department_id: 创建者部门 ID
             tenant_id: 归属租户 ID（租户管理 API 创建时传入）
+            uploader_id: 上传者（SaaS 员工为 Tenant 员工 ID，租户后台/管理员为 0）
             **kwargs: 其他配置参数
 
         Returns:
@@ -516,14 +520,15 @@ class KnowledgeBaseManager:
         additional_params = kb_instance.normalize_additional_params(additional_params)
 
         if kb_instance.requires_embedding_model:
+            # 未显式指定时使用默认嵌入模型（config.embed_model）；未注册时降级到 config.embed_fallback_model
             if not embedding_model_spec:
-                raise ValueError("embedding_model_spec 不能为空")
+                from yuxi.config import config as app_config
 
-            from yuxi.models.providers.cache import model_cache
+                embedding_model_spec = app_config.embed_model
 
-            info = model_cache.get_model_info(embedding_model_spec)
-            if not info or info.model_type != "embedding":
-                raise ValueError(f"不支持的 embedding 模型: {embedding_model_spec}")
+            from yuxi.models.embed import resolve_embedding_model_spec
+
+            embedding_model_spec = resolve_embedding_model_spec(embedding_model_spec)
         else:
             embedding_model_spec = None
 
@@ -551,6 +556,7 @@ class KnowledgeBaseManager:
                 "share_config": share_config,
                 "created_by": created_by,
                 "tenant_id": tenant_id,
+                "uploader_id": uploader_id,
             }
         )
         os.makedirs(os.path.join(kb_instance.work_dir, kb_id), exist_ok=True)
@@ -697,6 +703,7 @@ class KnowledgeBaseManager:
             "created_by": created_by,
             "created_by_name": creator.username if creator else created_by,
             "created_by_avatar": creator.to_dict().get("avatar") if creator else None,
+            "uploader_id": getattr(record, "uploader_id", None) or "0",
             "is_folder": bool(getattr(record, "is_folder", False)),
             "parent_id": getattr(record, "parent_id", None),
             "has_children": child_count > 0,
@@ -879,6 +886,7 @@ class KnowledgeBaseManager:
                     "created_at": str(file.created_at) if file.created_at else None,
                     "updated_at": str(file.updated_at) if file.updated_at else None,
                     "file_size": file.file_size,
+                    "uploader_id": getattr(file, "uploader_id", None) or "0",
                 }
                 if include_is_folder:
                     item["is_folder"] = bool(file.is_folder)

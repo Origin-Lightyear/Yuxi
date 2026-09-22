@@ -1365,6 +1365,75 @@ def test_resolve_agent_run_model_spec_strips_explicit_chat_model(monkeypatch: py
     assert seen == ["gpt-x"]
 
 
+def test_resolve_agent_run_model_spec_falls_back_when_agent_model_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    model_types = {
+        "retired:agent-model": None,
+        "available:system-model": SimpleNamespace(model_type="chat"),
+    }
+    monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", model_types.get)
+    monkeypatch.setattr(
+        agent_run_service.model_cache,
+        "get_all_specs",
+        lambda model_type: [SimpleNamespace(spec="available:first-model", model_type=model_type)],
+    )
+    monkeypatch.setattr(
+        agent_run_service,
+        "resolve_chat_model_spec",
+        lambda model_spec: "available:system-model" if model_spec is None else str(model_spec).strip(),
+    )
+
+    resolved = agent_run_service.resolve_agent_run_model_spec(
+        None,
+        SimpleNamespace(config_json={}),
+        _FakeBackend(),
+        context=SimpleNamespace(model="retired:agent-model"),
+    )
+
+    assert resolved == "available:system-model"
+
+
+def test_resolve_agent_run_model_spec_uses_first_model_when_saved_defaults_are_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", lambda spec: None)
+    monkeypatch.setattr(
+        agent_run_service.model_cache,
+        "get_all_specs",
+        lambda model_type: [SimpleNamespace(spec="available:first-model", model_type=model_type)],
+    )
+    monkeypatch.setattr(agent_run_service, "resolve_chat_model_spec", lambda model_spec: "retired:system-model")
+
+    resolved = agent_run_service.resolve_agent_run_model_spec(
+        None,
+        SimpleNamespace(config_json={}),
+        _FakeBackend(),
+        context=SimpleNamespace(model="retired:agent-model"),
+    )
+
+    assert resolved == "available:first-model"
+
+
+def test_resolve_agent_run_model_spec_rejects_when_no_chat_model_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", lambda spec: None)
+    monkeypatch.setattr(agent_run_service.model_cache, "get_all_specs", lambda model_type: [])
+    monkeypatch.setattr(agent_run_service, "resolve_chat_model_spec", lambda model_spec: "retired:system-model")
+
+    with pytest.raises(agent_run_service.HTTPException) as exc:
+        agent_run_service.resolve_agent_run_model_spec(
+            None,
+            SimpleNamespace(config_json={}),
+            _FakeBackend(),
+            context=SimpleNamespace(model="retired:agent-model"),
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "暂无可用聊天模型"
+
+
 def _patch_agent_run_creation(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -1439,6 +1508,11 @@ def _patch_agent_run_creation(
     monkeypatch.setattr(agent_run_service, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", _CreateRunRepo)
     monkeypatch.setattr(agent_run_service, "get_arq_pool", fake_get_arq_pool)
+    monkeypatch.setattr(
+        agent_run_service.model_cache,
+        "get_model_info",
+        lambda spec: SimpleNamespace(model_type="chat"),
+    )
     # 本组测试聚焦本地 run 创建；关闭 Agent 数据双写，避免依赖容器 SaaS 配置
     monkeypatch.setattr(
         type(agent_run_service.agent_data_sync.app_config),

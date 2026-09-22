@@ -128,7 +128,8 @@
 | `llm_model_spec` | string \| null | LLM 模型 spec |
 | `query_params` | object | 查询参数配置 |
 | `metadata` | object | 扩展元数据 |
-| `created_by` | string | 创建者 UID |
+| `created_by` | string | 创建者 UID（租户创建=`"tenant:{tenant_id}"`） |
+| `uploader_id` | string | 上传者：SaaS 员工为 Tenant 员工 ID，租户后台/管理员操作存 `"0"` |
 | `created_at` | string | 创建时间（ISO） |
 | `status` | string | 连接状态（`已连接`） |
 | `stats` | object | 统计信息（文件数/Chunk 数/Token 数等） |
@@ -155,7 +156,7 @@
 |------|------|------|------|
 | `database_name` | string | 是 | 知识库名称 |
 | `description` | string | 是 | 知识库描述 |
-| `embedding_model_spec` | string | 否 | 嵌入模型 spec |
+| `embedding_model_spec` | string | 否 | 嵌入模型 spec；**缺省使用默认嵌入模型 `siliconflow-cn:Pro/BAAI/bge-m3`**（配置项 `embed_model`）；**模型未注册或调用失败时自动降级到 `config.embed_fallback_model`（默认 `ollama:bge-m3`）** |
 | `llm_model_spec` | string | 否 | LLM 模型 spec |
 | `kb_type` | string | 否 | 类型，默认 `milvus` |
 | `additional_params` | object | 否 | 附加参数 |
@@ -755,7 +756,7 @@ Tenant 服务（租户后台界面）通过本组 API 接管知识库的**目录
 |------|------|------|------|
 | `database_name` | string | 是 | 知识库名称（租户内唯一） |
 | `description` | string | 是 | 描述 |
-| `embedding_model_spec` | string | 否 | 嵌入模型 spec |
+| `embedding_model_spec` | string | 否 | 嵌入模型 spec；**缺省使用默认嵌入模型 `siliconflow-cn:Pro/BAAI/bge-m3`**（Tenant 平台可不传）；未注册或调用失败时自动降级到 `embed_fallback_model`（默认 `ollama:bge-m3`） |
 | `kb_type` | string | 否 | 类型，默认 `milvus` |
 | `llm_model_spec` | string | 否 | LLM 模型 spec |
 | `additional_params` | object | 否 | 附加参数 |
@@ -798,8 +799,10 @@ Tenant 管理端只负责**元数据管理与删除**，文档录入（上传/�
 | 接口 | 说明 | 响应 |
 |------|------|------|
 | `GET /databases/{kb_id}/documents?parent_id=&status=&page=&page_size=` | 分页文档列表（含文件夹行） | 分页结构（`items`/`total`/`page`/`page_size`/`has_more`） |
-| `GET /databases/{kb_id}/documents/{file_id}/basic` | 文档元数据（不含正文） | 文件基础信息对象 |
+| `GET /databases/{kb_id}/documents/{file_id}/basic` | 文档元数据（不含正文） | `{"meta": {文件基础信息}}` |
 | `DELETE /databases/{kb_id}/documents/{file_id}` | 删除文档（目标为目录时同样仅允许空目录，否则 409） | `{"message": "删除成功"}` / `{"message": "目录已删除"}` |
+
+**上传者字段**：知识库、目录与文档均含 `uploader_id`——SaaS 员工上传/录入为 Tenant **员工 ID**（`user_config.employee_id`），租户后台/管理员操作存 `"0"`。知识库只能由租户后台/管理员创建，故其 `uploader_id` 恒为 `"0"`（创建来源由 `created_by` 区分：`tenant:{id}` vs 管理员 uid）。Tenant 管理端可凭此回显员工信息。
 
 ### 权限接管方式（share_config）
 

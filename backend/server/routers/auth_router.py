@@ -44,7 +44,7 @@ from yuxi.services.oidc_service import (
 )
 
 # SaaS 多租户认证相关导入
-from yuxi.services.saas_client import SaasAPIError, get_saas_client
+from yuxi.services.saas_client import SaasAPIError, _parse_employee_permission_department_id, get_saas_client
 from yuxi.config import config as app_config
 from server.routers.model_provider_router import _refresh_model_cache
 
@@ -543,7 +543,22 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
         save_saas_agent_session,
     )
 
-    await save_saas_employee_context(db, user.uid, emp.tenant_id, emp.employee_id)
+    tenant_department_id = emp.department_id
+    try:
+        permission_snapshot = await saas.get_employee_permission(emp.tenant_id, emp.employee_id)
+        permission_department_id = _parse_employee_permission_department_id(permission_snapshot)
+        if permission_department_id is not None:
+            tenant_department_id = permission_department_id
+    except Exception as exc:
+        logger.warning(f"Failed to load SaaS employee permission: {exc}")
+
+    await save_saas_employee_context(
+        db,
+        user.uid,
+        emp.tenant_id,
+        emp.employee_id,
+        tenant_department_id=tenant_department_id,
+    )
     await _commit_saas_changes_and_refresh_model_cache(db)
 
     if selected_mcp:

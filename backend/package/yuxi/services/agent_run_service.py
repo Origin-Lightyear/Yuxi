@@ -101,7 +101,7 @@ def _load_agent_context(agent_item, agent_backend):
 
 
 def resolve_agent_run_model_spec(model_spec: str | None, agent_item, agent_backend, context=None) -> str:
-    """解析本次 run 实际使用的模型：显式覆盖优先，否则配置模型，最后系统默认模型。"""
+    """解析本次 run 的可用聊天模型：显式覆盖优先，否则按配置顺序回退。"""
     normalized = model_spec.strip() if isinstance(model_spec, str) else None
     if normalized:
         info = model_cache.get_model_info(normalized)
@@ -111,7 +111,26 @@ def resolve_agent_run_model_spec(model_spec: str | None, agent_item, agent_backe
 
     if context is None:
         context = _load_agent_context(agent_item, agent_backend)
-    return resolve_chat_model_spec(getattr(context, "model", None))
+
+    configured_model = getattr(context, "model", None)
+    try:
+        system_default_model = resolve_chat_model_spec(None)
+    except ValueError:
+        system_default_model = None
+
+    for candidate in (configured_model, system_default_model):
+        normalized_candidate = candidate.strip() if isinstance(candidate, str) else None
+        if not normalized_candidate:
+            continue
+        info = model_cache.get_model_info(normalized_candidate)
+        if info and info.model_type == "chat":
+            return normalized_candidate
+
+    available_models = model_cache.get_all_specs("chat")
+    if available_models:
+        return available_models[0].spec
+
+    raise HTTPException(status_code=422, detail="暂无可用聊天模型")
 
 
 def resolve_agent_run_tool_approval_mode(requested_mode: str | None, agent_item, agent_backend, context=None) -> str:

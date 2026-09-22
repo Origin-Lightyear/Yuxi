@@ -62,6 +62,7 @@ class TenantEmployee:
     llm_url: str
     agent_session_token: str = field(repr=False)
     agent_session_expires_at: str
+    department_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +104,7 @@ def _parse_tenant_employee(data: dict[str, Any]) -> TenantEmployee:
         llm_url=str(data.get("llmUrl") or ""),
         agent_session_token=str(data.get("agentSessionToken") or ""),
         agent_session_expires_at=str(data.get("agentSessionExpiresAt") or ""),
+        department_id=int(data["departmentId"]) if data.get("departmentId") is not None else None,
     )
 
 
@@ -112,6 +114,16 @@ def _parse_employee_auth(data: dict[str, Any]) -> EmployeeAuthResult:
         mobile=str(data.get("mobile") or ""),
         tenants=[_parse_tenant_employee(t) for t in tenants_raw if isinstance(t, dict)],
     )
+
+
+def _parse_employee_permission_department_id(data: dict[str, Any]) -> int | None:
+    """从员工权限快照读取租户部门 ID。"""
+    permission_config = data.get("permissionConfig")
+    if isinstance(permission_config, dict) and permission_config.get("departmentId") is not None:
+        return int(permission_config["departmentId"])
+    if data.get("departmentId") is not None:
+        return int(data["departmentId"])
+    return None
 
 
 def _parse_tenant_config_data(data: dict[str, Any]) -> TenantConfigResult:
@@ -199,6 +211,17 @@ class SaasClient:
         data = _check_response(payload)
         logger.info(f"SaaS employee llm config loaded: tenant_id={tenant_id}, employee_id={employee_id}")
         return data
+
+    async def get_employee_permission(self, tenant_id: int, employee_id: int) -> dict[str, Any]:
+        """读取员工权限快照，获取租户部门 ID。"""
+        url = _build_url(self._tenant_url, "/api/v1/agent/inner/employee-permission")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.get(url, params={"tenantId": tenant_id, "employeeId": employee_id})
+            response.raise_for_status()
+            payload = response.json()
+        if not isinstance(payload, dict):
+            raise SaasAPIError(code=50000, msg="员工权限响应格式错误")
+        return payload
 
     async def list_mcp_servers(self, tenant_id: int) -> list[dict[str, Any]]:
         """读取当前员工可用 MCP 列表及其 Runtime instanceId。"""

@@ -80,8 +80,8 @@ async def test_missing_tenant_id_returns_422(test_client, tenant_api):
     assert response.status_code == 422
 
 
-async def test_create_endpoint_reaches_validation(test_client, tenant_api):
-    """未注册 embedding 模型时创建返回 400，证明鉴权与租户注入已放行。"""
+async def test_create_with_unknown_embedding_spec_falls_back_and_succeeds(test_client, tenant_api):
+    """显式传入未注册的 embedding 模型时降级到 fallback 模型并成功创建。"""
     response = await test_client.post(
         "/api/tenant/knowledge/databases",
         json={
@@ -92,7 +92,29 @@ async def test_create_endpoint_reaches_validation(test_client, tenant_api):
         },
         headers=tenant_api,
     )
-    assert response.status_code == 400
+    assert response.status_code == 201, response.text
+    kb = response.json()
+    # 存储的是降级后的模型 spec（不再是未注册的原始值）
+    assert kb["embedding_model_spec"] != "unknown-provider:unknown-model"
+    await test_client.delete(f"/api/tenant/knowledge/databases/{kb['kb_id']}", headers=tenant_api)
+
+
+async def test_create_without_embedding_spec_falls_back_to_default(test_client, tenant_api):
+    """未传 embedding_model_spec 时使用默认嵌入模型（config.embed_model）并成功创建。"""
+    response = await test_client.post(
+        "/api/tenant/knowledge/databases",
+        json={
+            "database_name": f"pytest_tenant_{uuid.uuid4().hex[:8]}",
+            "description": "tenant kb",
+            "kb_type": "milvus",
+        },
+        headers=tenant_api,
+    )
+    assert response.status_code == 201, response.text
+    kb = response.json()
+    assert kb["embedding_model_spec"] is not None
+    assert kb["uploader_id"] == "0"
+    await test_client.delete(f"/api/tenant/knowledge/databases/{kb['kb_id']}", headers=tenant_api)
 
 
 async def test_kb_crud_with_tenant_isolation(test_client, tenant_api):
@@ -113,6 +135,7 @@ async def test_kb_crud_with_tenant_isolation(test_client, tenant_api):
     detail_response = await test_client.get(f"/api/tenant/knowledge/databases/{kb_id}", headers=tenant_api)
     assert detail_response.status_code == 200
     assert detail_response.json()["tenant_id"] == 100
+    assert detail_response.json()["uploader_id"] == "0"
 
     delete_response = await test_client.delete(f"/api/tenant/knowledge/databases/{kb_id}", headers=tenant_api)
     assert delete_response.status_code == 200
@@ -187,6 +210,41 @@ async def test_documents_list_basic_and_delete(test_client, tenant_api):
         f"/api/tenant/knowledge/databases/{kb_id}/documents/no-such-file", headers=tenant_api
     )
     assert missing_delete.status_code == 404
+
+    await test_client.delete(f"/api/tenant/knowledge/databases/{kb_id}", headers=tenant_api)
+
+
+async def test_documents_expose_uploader_id(test_client, tenant_api):
+    """列表与 basic 响应携带 uploader_id：员工上传=员工 ID，未设置/租户后台操作=0。"""
+    kb_id = await _create_tenant_kb_row(tenant_id=100)
+    conn = await _db_conn()
+    try:
+        doc_id = await conn.fetchval(
+            "INSERT INTO knowledge_files (file_id, kb_id, parent_id, filename, is_folder, status, uploader_id) "
+            "VALUES ($1, $2, NULL, '员工上传.pdf', FALSE, 'done', '200') RETURNING file_id",
+            f"file_{uuid.uuid4().hex[:10]}",
+            kb_id,
+        )
+        folder_id = await conn.fetchval(
+            "INSERT INTO knowledge_files (file_id, kb_id, parent_id, filename, is_folder, status) "
+            "VALUES ($1, $2, NULL, '后台目录', TRUE, 'done') RETURNING file_id",
+            f"folder_{uuid.uuid4().hex[:10]}",
+            kb_id,
+        )
+    finally:
+        await conn.close()
+
+    list_response = await test_client.get(f"/api/tenant/knowledge/databases/{kb_id}/documents", headers=tenant_api)
+    assert list_response.status_code == 200, list_response.text
+    items = {item["file_id"]: item for item in list_response.json()["items"]}
+    assert items[doc_id]["uploader_id"] == "200"
+    assert items[folder_id]["uploader_id"] == "0"
+
+    basic_response = await test_client.get(
+        f"/api/tenant/knowledge/databases/{kb_id}/documents/{doc_id}/basic", headers=tenant_api
+    )
+    assert basic_response.status_code == 200, basic_response.text
+    assert basic_response.json()["meta"]["uploader_id"] == "200"
 
     await test_client.delete(f"/api/tenant/knowledge/databases/{kb_id}", headers=tenant_api)
 

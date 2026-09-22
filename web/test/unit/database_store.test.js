@@ -32,6 +32,63 @@ test('database SaaS 模式强制使用 accessible 列表并保留权限字段', 
   }
 })
 
+test('database reloads with the administrator endpoint after identity restoration', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
+  try {
+    setActivePinia(createPinia())
+    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { databaseApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
+    const { useDatabaseStore } = await server.ssrLoadModule('/src/stores/database.js')
+    const user = useUserStore()
+    const calls = []
+    databaseApi.getAccessibleDatabases = async () => {
+      calls.push('accessible')
+      return { databases: [] }
+    }
+    databaseApi.getDatabases = async () => {
+      calls.push('admin')
+      return { databases: [{ kb_id: 'admin-kb' }] }
+    }
+
+    const store = useDatabaseStore()
+    await store.loadDatabases()
+    user.userRole = 'admin'
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.deepEqual(calls, ['accessible', 'admin'])
+    assert.deepEqual(store.databases, [{ kb_id: 'admin-kb' }])
+  } finally {
+    await server.close()
+  }
+})
+
+test('agent resources reload after identity restoration', async () => {
+  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
+  try {
+    setActivePinia(createPinia())
+    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { agentApi, databaseApi, mcpApi, skillApi } = await server.ssrLoadModule('/src/apis/index.js')
+    const { useAgentStore } = await server.ssrLoadModule('/src/stores/agent.js')
+    const user = useUserStore()
+    databaseApi.getAccessibleDatabases = async () =>
+      user.uid ? { databases: [{ kb_id: 'tenant-kb' }] } : { databases: [] }
+    agentApi.getAgents = async () => ({ agents: [] })
+    mcpApi.getMcpServers = async () => ({ data: [] })
+    skillApi.listAccessibleSkills = async () => ({ data: [] })
+
+    const store = useAgentStore()
+    await store.initialize()
+    assert.deepEqual(store.availableKnowledgeBases, [])
+
+    user.uid = 'employee-001'
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.deepEqual(store.availableKnowledgeBases, [{ kb_id: 'tenant-kb' }])
+  } finally {
+    await server.close()
+  }
+})
+
 test('database 员工读取目录、文档及上传请求由后端授权', async () => {
   const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
   const originalFetch = globalThis.fetch

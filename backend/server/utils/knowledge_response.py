@@ -50,6 +50,7 @@ def serialize_knowledge_base(
         "metadata": dict(additional_params),
         "created_by": database.created_by,
         "tenant_id": database.tenant_id,
+        "uploader_id": database.uploader_id or "0",
         "created_at": utc_isoformat(database.created_at) if database.created_at else None,
         "status": "已连接",
         "stats": stats,

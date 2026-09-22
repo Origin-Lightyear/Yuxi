@@ -86,6 +86,7 @@
       <ToolCallsGroupComponent
         v-if="!hideToolCalls && validToolCalls.length > 0"
         :tool-calls="validToolCalls"
+        :is-active="isProcessing && !isMessageTerminal"
       />
 
       <div v-if="message.isStoppedByUser" class="retry-hint">
@@ -283,10 +284,16 @@ const reasoningExpanded = ref(false)
 const reasoningPresentation = computed(() =>
   resolveReasoningPresentation({
     isProcessing: props.isProcessing,
+    status: props.message.status,
     hasReasoning: Boolean(parsedData.value.reasoning_content),
     hasContent: Boolean(parsedData.value.content),
     hasToolCalls: validToolCalls.value.length > 0
   })
+)
+const isMessageTerminal = computed(() =>
+  ['finished', 'success', 'error', 'failed', 'interrupted', 'cancelled', 'completed'].includes(
+    props.message.status
+  )
 )
 const isReasoningActive = computed(() => reasoningPresentation.value.active)
 

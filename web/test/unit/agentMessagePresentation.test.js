@@ -115,6 +115,30 @@ test('completed reasoning is collapsed by default', () => {
   })
 })
 
+test('terminal messages never reopen reasoning even when the stream flag is stale', () => {
+  assert.deepEqual(
+    resolveReasoningPresentation({
+      isProcessing: true,
+      status: 'finished',
+      hasReasoning: true
+    }),
+    { active: false, expanded: false }
+  )
+})
+
+test('failed and interrupted messages also stay collapsed with a stale stream flag', () => {
+  for (const status of ['failed', 'interrupted']) {
+    assert.deepEqual(
+      resolveReasoningPresentation({
+        isProcessing: true,
+        status,
+        hasReasoning: true
+      }),
+      { active: false, expanded: false }
+    )
+  }
+})
+
 test('only the active task is expanded while a run is executing', () => {
   const state = resolveToolPresentation([
     { id: 'old', status: 'success' },

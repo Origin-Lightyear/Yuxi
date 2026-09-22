@@ -6,11 +6,14 @@
 
 ## v0.7.2 (current)
 
-- 优化 SaaS Agent 体验：运行时仅展开当前任务，结束后收起轨迹；员工资料显示部门和姓名，设置隐藏本地角色、基本设置、OCR 与沙盒变量；退出清状态后立即返回登录页，不等待后端注销；NewAPI 同步后刷新缓存，成功空清单清除旧模型，失败保留；展示员工可读的租户知识库和目录，隐藏结构管理，仅 `manage_scope` 员工可管理文档。
+- 优化 SaaS Agent 体验：运行时仅展开当前任务，结束后收起轨迹；员工资料显示部门和姓名，设置隐藏本地角色、基本设置、OCR 与沙盒变量；退出清状态后立即返回登录页，不等待后端注销；NewAPI 同步后刷新缓存，成功空清单清除旧模型，失败保留；展示员工可读的租户知识库和目录，隐藏结构管理，仅 `manage_scope` 员工可管理文档；租户 `departmentId` 单独持久化并用于权限匹配，避免与本地部门主键混用。
+- 移除前端首页与应用布局对 GitHub 仓库 API 的实时统计请求，不再由浏览器访问 `api.github.com`；仓库和文档跳转链接保持不变。
 - 补齐 SaaS 员工知识库访问：列表与详情返回有效读写权限，文档查看、上传、移动和删除按共享范围授权，知识库与目录结构仍仅管理员可维护；跨租户、跨库文档及目标目录统一校验，员工页面隐藏管理入口并修复文件上传 multipart 边界。建档时校验最终 MinIO 源对象的 bucket 与知识库归属（含预处理覆盖路径），文档写入先授权再检查类型，避免跨租户对象越权和名称泄露。
-- 新增租户知识库管理：知识库按租户隔离，SaaS 员工仅见本租户 KB；权限完全由 KB 级 `share_config` 表达（manage_scope 命中授予员工「文档级管理」，KB 结构操作保持管理员门槛，空 `user_uids` 合法表达无权限，`user_uids` 用员工 `employeeCode`）；新增 `/api/tenant/knowledge/**` 租户管理 API（静态 Key + `X-Tenant-Id` 鉴权：KB CRUD、目录创建/重命名/移动/仅空目录删除、文档分页/元数据/删除，跨租户 404）；Agent 新增 `upload_kb_file`/`delete_kb_file` 工具；前端 SaaS 员工可见知识库 tab 并按 MANAGE 边界显隐文档操作。
+- 修复对话框继续展示已下线默认模型的问题：初始化时按启用模型校验线程、Agent 与系统默认值，失效时回退到首个可用聊天模型；无可用模型或列表加载失败时阻止发送并明确提示，后端运行解析同步执行相同回退。
+- 新增租户知识库管理：知识库按租户隔离，SaaS 员工仅见本租户 KB；权限完全由 KB 级 `share_config` 表达（manage_scope 命中授予员工「文档级管理」，KB 结构操作保持管理员门槛，空 `user_uids` 合法表达无权限，`user_uids` 用员工 `employeeCode`）；新增 `/api/tenant/knowledge/**` 租户管理 API（静态 Key + `X-Tenant-Id` 鉴权：KB CRUD、目录创建/重命名/移动/仅空目录删除、文档分页/元数据/删除，跨租户 404）；知识库/目录/文档新增「上传者」`uploader_id`（员工上传存 Tenant 员工 ID，租户后台/管理员操作存 0，列表与元数据响应均返回）；创建知识库缺省使用默认嵌入模型（`config.embed_model`，默认 `siliconflow-cn:Pro/BAAI/bge-m3`，可不传 `embedding_model_spec`），**嵌入模型未注册或调用失败时自动降级到 `config.embed_fallback_model`（默认 `ollama:bge-m3`）**；修复无鉴权嵌入服务（如本地 Ollama）因空 API Key 构造 `Bearer ` 头导致请求失败的问题；Agent 新增 `upload_kb_file`/`delete_kb_file` 工具；前端 SaaS 员工可见知识库 tab 并按 MANAGE 边界显隐文档操作。
 - 新增 SaaS Agent 数据双写与定时任务：SaaS 登录迁移到 Tenant 服务新内部路径 `/api/v1/agent/inner/auth`，按员工编码复用本地账号并同步手机号、姓名与部门；MCP Runtime 从租户 endpoints 接口同步，使用 `AgentSession` 为每次 HTTP 请求申请一次性六 Header；Yuxi JWT 有效期与 AgentSession 对齐，Session 缺失时统一返回 401 并触发重新登录，避免模型误判为数据源未配置；`tenant_id/employee_id` 持久化到 `user_config`（可 `AGENT_DATA_SYNC=false` 关闭）；SaaS 模式下本地线程与消息按 fail-soft 镜像到 Tenant，并记录整轮 `consumedScore`；新增五段式 Cron 调度与任务接口透传。
 - 修复内置 `mysql-reporter` 的数据源路由：企业业务查询调用 SaaS MCP `linko_ent`，会话失效时提示重新登录，不再误导用户配置沙盒 `MYSQL_*`；独立外部 MySQL 仍使用只读脚本。
+- 修复 API/Worker 单文件挂载 `.env` 在编辑器原子保存后失效的问题：Compose 统一通过 `env_file` 注入环境变量，避免热重载时 ARQ 子进程因 `/app/.env` 短暂不存在而退出、已派发 Run 长期停留在 pending。
 
 - 收窄知识库状态边界：读取模型统一收口至 `read_models.py`；创建、列表、详情与更新由 Manager 统一返回 `KnowledgeBaseSummary/Detail`，Router 只转换 HTTP 响应；Manager 协调查询配置、主记录与聚合统计，Repository 在行锁内合并统计投影；executor 接收 frozen `KnowledgeBaseConfig`，负责类型资源、文档操作与类型专属一致性检测，不再写知识库主记录。
 - 修复 Agent worker 知识库运行配置不一致：`get_kb_config` 从 Redis 读取最小 Config 快照，未命中时在 KB 级分布式锁内回源 PostgreSQL，Redis 连接故障时只读请求直接回源且不回填；更新与删除先可靠失效缓存再提交数据库，避免旧请求回填过期配置。查询参数在数据库行锁内合并，并发保存不再互相覆盖。

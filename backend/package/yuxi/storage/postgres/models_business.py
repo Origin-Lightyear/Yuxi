@@ -169,6 +169,7 @@ class UserConfig(Base):
     enable_memory = Column(Boolean, nullable=False, default=False)
     tenant_id = Column(Integer, nullable=True)
     employee_id = Column(Integer, nullable=True)
+    tenant_department_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
@@ -180,6 +181,7 @@ class UserConfig(Base):
             "enable_memory": bool(self.enable_memory),
             "tenant_id": self.tenant_id,
             "employee_id": self.employee_id,
+            "tenant_department_id": self.tenant_department_id,
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }

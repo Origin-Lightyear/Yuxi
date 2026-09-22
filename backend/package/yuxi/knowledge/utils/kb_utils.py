@@ -89,6 +89,7 @@ async def prepare_item_metadata(item: str, content_type: str, kb_id: str, params
             "content_hash": content_hash,
             "size": pre_info.get("file_size"),
             "parent_id": params.get("parent_id"),
+            "uploader_id": params.get("uploader_id"),
         }
 
         if params:
@@ -148,6 +149,7 @@ async def prepare_item_metadata(item: str, content_type: str, kb_id: str, params
         "content_hash": content_hash,
         "size": file_size,
         "parent_id": params.get("parent_id") if params else None,
+        "uploader_id": params.get("uploader_id") if params else None,
     }
 
     # 保存处理参数到元数据

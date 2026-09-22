@@ -4,12 +4,22 @@
 export const resolveReasoningPresentation = (
   {
     isProcessing = false,
+    status = '',
     hasReasoning = false,
     hasContent = false,
     hasToolCalls = false
   } = {}
 ) => {
-  const active = isProcessing && hasReasoning && !hasContent && !hasToolCalls
+  const isTerminal = [
+    'finished',
+    'success',
+    'error',
+    'failed',
+    'interrupted',
+    'cancelled',
+    'completed'
+  ].includes(status)
+  const active = isProcessing && !isTerminal && hasReasoning && !hasContent && !hasToolCalls
   return { active, expanded: active }
 }
 
@@ -19,9 +29,15 @@ export const resolveReasoningPresentation = (
 export const resolveToolPresentation = (toolCalls = [], activeIds = new Set(), isActive = true) => {
   const activeIndexes = toolCalls.reduce((indexes, toolCall, index) => {
     const id = toolCall?.id == null ? '' : String(toolCall.id)
-    const isTerminal = ['success', 'finished', 'error', 'cancelled', 'completed'].includes(
-      toolCall?.status
-    )
+    const isTerminal = [
+      'success',
+      'finished',
+      'error',
+      'failed',
+      'interrupted',
+      'cancelled',
+      'completed'
+    ].includes(toolCall?.status)
     if (isActive && !isTerminal && (activeIds.has(id) || toolCall?.status === 'running')) {
       indexes.push(index)
     }

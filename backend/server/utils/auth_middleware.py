@@ -104,7 +104,10 @@ async def get_current_user(
     from yuxi.services.saas_identity import get_saas_employee_context
     from yuxi.services.saas_session import get_saas_agent_session
 
-    if await get_saas_employee_context(db, user.uid) is not None:
+    saas_context = await get_saas_employee_context(db, user.uid)
+    if saas_context is not None:
+        # 权限判断需要租户部门 ID；本地 department_id 仅用于资料展示和本地管理。
+        user.tenant_department_id = saas_context.tenant_department_id
         session = await get_saas_agent_session(user.uid)
         if session is None:
             raise HTTPException(

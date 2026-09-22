@@ -31,9 +31,13 @@ class BaseEmbeddingModel(ABC):
         api_key=None,
         model_id=None,
         batch_size=40,
+        spec=None,
+        fallback_spec=None,
     ):
         base_url = base_url or url
         self.model = model or name or model_id
+        self.spec = spec or self.model
+        self.fallback_spec = fallback_spec
         self.dimension = dimension
         self.base_url = get_docker_safe_url(base_url)
         self.api_key = os.getenv(api_key, api_key)
@@ -115,10 +119,25 @@ class BaseEmbeddingModel(ABC):
 class OtherEmbedding(BaseEmbeddingModel):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        self.headers = headers
 
     def build_payload(self, message: list[str] | str) -> dict:
         return {"model": self.model, "input": message}
+
+    def _select_fallback_model(self):
+        """返回降级模型；无降级配置或降级模型即自身时返回 None。"""
+        if not self.fallback_spec:
+            return None
+        try:
+            fallback_model = select_embedding_model(self.fallback_spec)
+        except ValueError:
+            return None
+        if fallback_model.spec == self.spec:
+            return None
+        return fallback_model
 
     @staticmethod
     def _retry_delay_seconds(retry_index: int, retry_after: str | None = None) -> float:
@@ -195,6 +214,10 @@ class OtherEmbedding(BaseEmbeddingModel):
                     time.sleep(delay)
                     continue
 
+                fallback_model = self._select_fallback_model()
+                if fallback_model is not None:
+                    logger.warning(f"Embedding 主模型 {self.spec} 调用失败，降级到 {fallback_model.spec}: {e}")
+                    return fallback_model.encode(message)
                 logger.error(f"Embedding request failed: {e}, {payload}")
                 raise ValueError(f"Embedding request failed: {e}")
 
@@ -218,6 +241,10 @@ class OtherEmbedding(BaseEmbeddingModel):
                         retry_index, delay = retry
                         await asyncio.sleep(delay)
                         continue
+                    fallback_model = self._select_fallback_model()
+                    if fallback_model is not None:
+                        logger.warning(f"Embedding 主模型 {self.spec} 调用失败，降级到 {fallback_model.spec}: {e}")
+                        return await fallback_model.aencode(message)
                     raise
                 except httpx.RequestError as e:
                     retry = self._prepare_retry(message, retry_index=retry_index, error=e)
@@ -225,6 +252,10 @@ class OtherEmbedding(BaseEmbeddingModel):
                         retry_index, delay = retry
                         await asyncio.sleep(delay)
                         continue
+                    fallback_model = self._select_fallback_model()
+                    if fallback_model is not None:
+                        logger.warning(f"Embedding 主模型 {self.spec} 调用失败，降级到 {fallback_model.spec}: {e}")
+                        return await fallback_model.aencode(message)
                     raise ValueError(f"Embedding async request failed: {e}, {payload}, {self.base_url=}")
 
 
@@ -247,21 +278,37 @@ def get_embedding_model_info_by_id(model_id: str) -> dict:
     }
 
 
+def resolve_embedding_model_spec(model_id: str) -> str:
+    """解析嵌入模型 spec：未注册时降级到 config.embed_fallback_model。"""
+    if model_cache.get_model_info(model_id) is not None:
+        return model_id
+    from yuxi.config import config as app_config
+
+    fallback = app_config.embed_fallback_model
+    if fallback != model_id:
+        logger.warning(f"嵌入模型未注册: {model_id}，降级到 {fallback}")
+    return fallback
+
+
 def select_embedding_model(model_id: str):
-    info = model_cache.get_model_info(model_id)
+    info = model_cache.get_model_info(resolve_embedding_model_spec(model_id))
     if not info:
         raise ValueError(f"Unknown embedding model spec: {model_id}")
 
     if info.model_type != "embedding":
         raise ValueError(f"Model {model_id} is not an embedding model (type={info.model_type})")
 
-    logger.info(f"Selecting embedding model: {model_id} (provider_type={info.provider_type})")
+    from yuxi.config import config as app_config
+
+    logger.info(f"Selecting embedding model: {info.spec} (provider_type={info.provider_type})")
     return OtherEmbedding(
         model=info.model_id,
+        spec=info.spec,
         base_url=info.base_url,
         api_key=info.api_key,
         dimension=info.dimension,
         batch_size=info.batch_size,
+        fallback_spec=app_config.embed_fallback_model,
     )
 
 

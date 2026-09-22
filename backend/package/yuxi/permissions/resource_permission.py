@@ -144,7 +144,8 @@ def scope_matches(user: Any, scope: dict | None) -> bool:
     if access_level == "global":
         return True
     if access_level == "department":
-        department_id = _value(user, "department_id")
+        # SaaS 员工的租户部门 ID 与 Yuxi 本地 departments.id 不是同一命名空间。
+        department_id = _value(user, "tenant_department_id", _value(user, "department_id"))
         try:
             return department_id is not None and int(department_id) in scope.get("department_ids", [])
         except (TypeError, ValueError):

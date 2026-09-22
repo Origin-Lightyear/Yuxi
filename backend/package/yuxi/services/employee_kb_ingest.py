@@ -47,12 +47,20 @@ async def upload_employee_document(
     object_name = f"{kb_id}/upload/{minio_filename}"
     minio_url = await aupload_file_to_minio(MinIOClient.KB_BUCKETS["documents"], object_name, file_bytes)
 
+    from yuxi.services.saas_identity import get_saas_employee_context
+    from yuxi.storage.postgres.manager import pg_manager
+
+    async with pg_manager.get_async_session_context() as session:
+        ctx = await get_saas_employee_context(session, operator_uid)
+    uploader_id = str(ctx.employee_id) if ctx else "0"
+
     file_meta = await knowledge_base.add_file_record(
         kb_id,
         minio_url,
         params={
             "content_type": "file",
             "parent_id": parent_id,
+            "uploader_id": uploader_id,
             "content_hashes": {minio_url: content_hash},
             "file_sizes": {minio_url: len(file_bytes)},
         },

@@ -96,7 +96,10 @@ async def create_tenant_database(
     share_config: dict | None = Body(None),
     ctx: TenantAdminContext = Depends(require_tenant_admin),
 ):
-    """创建本租户知识库（tenant_id 自动注入，share_config 缺省为租户内全局可读）。"""
+    """创建本租户知识库。
+
+    tenant_id 自动注入，share_config 缺省为租户内全局可读，embedding_model_spec 缺省使用默认嵌入模型。
+    """
     from server.utils.knowledge_response import serialize_knowledge_base
 
     logger.info(f"Tenant {ctx.tenant_id} create database: {database_name}")
