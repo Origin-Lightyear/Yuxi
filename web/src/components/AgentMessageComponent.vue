@@ -230,6 +230,14 @@ const copyToClipboard = async (text) => {
   }
 }
 
+const parsedData = computed(() => {
+  const { content, reasoningContent } = MessageProcessor.parseAssistantMessageBody(props.message)
+  return {
+    content,
+    reasoning_content: reasoningContent
+  }
+})
+const validToolCalls = computed(() => enrichTaskToolCalls(props.message.tool_calls))
 const processEntries = computed(() => {
   const entries = []
   if (parsedData.value.reasoning_content) {
@@ -305,15 +313,6 @@ const messageSources = computed(() => {
   return { knowledgeChunks: [], webSources: [] }
 })
 
-const validToolCalls = computed(() => enrichTaskToolCalls(props.message.tool_calls))
-
-const parsedData = computed(() => {
-  const { content, reasoningContent } = MessageProcessor.parseAssistantMessageBody(props.message)
-  return {
-    content,
-    reasoning_content: reasoningContent
-  }
-})
 </script>
 
 <style lang="less" scoped>

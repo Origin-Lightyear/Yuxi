@@ -192,6 +192,7 @@
           <FileTable
             ref="fileTableRef"
             :readonly="!canManageDatabase"
+            :allow-folder-ops="canManageStructure"
             @mindmap="mindmapModalVisible = true"
             @search="fileSearchModalVisible = true"
           />
@@ -428,6 +429,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
 import { useTaskerStore } from '@/stores/tasker'
+import { useUserStore } from '@/stores/user'
 import {
   BarChart3,
   ChevronDown,
@@ -475,6 +477,7 @@ const KnowledgeEvaluationWorkspace = createAsyncPanel(
 const route = useRoute()
 const router = useRouter()
 const store = useDatabaseStore()
+const userStore = useUserStore()
 const taskerStore = useTaskerStore()
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
@@ -486,6 +489,9 @@ const {
 const kbId = computed(() => store.kbId)
 const database = computed(() => store.database)
 const canManageDatabase = computed(() => database.value?.can_manage === true)
+const canManageStructure = computed(
+  () => canManageDatabase.value && userStore.isAdmin && !userStore.saasMode
+)
 const isCurrentDatabaseLoaded = computed(() => database.value?.kb_id === kbId.value)
 const kbType = computed(() =>
   isCurrentDatabaseLoaded.value ? database.value.kb_type?.toLowerCase() || 'milvus' : ''
@@ -509,11 +515,14 @@ const tabs = computed(() => {
   return [{ key: 'query', label: '检索测试', icon: Search, forceRender: true }]
 })
 
-const visibleTabs = computed(() =>
-  canManageDatabase.value
-    ? tabs.value
-    : tabs.value.filter((tab) => ['filetable', 'query', 'graph'].includes(tab.key))
-)
+const visibleTabs = computed(() => {
+  if (userStore.saasMode) {
+    // 文档管理权不包含知识库的图谱、导图和评估配置。
+    return tabs.value.filter((tab) => ['filetable', 'query'].includes(tab.key))
+  }
+  if (canManageDatabase.value) return tabs.value
+  return tabs.value.filter((tab) => ['filetable', 'query', 'graph'].includes(tab.key))
+})
 const activeTab = ref('filetable')
 
 watch(
@@ -842,7 +851,7 @@ watch(
     }
 
     if (newFileCount !== oldFileCount) {
-      if (newFileCount > 0 && canManageDatabase.value) {
+      if (newFileCount > 0 && canManageStructure.value) {
         setTimeout(async () => {
           if (querySectionRef.value) {
             if (database.value.additional_params?.auto_generate_questions) {
@@ -928,7 +937,7 @@ const fileList = computed(() => {
   return (store.documentFiles || []).map((f) => f.filename).filter(Boolean)
 })
 
-const canEditShareConfig = computed(() => canManageDatabase.value)
+const canEditShareConfig = computed(() => canManageStructure.value)
 
 const shareConfigDisplay = computed(() => {
   const shareConfig = database.value?.share_config || {}
@@ -991,6 +1000,7 @@ const handleEditModalAfterClose = () => {
 }
 
 const showEditModal = () => {
+  if (!canManageStructure.value) return
   editModalTab.value = 'basic'
   editForm.name = database.value.name || ''
   editForm.description = database.value.description || ''
@@ -1098,6 +1108,7 @@ const handleEditSubmit = async () => {
 }
 
 onMounted(() => {
+  if (userStore.saasMode || !userStore.isAdmin) return
   loadChunkPresetOptions()
   loadDepartments()
   loadUsers()

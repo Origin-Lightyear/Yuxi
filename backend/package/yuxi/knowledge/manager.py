@@ -295,6 +295,8 @@ class KnowledgeBaseManager:
             "additional_params": additional_params,
             "share_config": self._normalize_share_config(row.share_config),
             "created_by": row.created_by,
+            "tenant_id": row.tenant_id,
+            "uploader_id": row.uploader_id or "0",
             "created_at": row.created_at,
             **normalized_stats,
         }
@@ -375,7 +377,7 @@ class KnowledgeBaseManager:
         return db_info, self.database_type_supports_documents(db_info.kb_type)
 
     async def get_databases_by_uid(self, uid: str) -> list[KnowledgeBaseSummary]:
-        """根据 uid 获取知识库列表"""
+        """根据 uid 获取知识库列表（SaaS 员工只返回本租户知识库）"""
         from yuxi.repositories.user_repository import UserRepository
 
         # 通过数据库获取用户信息
@@ -384,6 +386,22 @@ class KnowledgeBaseManager:
         if not user:
             logger.warning(f"User not found: {uid}")
             return []
+
+        from yuxi.services.saas_identity import get_saas_employee_context
+        from yuxi.storage.postgres.manager import pg_manager
+
+        async with pg_manager.get_async_session_context() as session:
+            saas_ctx = await get_saas_employee_context(session, uid)
+        if saas_ctx is not None:
+            return await self.get_databases_by_user(
+                {
+                    "uid": user.uid,
+                    "role": user.role,
+                    "department_id": user.department_id,
+                    "tenant_id": saas_ctx.tenant_id,
+                    "tenant_department_id": saas_ctx.tenant_department_id,
+                }
+            )
         return await self.get_databases_by_user(user)
 
     async def get_databases_by_user(self, user: User | dict) -> list[KnowledgeBaseSummary]:
@@ -401,6 +419,7 @@ class KnowledgeBaseManager:
 
         user_role = user_info.get("role")
         user_dept = user_info.get("department_id")
+        tenant_id = user_info.get("tenant_id")
         logger.info(f"Getting databases for user with role {user_role} and department {user_dept}")
 
         all_databases = await self.get_databases()
@@ -408,11 +427,14 @@ class KnowledgeBaseManager:
         # 超级管理员可以看到所有知识库
         filtered_databases: list[KnowledgeBaseSummary] = []
         for database in all_databases:
+            if tenant_id is not None and (database.tenant_id or None) != tenant_id:
+                continue
             permission = resolve_knowledge_base_permission(user_info, database)
             if permission == ResourcePermission.NONE:
                 continue
             additional_params = database.additional_params
-            if permission == ResourcePermission.READ:
+            # 平台管理员拥有管理权时保留明文；只读视图与非管理员（含 manage_scope 命中的员工）一律脱敏
+            if permission == ResourcePermission.READ or user_role not in ("admin", "superadmin"):
                 additional_params = redact_sensitive_params(additional_params)
             filtered_databases.append(
                 replace(
@@ -464,6 +486,8 @@ class KnowledgeBaseManager:
         share_config: dict | None = None,
         created_by: str | None = None,
         created_by_department_id: int | str | None = None,
+        tenant_id: int | None = None,
+        uploader_id: str = "0",
         **kwargs,
     ) -> KnowledgeBaseDetail:
         """
@@ -473,11 +497,13 @@ class KnowledgeBaseManager:
             database_name: 数据库名称
             description: 数据库描述
             kb_type: 知识库类型，默认为 milvus
-            embedding_model_spec: 嵌入模型 spec
+            embedding_model_spec: 嵌入模型 spec；缺省使用默认嵌入模型（config.embed_model）
             llm_model_spec: LLM 模型 spec
             share_config: 共享配置
             created_by: 创建者 uid
             created_by_department_id: 创建者部门 ID
+            tenant_id: 归属租户 ID（租户管理 API 创建时传入）
+            uploader_id: 上传者（SaaS 员工为 Tenant 员工 ID，租户后台/管理员为 0）
             **kwargs: 其他配置参数
 
         Returns:
@@ -504,14 +530,15 @@ class KnowledgeBaseManager:
         additional_params = kb_instance.normalize_additional_params(additional_params)
 
         if kb_instance.requires_embedding_model:
+            # 未显式指定时使用默认嵌入模型（config.embed_model）；未注册时降级到 config.embed_fallback_model
             if not embedding_model_spec:
-                raise ValueError("embedding_model_spec 不能为空")
+                from yuxi.config import config as app_config
 
-            from yuxi.models.providers.cache import model_cache
+                embedding_model_spec = app_config.embed_model
 
-            info = model_cache.get_model_info(embedding_model_spec)
-            if not info or info.model_type != "embedding":
-                raise ValueError(f"不支持的 embedding 模型: {embedding_model_spec}")
+            from yuxi.models.embed import resolve_embedding_model_spec
+
+            embedding_model_spec = resolve_embedding_model_spec(embedding_model_spec)
         else:
             embedding_model_spec = None
 
@@ -538,6 +565,8 @@ class KnowledgeBaseManager:
                 "additional_params": persisted_additional_params,
                 "share_config": share_config,
                 "created_by": created_by,
+                "tenant_id": tenant_id,
+                "uploader_id": uploader_id,
             }
         )
         os.makedirs(os.path.join(kb_instance.work_dir, kb_id), exist_ok=True)
@@ -703,6 +732,7 @@ class KnowledgeBaseManager:
             "created_by": created_by,
             "created_by_name": creator.username if creator else created_by,
             "created_by_avatar": creator.to_dict().get("avatar") if creator else None,
+            "uploader_id": getattr(record, "uploader_id", None) or "0",
             "is_folder": bool(getattr(record, "is_folder", False)),
             "parent_id": getattr(record, "parent_id", None),
             "has_children": child_count > 0,
@@ -906,6 +936,7 @@ class KnowledgeBaseManager:
                     "created_at": str(file.created_at) if file.created_at else None,
                     "updated_at": str(file.updated_at) if file.updated_at else None,
                     "file_size": file.file_size,
+                    "uploader_id": getattr(file, "uploader_id", None) or "0",
                 }
                 if include_is_folder:
                     item["is_folder"] = bool(file.is_folder)

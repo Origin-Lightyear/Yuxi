@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import BlankLayout from '@/layouts/BlankLayout.vue'
 import { useUserStore } from '@/stores/user'
 import { useAgentStore } from '@/stores/agent'
 import { sanitizeRedirect } from '@/utils/oidcAutoStart'
@@ -10,17 +9,9 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
+      // 默认打开 /agent 聊天页：未登录由路由守卫跳转登录页，登录后跳回
       path: '/',
-      name: 'main',
-      component: BlankLayout,
-      children: [
-        {
-          path: '',
-          name: 'Home',
-          component: () => import('../views/HomeView.vue'),
-          meta: { keepAlive: true, requiresAuth: false }
-        }
-      ]
+      redirect: '/agent'
     },
     {
       path: '/login',
@@ -118,8 +109,7 @@ const router = createRouter({
               component: () => import('../views/DataBaseInfoView.vue'),
               meta: {
                 keepAlive: false,
-                requiresAuth: true,
-                requiresAdmin: true
+                requiresAuth: true
               }
             },
             {

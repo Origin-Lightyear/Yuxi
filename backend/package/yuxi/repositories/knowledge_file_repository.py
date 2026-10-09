@@ -193,6 +193,7 @@ class KnowledgeFileRepository:
         "processing_owner",
         "created_by",
         "updated_by",
+        "uploader_id",
     }
 
     @staticmethod
@@ -531,6 +532,7 @@ class KnowledgeFileRepository:
             KnowledgeFile.chunk_count.label("chunk_count"),
             KnowledgeFile.token_count.label("token_count"),
             KnowledgeFile.created_by.label("created_by"),
+            KnowledgeFile.uploader_id.label("uploader_id"),
             KnowledgeFile.is_folder.label("is_folder"),
             KnowledgeFile.parent_id.label("parent_id"),
             KnowledgeFile.path.label("path"),
@@ -553,6 +555,7 @@ class KnowledgeFileRepository:
                 literal(0).label("chunk_count"),
                 literal(0).label("token_count"),
                 cast(literal(None), String).label("created_by"),
+                cast(literal("0"), String).label("uploader_id"),
                 literal(True).label("is_folder"),
                 cast(literal(parent_id), String).label("parent_id"),
                 cast(literal(None), String).label("path"),

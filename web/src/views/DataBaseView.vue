@@ -25,7 +25,9 @@
         </a-select>
       </template>
       <template #actions>
+        <!-- SaaS 员工只有只读+文档操作权限，不提供创建知识库入口 -->
         <a-button
+          v-if="canManageKnowledge"
           type="primary"
           class="lucide-icon-btn"
           :disabled="!kbTypes.length"
@@ -56,6 +58,7 @@
     >
       <template #actions>
         <a-button
+          v-if="canManageKnowledge"
           type="primary"
           size="large"
           class="lucide-icon-btn"
@@ -96,14 +99,14 @@
                 <span>复制 ID</span>
               </span>
             </a-menu-item>
-            <a-menu-item v-if="database.can_manage" key="edit">
+            <a-menu-item v-if="database.can_manage && canManageKnowledge" key="edit">
               <span class="lucide-menu-item">
                 <Pencil :size="15" />
                 <span>编辑知识库</span>
               </span>
             </a-menu-item>
             <a-menu-divider />
-            <a-menu-item v-if="database.can_manage" key="delete" danger>
+            <a-menu-item v-if="database.can_manage && canManageKnowledge" key="delete" danger>
               <span class="lucide-menu-item">
                 <Trash2 :size="15" />
                 <span>删除知识库</span>
@@ -121,6 +124,7 @@ import { ref, onMounted, reactive, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useDatabaseStore } from '@/stores/database'
+import { useUserStore } from '@/stores/user'
 import { Copy, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { message, Modal } from 'ant-design-vue'
 import { databaseApi, typeApi } from '@/apis/knowledge_api'
@@ -137,6 +141,8 @@ import { getShareConfigLabel } from '@/utils/shareConfig'
 const route = useRoute()
 const router = useRouter()
 const databaseStore = useDatabaseStore()
+const userStore = useUserStore()
+const canManageKnowledge = computed(() => userStore.isAdmin && !userStore.saasMode)
 
 const props = defineProps({
   embedded: { type: Boolean, default: false }
@@ -317,7 +323,9 @@ watch(
 )
 
 onMounted(() => {
-  loadSupportedKbTypes()
+  if (canManageKnowledge.value) {
+    loadSupportedKbTypes()
+  }
   databaseStore.loadDatabases()
 })
 

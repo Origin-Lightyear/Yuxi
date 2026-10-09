@@ -12,6 +12,21 @@ from yuxi.services.task_registry import get_task_definition
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _stub_saas_document_gates(monkeypatch):
+    """直调路由函数时跳过 SaaS 门禁与上传者解析（HTTP 下由端点执行，负向覆盖在 test_knowledge_router_employee）。"""
+
+    async def _noop(*_args, **_kwargs) -> None:
+        return None
+
+    async def _uploader_id(_current_user) -> str:
+        return "0"
+
+    monkeypatch.setattr(knowledge_router, "require_kb_manage_for_documents", _noop)
+    monkeypatch.setattr(knowledge_router, "require_documents_edit_or_kb_manage", _noop)
+    monkeypatch.setattr(knowledge_router, "_resolve_uploader_id", _uploader_id)
+
+
 def _database_detail(**stats) -> KnowledgeBaseDetail:
     return KnowledgeBaseDetail(
         kb_id="kb_1",
@@ -623,6 +638,7 @@ async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
             "content_hashes": {item: "hash_1"},
             "file_sizes": {item: 4},
             "source_path": "docs/demo.txt",
+            "uploader_id": "0",
         },
         "operator_id": "uid-user",
     }

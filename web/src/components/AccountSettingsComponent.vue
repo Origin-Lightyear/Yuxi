@@ -95,7 +95,7 @@
         </div>
 
         <div class="identity-panel">
-          <div class="identity-item">
+          <div v-if="!userStore.saasMode" class="identity-item">
             <span class="identity-icon"><ShieldCheck :size="15" /></span>
             <span class="profile-label">权限</span>
             <span class="profile-value" :style="{ color: getRoleColor(userStore.userRole) }">

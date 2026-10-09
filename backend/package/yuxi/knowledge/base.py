@@ -94,6 +94,7 @@ class KnowledgeBase(ABC):
             "error": record.error_message,
             "created_by": record.created_by,
             "updated_by": record.updated_by,
+            "uploader_id": getattr(record, "uploader_id", None) or "0",
             "created_at": utc_isoformat(record.created_at) if record.created_at else None,
             "updated_at": utc_isoformat(record.updated_at) if record.updated_at else None,
             "original_filename": record.original_filename,
@@ -122,6 +123,7 @@ class KnowledgeBase(ABC):
             "error_message": meta.get("error"),
             "created_by": str(meta.get("created_by")) if meta.get("created_by") else None,
             "updated_by": str(meta.get("updated_by")) if meta.get("updated_by") else None,
+            "uploader_id": meta.get("uploader_id"),
         }
 
     async def _load_file_meta(self, kb_id: str, file_id: str, *, refresh: bool = False) -> dict:

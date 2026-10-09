@@ -43,6 +43,10 @@ class KnowledgeBase(Base):
     mindmap_metadata = Column(JSON_VALUE)
     sample_questions = Column(JSON_VALUE)
     created_by = Column(String(64))
+    tenant_id = Column(Integer, nullable=True, index=True, comment="归属租户；NULL 为平台级知识库")
+    uploader_id = Column(
+        String(32), nullable=True, comment="上传者：SaaS 员工为 Tenant 员工 ID，租户后台/管理员操作存 0"
+    )
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -76,6 +80,9 @@ class KnowledgeFile(Base):
     processing_owner = Column(String(128))
     created_by = Column(String(64))
     updated_by = Column(String(64))
+    uploader_id = Column(
+        String(32), nullable=True, comment="上传者：SaaS 员工为 Tenant 员工 ID，租户后台/管理员操作存 0"
+    )
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

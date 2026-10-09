@@ -158,7 +158,7 @@
 
             <a-button
               type="text"
-              v-if="!readonly"
+              v-if="!readonly && allowFolderOps"
               @click="toggleSelectionMode"
               title="多选"
               class="panel-action-btn"
@@ -208,7 +208,7 @@
                   <div
                     class="overflow-action-item"
                     :class="{ active: isSelectionMode }"
-                    v-if="!readonly"
+                    v-if="!readonly && allowFolderOps"
                     @click="toggleSelectionMode"
                   >
                     <CheckSquare size="16" />
@@ -222,7 +222,12 @@
       </template>
 
       <template #before-table>
-        <div class="batch-actions" v-if="!readonly && isSelectionMode">
+        <div v-if="movingFile && !readonly" class="batch-actions">
+          <span>正在移动 {{ movingFile.filename }}，请选择目标目录</span>
+          <a-button type="link" :loading="moving" @click="confirmMoveFile">移动到此目录</a-button>
+          <a-button type="text" :disabled="moving" @click="movingFile = null">取消</a-button>
+        </div>
+        <div class="batch-actions" v-if="!readonly && allowFolderOps && isSelectionMode">
           <div class="batch-info">
             <a-checkbox
               :checked="isAllSelected"
@@ -381,7 +386,7 @@
                     重命名
                   </a-button>
                   <a-button
-                    v-if="!readonly"
+                    v-if="!readonly && allowFolderOps"
                     type="text"
                     block
                     @click="showCreateFolderModal(row.file_id)"
@@ -390,7 +395,7 @@
                     新建子文件夹
                   </a-button>
                   <a-button
-                    v-if="!readonly"
+                    v-if="!readonly && allowFolderOps"
                     type="text"
                     block
                     danger
@@ -447,6 +452,21 @@
                     重新入库
                   </a-button>
 
+                  <a-button
+                    v-if="!readonly"
+                    type="text"
+                    block
+                    @click="
+                      () => {
+                        movingFile = row
+                        popoverVisibleMap[row.file_id] = false
+                      }
+                    "
+                    :disabled="lock"
+                  >
+                    <template #icon><component :is="h(FolderOpen)" size="14" /></template>
+                    移动文件
+                  </a-button>
                   <a-button
                     v-if="!readonly"
                     type="text"
@@ -510,6 +530,7 @@ import {
   ListRestart,
   Ellipsis,
   FolderPlus,
+  FolderOpen,
   CheckSquare,
   FileText,
   Database,
@@ -521,14 +542,41 @@ import {
 } from '@lucide/vue'
 
 const store = useDatabaseStore()
+const movingFile = ref(null)
+const moving = ref(false)
+
+/** 将选中文档移动到文件浏览器当前目录，复用现有目录导航。 */
+const confirmMoveFile = async () => {
+  moving.value = true
+  try {
+    await documentApi.moveDocument(store.kbId, movingFile.value.file_id, store.fileBrowser.parentId)
+    movingFile.value = null
+    await store.loadDocumentFiles()
+    message.success('文件已移动')
+  } catch (error) {
+    message.error(error.message || '移动失败')
+  } finally {
+    moving.value = false
+  }
+}
+
+watch(
+  () => store.kbId,
+  () => {
+    movingFile.value = null
+  }
+)
 
 const emit = defineEmits(['mindmap', 'search'])
 
 const props = defineProps({
-  readonly: { type: Boolean, default: false }
+  readonly: { type: Boolean, default: false },
+  // 员工 MANAGE 只覆盖文档操作：文件夹操作与批量操作仅管理员可用
+  allowFolderOps: { type: Boolean, default: true }
 })
 
 const readonly = computed(() => props.readonly)
+const allowFolderOps = computed(() => props.allowFolderOps)
 
 const applyFilters = async (overrides = {}) => {
   const nextStatus = overrides.status ?? statusFilter.value

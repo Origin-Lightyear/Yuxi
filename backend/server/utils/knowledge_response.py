@@ -49,6 +49,8 @@ def serialize_knowledge_base(
         "query_params": dict(database.query_params),
         "metadata": dict(additional_params),
         "created_by": database.created_by,
+        "tenant_id": database.tenant_id,
+        "uploader_id": database.uploader_id or "0",
         "created_at": utc_isoformat(database.created_at) if database.created_at else None,
         "status": "已连接",
         "stats": stats,
@@ -60,6 +62,7 @@ def serialize_knowledge_base(
     effective_permission = permission or database.effective_permission
     if effective_permission is not None:
         response["effective_permission"] = effective_permission.value
+        response["can_read"] = effective_permission != ResourcePermission.NONE
         response["can_manage"] = effective_permission == ResourcePermission.MANAGE
 
     if isinstance(database, KnowledgeBaseDetail):

@@ -368,6 +368,72 @@ async def test_save_messages_from_langgraph_state_backfills_run_output_message(m
 
 
 @pytest.mark.asyncio
+async def test_save_messages_syncs_final_reply_to_tenant_per_config_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """开关打开时最终回复在提交后镜像到 Tenant，关闭时不调用。"""
+    sync_calls: list[tuple[object, object, object, str | None]] = []
+    conv_holder: dict[str, _FakeConvRepo] = {}
+
+    async def fake_sync(db, conversation, message, run_id):
+        sync_calls.append((db, conversation, message, run_id))
+
+    monkeypatch.setattr(svc.agent_data_sync, "sync_assistant_message", fake_sync)
+
+    async def run_once() -> None:
+        class FakeGraph:
+            async def aget_state(self, _config):
+                return SimpleNamespace(
+                    values={"messages": [HumanMessage(content="question"), AIMessage(content="answer")]}
+                )
+
+        class FakeDB:
+            async def commit(self):
+                pass
+
+            async def rollback(self):
+                pass
+
+        class FakeRunRepo:
+            def __init__(self, _db):
+                pass
+
+            async def lock_output_persistence(self, *_args, **_kwargs):
+                return object()
+
+            async def set_output_message(self, _run_id, _message_id, *, worker_id):
+                return object()
+
+        conv_repo = _FakeConvRepo(FakeDB())
+        conv_holder["repo"] = conv_repo
+        monkeypatch.setattr(svc, "AgentRunRepository", FakeRunRepo)
+        monkeypatch.setattr(svc, "ModelMessageAuditRepository", _EmptyModelAuditRepo)
+        monkeypatch.setattr(svc, "ToolMessageAuditRepository", _EmptyToolAuditRepo)
+
+        await svc.save_messages_from_langgraph_state(
+            state=await FakeGraph().aget_state({}),
+            thread_id="thread-sync",
+            conv_repo=conv_repo,
+            run_id="run-sync",
+            request_id="req-sync",
+            worker_id="worker-sync",
+        )
+
+    flag = property(lambda self: True)
+    monkeypatch.setattr(type(svc.app_config), "is_agent_data_sync_enabled", flag)
+    await run_once()
+    assert len(sync_calls) == 1
+    db, conversation, message, run_id = sync_calls[0]
+    assert db is conv_holder["repo"].db
+    assert conversation.thread_id == "thread-sync"
+    assert run_id == "run-sync"
+    assert conv_holder["repo"].saved_messages[-1]["content"] == "answer"
+
+    sync_calls.clear()
+    monkeypatch.setattr(type(svc.app_config), "is_agent_data_sync_enabled", property(lambda self: False))
+    await run_once()
+    assert sync_calls == []
+
+
+@pytest.mark.asyncio
 async def test_state_fallback_does_not_rebind_hidden_message_from_previous_run(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeDB:
         async def commit(self):

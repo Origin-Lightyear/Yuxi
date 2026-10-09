@@ -181,6 +181,94 @@ async def get_system_logs(levels: str | None = None, current_user: User = Depend
 
 
 # =============================================================================
+# === SaaS 定时任务分组 ===
+# =============================================================================
+
+
+class ScheduleCreate(BaseModel):
+    name: str
+    prompt: str
+    cronExpression: str
+    timezone: str
+    description: str | None = None
+    enabled: bool | None = None
+
+
+class ScheduleUpdate(BaseModel):
+    version: int
+    name: str | None = None
+    prompt: str | None = None
+    description: str | None = None
+    cronExpression: str | None = None
+    timezone: str | None = None
+    enabled: bool | None = None
+
+
+async def _require_saas_employee_context(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """解析当前登录用户的 SaaS 员工上下文，非 SaaS 用户返回 404。"""
+    from yuxi.config import config as app_config
+    from yuxi.services.saas_identity import get_saas_employee_context
+
+    if not app_config.is_agent_data_sync_enabled:
+        raise HTTPException(status_code=404, detail="SaaS 模式未启用")
+    ctx = await get_saas_employee_context(db, current_user.uid)
+    if ctx is None:
+        raise HTTPException(status_code=404, detail="当前用户未绑定 SaaS 员工身份")
+    return ctx
+
+
+@system.get("/schedules")
+async def list_schedules(ctx=Depends(_require_saas_employee_context)):
+    """查询当前员工的全部定时任务（透传 Tenant 服务）。"""
+    from yuxi.services import schedule_service
+
+    return {"items": await schedule_service.list_schedules(ctx)}
+
+
+@system.post("/schedules")
+async def create_schedule(data: ScheduleCreate, ctx=Depends(_require_saas_employee_context)):
+    """创建定时任务（透传 Tenant 服务，本地先校验 Cron 与时区）。"""
+    from yuxi.services import schedule_service
+
+    return await schedule_service.create_schedule(ctx, data.model_dump())
+
+
+@system.get("/schedules/{schedule_id}")
+async def get_schedule(schedule_id: int, ctx=Depends(_require_saas_employee_context)):
+    """查询单个定时任务。"""
+    from yuxi.services import schedule_service
+
+    return await schedule_service.get_schedule(ctx, schedule_id)
+
+
+@system.patch("/schedules/{schedule_id}")
+async def update_schedule(schedule_id: int, data: ScheduleUpdate, ctx=Depends(_require_saas_employee_context)):
+    """修改或启停定时任务。"""
+    from yuxi.services import schedule_service
+
+    return await schedule_service.update_schedule(ctx, schedule_id, data.model_dump(exclude_none=True))
+
+
+@system.delete("/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: int, version: int, ctx=Depends(_require_saas_employee_context)):
+    """删除定时任务。"""
+    from yuxi.services import schedule_service
+
+    return await schedule_service.delete_schedule(ctx, schedule_id, version)
+
+
+@system.get("/timezones")
+async def get_timezones(ctx=Depends(_require_saas_employee_context)):
+    """时区字典（透传 Tenant 服务）。"""
+    from yuxi.services import schedule_service
+
+    return {"items": await schedule_service.get_timezones(ctx)}
+
+
+# =============================================================================
 # === 信息管理分组 ===
 # =============================================================================
 

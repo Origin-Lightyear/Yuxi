@@ -41,6 +41,8 @@ class KnowledgeBaseSummary:
     share_config: dict[str, Any]
     created_by: str | None
     created_at: datetime | None
+    tenant_id: int | None = None
+    uploader_id: str = "0"
     file_count: int = 0
     folder_count: int = 0
     row_count: int = 0

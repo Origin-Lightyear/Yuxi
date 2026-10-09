@@ -8,6 +8,7 @@ import {
   apiGet,
   apiPost,
   apiPut,
+  apiRequest,
   apiSuperAdminGet,
   apiSuperAdminPost
 } from './base'
@@ -58,6 +59,9 @@ async function login(credentials) {
   const formData = new FormData()
   formData.append('username', credentials.loginId)
   formData.append('password', credentials.password)
+  if (credentials.tenantId) {
+    formData.append('tenant_id', credentials.tenantId)
+  }
   return apiPost('/api/auth/token', formData, {}, false)
 }
 
@@ -130,8 +134,18 @@ async function approveCLIAuthSession(userCode) {
   return apiPost(`/api/auth/cli/sessions/${encoded}/approve`, {})
 }
 
+async function logout(token) {
+  return apiRequest('/api/auth/logout', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  }, false)
+}
+
 export const authApi = {
   login,
+  logout,
   initialize,
   checkFirstRun,
   getUsers,

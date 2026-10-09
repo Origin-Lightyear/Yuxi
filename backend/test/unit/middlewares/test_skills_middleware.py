@@ -260,7 +260,7 @@ async def test_preloaded_skill_rejects_duplicate_mcp_tool_names(monkeypatch):
 
         return f"wrong-service:{value}"
 
-    async def fake_get_enabled_mcp_tools(server_name):
+    async def fake_get_enabled_mcp_tools(server_name, uid=None):
         return [chart_tool] if server_name == "charts" else [conflicting_chart_tool]
 
     monkeypatch.setattr(skills_middleware, "get_enabled_mcp_tools", fake_get_enabled_mcp_tools)
@@ -300,7 +300,7 @@ async def test_activated_mcp_rejects_name_of_inactive_registered_skill_tool(monk
 
         return f"mcp:{value}"
 
-    async def fake_get_enabled_mcp_tools(server_name):
+    async def fake_get_enabled_mcp_tools(server_name, uid=None):
         assert server_name == "charts"
         return [chart_tool]
 
@@ -341,7 +341,7 @@ async def test_preloaded_skill_exposes_mcp_tool_on_first_model_call(monkeypatch)
 
         return f"rendered:{value}"
 
-    async def fake_get_enabled_mcp_tools(server_name):
+    async def fake_get_enabled_mcp_tools(server_name, uid=None):
         assert server_name == "charts"
         return [chart_tool]
 
@@ -389,7 +389,7 @@ async def test_activated_skill_loads_mcp_without_agent_selection(monkeypatch):
 
     calls = []
 
-    async def fake_get_enabled_mcp_tools(server_name):
+    async def fake_get_enabled_mcp_tools(server_name, uid=None):
         calls.append(server_name)
         return [chart_tool]
 
@@ -450,7 +450,7 @@ async def test_skill_reusing_explicit_mcp_server_does_not_duplicate_registered_t
 
     calls = []
 
-    async def fake_get_enabled_mcp_tools(server_name):
+    async def fake_get_enabled_mcp_tools(server_name, uid=None):
         calls.append(server_name)
         return [chart_tool]
 
@@ -496,7 +496,7 @@ async def test_explicit_mcp_rejects_skill_local_tool_name_collision(monkeypatch)
 
         return "wrong-source"
 
-    async def fake_get_enabled_mcp_tools(server_name):
+    async def fake_get_enabled_mcp_tools(server_name, uid=None):
         assert server_name == "configured"
         return [conflicting_list_kbs]
 
@@ -512,6 +512,47 @@ async def test_explicit_mcp_rejects_skill_local_tool_name_collision(monkeypatch)
 
     with pytest.raises(RuntimeError, match="Skill 本地工具 'list_kbs'"):
         await resolve_configured_runtime_tools(context)
+
+
+
+async def test_resolve_configured_runtime_tools_passes_uid_to_mcp(monkeypatch):
+    captured: list[tuple[str, str | None]] = []
+
+    async def fake_get_enabled_mcp_tools(server_name: str, uid: str | None = None):
+        captured.append((server_name, uid))
+        return [SimpleNamespace(name="select_all")]
+
+    monkeypatch.setattr("yuxi.agents.mcp.service.get_enabled_mcp_tools", fake_get_enabled_mcp_tools)
+    context = SimpleNamespace(
+        uid="employee-001",
+        tools=None,
+        mcps=["saas-mcp"],
+        _readable_skills=[],
+        _runtime_skill_dependency_map={},
+    )
+
+    tools = await resolve_configured_runtime_tools(context)
+
+    assert [tool.name for tool in tools] == ["select_all"]
+    assert captured == [("saas-mcp", "employee-001")]
+
+
+@pytest.mark.asyncio
+async def test_skills_middleware_passes_uid_to_mcp(monkeypatch):
+    captured: list[tuple[str, str | None]] = []
+
+    async def fake_get_enabled_mcp_tools(server_name: str, uid: str | None = None):
+        captured.append((server_name, uid))
+        return [SimpleNamespace(name="select_all")]
+
+    monkeypatch.setattr(skills_middleware, "get_enabled_mcp_tools", fake_get_enabled_mcp_tools)
+    # 显式 MCP 由 Graph 基础工具注册；本方法只加载 Skill 新增依赖并透传 uid
+    context = SimpleNamespace(uid="employee-001")
+
+    tools = await SkillsMiddleware()._get_mcp_tools_from_context(context, extra_mcps=["saas-mcp"])
+
+    assert [tool.name for tool in tools] == ["select_all"]
+    assert captured == [("saas-mcp", "employee-001")]
 
 
 def _make_gated_request(activated, *, preloaded=None):

@@ -904,6 +904,7 @@ import {
 import { MessageProcessor } from '@/utils/messageProcessor'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import { agentApi, threadApi } from '@/apis'
+import { modelProviderApi } from '@/apis/system_api'
 import HumanApprovalModal from '@/components/HumanApprovalModal.vue'
 import { extractPendingInterrupt, useApproval } from '@/composables/useApproval'
 import { useAgentThreadState, IDLE_QUEUE_SNAPSHOT } from '@/composables/useAgentThreadState'
@@ -920,6 +921,7 @@ import ProjectSelectionSection from '@/components/ProjectSelectionSection.vue'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import { enrichTaskToolCalls, parseToolCallArgs } from '@/components/ToolCallingResult/toolRegistry'
 import { getConversationDisplayItems } from '@/utils/messageGrouping'
+import { resolveAvailableChatModelSpec } from '@/utils/chatModel'
 import { makeChildThreadId } from '@/utils/subagentThread'
 import { isSubagentLaunchToolName, mergeSubagentRunsForDisplay } from '@/utils/subagentRuns'
 import {
@@ -1384,23 +1386,46 @@ watch(
 )
 
 // ==================== 对话级模型覆盖 ====================
-// 当前选择优先；否则依次使用 Conversation、智能体和系统默认模型。
+// 按线程记忆用户选择的模型，并只从当前启用的模型中解析最终展示值。
 const DRAFT_MODEL_KEY = '__draft__'
 const selectedModelByThread = reactive({})
+const availableChatModelSpecs = ref([])
+const chatModelsLoadState = ref('loading')
 const savedToolApprovalMode = ref(readToolApprovalModePreference())
-const agentDefaultModel = computed(
-  () =>
-    agentConfig.value?.model ||
-    currentAgent.value?.config_json?.context?.model ||
-    configStore.config?.default_model ||
-    ''
+const configuredAgentModel = computed(
+  () => agentConfig.value?.model || currentAgent.value?.config_json?.context?.model || ''
 )
-const currentModelSpec = computed(
-  () =>
-    selectedModelByThread[currentChatId.value || DRAFT_MODEL_KEY] ||
-    currentThread.value?.metadata?.model_spec ||
-    agentDefaultModel.value
-)
+const currentModelSpec = computed(() => {
+  if (chatModelsLoadState.value !== 'ready') return ''
+
+  return resolveAvailableChatModelSpec({
+    selectedModel:
+      selectedModelByThread[currentChatId.value || DRAFT_MODEL_KEY] ||
+      currentThread.value?.metadata?.model_spec,
+    agentModel: configuredAgentModel.value,
+    systemModel: configStore.config?.default_model,
+    availableSpecs: availableChatModelSpecs.value
+  })
+})
+
+/** 加载当前启用的聊天模型，供默认值校验和发送前检查使用。 */
+const loadAvailableChatModels = async () => {
+  chatModelsLoadState.value = 'loading'
+  try {
+    const response = await modelProviderApi.getV2Models('chat')
+    if (!response?.success) throw new Error('聊天模型列表加载失败')
+
+    availableChatModelSpecs.value = Object.values(response.data || {}).flatMap((provider) =>
+      (provider.models || []).map((model) => model.spec).filter(Boolean)
+    )
+    chatModelsLoadState.value = 'ready'
+  } catch (error) {
+    availableChatModelSpecs.value = []
+    chatModelsLoadState.value = 'error'
+    console.warn('Failed to load available chat models:', error)
+  }
+}
+
 const handleModelSelect = (spec) => {
   if (typeof spec === 'string') {
     if (spec) {
@@ -3298,6 +3323,19 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
   )
     return
 
+  if (chatModelsLoadState.value === 'loading') {
+    message.info('聊天模型正在加载，请稍后重试')
+    return
+  }
+  if (chatModelsLoadState.value === 'error') {
+    message.error('聊天模型列表加载失败，请刷新页面重试')
+    return
+  }
+  if (!currentModelSpec.value) {
+    message.error('暂无可用聊天模型，请先配置模型')
+    return
+  }
+
   // 发送后进入短暂冷却，防止连续触发停止
   startSendCooldown()
 
@@ -3734,7 +3772,7 @@ const getDisplayItems = (conv) =>
 const isDisplayMessageProcessing = (conv, displayItem) => {
   return (
     displayItem?.type === 'message' &&
-    isReplyLoading.value &&
+    isStreaming.value &&
     conv?.status === 'streaming' &&
     displayItem.sourceIndex === conv.messages.length - 1
   )
@@ -3742,7 +3780,7 @@ const isDisplayMessageProcessing = (conv, displayItem) => {
 
 const isToolGroupActive = (conv, itemIndex, displayItems) => {
   return (
-    isReplyLoading.value && conv?.status === 'streaming' && itemIndex === displayItems.length - 1
+    isStreaming.value && conv?.status === 'streaming' && itemIndex === displayItems.length - 1
   )
 }
 
@@ -3817,6 +3855,7 @@ const initAll = async () => {
 
 onMounted(async () => {
   await initAll()
+  await loadAvailableChatModels()
   scrollController.enableAutoScroll()
 })
 

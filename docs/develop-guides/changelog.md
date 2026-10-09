@@ -35,6 +35,14 @@
 - 修复书籍分块偶发遗漏短文档标题、将不同节错误合并的问题；标题识别使用无放回抽样，短文档保留全部段落。
 - 修复 PDF 预览偶发误报「无法加载 PDF 文件或文件格式受损」：生产 Nginx 为 `.mjs` 静态资源补充 JavaScript MIME，pdf.js Worker 不再被浏览器拒绝；前端区分渲染组件、网络与文件损坏错误，并修复快速切换文件时的过期加载竞态；CMap 字体映射改为随应用本地发布，不再依赖 jsDelivr CDN。
 
+- 优化 SaaS Agent 体验：运行时仅展开当前任务，结束后收起轨迹；员工资料显示部门和姓名，设置隐藏本地角色、基本设置、OCR 与沙盒变量；退出清状态后立即返回登录页，不等待后端注销；NewAPI 同步后刷新缓存，成功空清单清除旧模型，失败保留；展示员工可读的租户知识库和目录，隐藏结构管理，仅 `manage_scope` 员工可管理文档；租户 `departmentId` 单独持久化并用于权限匹配，避免与本地部门主键混用。
+- 默认路由 `/` 改为重定向到对话页，首页不再加载；仓库和文档跳转链接保持不变。
+- 补齐 SaaS 员工知识库访问：列表与详情返回有效读写权限，文档查看、上传、移动和删除按共享范围授权，知识库与目录结构仍仅管理员可维护；跨租户、跨库文档及目标目录统一校验，员工页面隐藏管理入口并修复文件上传 multipart 边界。建档时校验最终 MinIO 源对象的 bucket 与知识库归属（含预处理覆盖路径），文档写入先授权再检查类型，避免跨租户对象越权和名称泄露。
+- 修复对话框继续展示已下线默认模型的问题：初始化时按启用模型校验线程、Agent 与系统默认值，失效时回退到首个可用聊天模型；无可用模型或列表加载失败时阻止发送并明确提示，后端运行解析同步执行相同回退。
+- 新增租户知识库管理：知识库按租户隔离，SaaS 员工仅见本租户 KB；权限完全由 KB 级 `share_config` 表达（manage_scope 命中授予员工「文档级管理」，KB 结构操作保持管理员门槛，空 `user_uids` 合法表达无权限，`user_uids` 用员工 `employeeCode`）；新增 `/api/tenant/knowledge/**` 租户管理 API（静态 Key + `X-Tenant-Id` 鉴权：KB CRUD、目录创建/重命名/移动/仅空目录删除、文档分页/元数据/删除，跨租户 404）；知识库/目录/文档新增「上传者」`uploader_id`（员工上传存 Tenant 员工 ID，租户后台/管理员操作存 0，列表与元数据响应均返回）；创建知识库缺省使用默认嵌入模型（`config.embed_model`，默认 `siliconflow-cn:Pro/BAAI/bge-m3`，可不传 `embedding_model_spec`），**嵌入模型未注册或调用失败时自动降级到 `config.embed_fallback_model`（默认 `ollama:bge-m3`）**；修复无鉴权嵌入服务（如本地 Ollama）因空 API Key 构造 `Bearer ` 头导致请求失败的问题；Agent 新增 `upload_kb_file`/`delete_kb_file` 工具；前端 SaaS 员工可见知识库 tab 并按 MANAGE 边界显隐文档操作。
+- 新增 SaaS Agent 数据双写与定时任务：SaaS 登录迁移到 Tenant 服务新内部路径 `/api/v1/agent/inner/auth`，按员工编码复用本地账号并同步手机号、姓名与部门；MCP Runtime 从租户 endpoints 接口同步，使用 `AgentSession` 为每次 HTTP 请求申请一次性六 Header；Yuxi JWT 有效期与 AgentSession 对齐，Session 缺失时统一返回 401 并触发重新登录，避免模型误判为数据源未配置；`tenant_id/employee_id` 持久化到 `user_config`（可 `AGENT_DATA_SYNC=false` 关闭）；SaaS 模式下本地线程、对话回复与恢复入口的用户消息按 fail-soft 镜像到 Tenant，并记录整轮 `consumedScore`；新增五段式 Cron 调度与任务接口透传。
+- 修复内置 `mysql-reporter` 的数据源路由：企业业务查询调用 SaaS MCP `linko_ent`，会话失效时提示重新登录，不再误导用户配置沙盒 `MYSQL_*`；独立外部 MySQL 仍使用只读脚本。
+- 修复 API/Worker 单文件挂载 `.env` 在编辑器原子保存后失效的问题：Compose 统一通过 `env_file` 注入环境变量，避免热重载时 ARQ 子进程因 `/app/.env` 短暂不存在而退出、已派发 Run 长期停留在 pending。
 ### 运行与维护
 
 - 通用后台 Task 使用 PostgreSQL 持久执行意图与 ARQ worker，按 owner、heartbeat 和 lease 执行与收敛失联任务；知识库执行器和 Milvus 同步调用移出共享事件循环。

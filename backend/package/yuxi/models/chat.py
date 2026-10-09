@@ -36,6 +36,8 @@ def load_chat_model(
 
     api_key = info.api_key
     base_url = get_docker_safe_url(info.base_url)
+    if base_url and not base_url.rstrip("/").endswith("/v1"):
+        base_url = base_url.rstrip("/") + "/v1"
     if info.provider_id in {"opencode", "opencode-go"}:
         kwargs["default_headers"] = {
             **(kwargs.get("default_headers") or {}),
@@ -213,7 +215,7 @@ class LangChainChatAdapter:
             if stream:
                 return self._stream_response(messages)
             response = await self.model.ainvoke(messages)
-            return GeneralResponse(response.text)
+            return GeneralResponse(response.text if hasattr(response, "text") else str(response.content))
         except Exception as e:
             err = f"Error calling model: {e}, URL: {self.base_url}, Model: {self.model_name}"
             logger.error(err)
@@ -227,8 +229,14 @@ class LangChainChatAdapter:
 
     async def _stream_response(self, messages):
         async for chunk in self.model.astream(messages):
-            if chunk.text:
-                yield GeneralResponse(chunk.text)
+            text = chunk.text if hasattr(chunk, "text") else ""
+            if not text and hasattr(chunk, "message"):
+                text = chunk.message.content if hasattr(chunk.message, "content") else ""
+            if not text:
+                reasoning = getattr(chunk, "additional_kwargs", {}) or {}
+                text = reasoning.get("reasoning_content", "")
+            if text:
+                yield GeneralResponse(text)
 
 
 def select_model(model_spec: str, **kwargs) -> LangChainChatAdapter:

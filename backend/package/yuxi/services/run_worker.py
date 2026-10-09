@@ -1592,11 +1592,17 @@ async def _worker_startup(ctx):
     await _publish_reconciliation_health()
     ctx[_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_agent_run_leases_forever())
     ctx[_TASK_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_durable_tasks_forever())
+    from yuxi.services.schedule_runner import schedule_runner
+
+    schedule_runner.start()
 
 
 async def _worker_shutdown(ctx):
     """关闭 worker 共享连接。"""
 
+    from yuxi.services.schedule_runner import schedule_runner
+
+    await schedule_runner.stop()
     if isinstance(ctx, dict):
         reconciliation_tasks = [
             ctx.pop(_RECONCILIATION_TASK_KEY, None),

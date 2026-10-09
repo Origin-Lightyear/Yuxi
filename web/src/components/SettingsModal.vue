@@ -32,7 +32,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'apiKeys' }"
             @click="activeTab = 'apiKeys'"
-            v-if="userStore.isLoggedIn"
+            v-if="userStore.isLoggedIn && !userStore.saasMode"
           >
             <Key class="icon" :size="18" />
             <span>API Keys</span>
@@ -41,7 +41,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'base' }"
             @click="activeTab = 'base'"
-            v-if="userStore.isAdmin"
+            v-if="userStore.isAdmin && !userStore.saasMode"
           >
             <Settings class="icon" :size="18" />
             <span>基本设置</span>
@@ -50,7 +50,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'ocr' }"
             @click="activeTab = 'ocr'"
-            v-if="userStore.isAdmin"
+            v-if="userStore.isAdmin && !userStore.saasMode"
           >
             <ScanText class="icon" :size="18" />
             <span>OCR 配置</span>
@@ -59,7 +59,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'user' }"
             @click="activeTab = 'user'"
-            v-if="userStore.isAdmin"
+            v-if="userStore.isAdmin && !userStore.saasMode"
           >
             <User class="icon" :size="18" />
             <span>用户管理</span>
@@ -68,7 +68,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'department' }"
             @click="activeTab = 'department'"
-            v-if="userStore.isSuperAdmin"
+            v-if="userStore.isSuperAdmin && !userStore.saasMode"
           >
             <Users class="icon" :size="18" />
             <span>部门管理</span>
@@ -77,7 +77,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'agentEnv' }"
             @click="activeTab = 'agentEnv'"
-            v-if="userStore.isLoggedIn"
+            v-if="userStore.isLoggedIn && !userStore.saasMode"
           >
             <SquareTerminal class="icon" :size="18" />
             <span>环境变量</span>
@@ -132,7 +132,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'apiKeys' }"
           @click="activeTab = 'apiKeys'"
-          v-if="userStore.isLoggedIn"
+          v-if="userStore.isLoggedIn && !userStore.saasMode"
         >
           API Keys
         </div>
@@ -140,7 +140,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'agentEnv' }"
           @click="activeTab = 'agentEnv'"
-          v-if="userStore.isLoggedIn"
+          v-if="userStore.isLoggedIn && !userStore.saasMode"
         >
           沙盒环境变量
         </div>
@@ -148,7 +148,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'base' }"
           @click="activeTab = 'base'"
-          v-if="userStore.isAdmin"
+          v-if="userStore.isAdmin && !userStore.saasMode"
         >
           基本设置
         </div>
@@ -156,7 +156,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'ocr' }"
           @click="activeTab = 'ocr'"
-          v-if="userStore.isAdmin"
+          v-if="userStore.isAdmin && !userStore.saasMode"
         >
           OCR 配置
         </div>
@@ -164,7 +164,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'user' }"
           @click="activeTab = 'user'"
-          v-if="userStore.isAdmin"
+          v-if="userStore.isAdmin && !userStore.saasMode"
         >
           用户管理
         </div>
@@ -172,7 +172,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'department' }"
           @click="activeTab = 'department'"
-          v-if="userStore.isSuperAdmin"
+          v-if="userStore.isSuperAdmin && !userStore.saasMode"
         >
           部门管理
         </div>
@@ -188,36 +188,30 @@
             <AccountSettingsComponent />
           </div>
 
-          <div
-            v-show="activeTab === 'apiKeys'"
-            v-if="userStore.isLoggedIn && loadedTabs.has('apiKeys')"
-          >
+          <div v-if="userStore.isLoggedIn && loadedTabs.has('apiKeys') && !userStore.saasMode">
             <ApiKeyManagementComponent />
           </div>
 
           <div
             v-show="activeTab === 'agentEnv'"
-            v-if="userStore.isLoggedIn && loadedTabs.has('agentEnv')"
+            v-if="userStore.isLoggedIn && loadedTabs.has('agentEnv') && !userStore.saasMode"
           >
             <AgentEnvSettingsCard />
           </div>
 
-          <div v-show="activeTab === 'base'" v-if="userStore.isAdmin && loadedTabs.has('base')">
+          <div v-show="activeTab === 'base'" v-if="userStore.isAdmin && loadedTabs.has('base') && !userStore.saasMode">
             <BasicSettingsSection />
           </div>
 
-          <div v-show="activeTab === 'ocr'" v-if="userStore.isAdmin && loadedTabs.has('ocr')">
+          <div v-show="activeTab === 'ocr'" v-if="userStore.isAdmin && loadedTabs.has('ocr') && !userStore.saasMode">
             <OCRSettingsSection />
           </div>
 
-          <div v-show="activeTab === 'user'" v-if="userStore.isAdmin && loadedTabs.has('user')">
+          <div v-if="userStore.isAdmin && loadedTabs.has('user') && !userStore.saasMode">
             <UserManagementComponent />
           </div>
 
-          <div
-            v-show="activeTab === 'department'"
-            v-if="userStore.isSuperAdmin && loadedTabs.has('department')"
-          >
+          <div v-show="activeTab === 'department'" v-if="userStore.isSuperAdmin && loadedTabs.has('department') && !userStore.saasMode">
             <DepartmentManagementComponent />
           </div>
         </div>
@@ -287,9 +281,11 @@ const visible = computed({
 
 const availableTabs = computed(() => {
   const tabs = []
-  if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv')
-  if (userStore.isAdmin) tabs.push('base', 'ocr', 'user')
-  if (userStore.isSuperAdmin) tabs.push('department')
+  if (userStore.isLoggedIn) tabs.push('account')
+  if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('apiKeys')
+  if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('agentEnv')
+  if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user')
+  if (userStore.isSuperAdmin && !userStore.saasMode) tabs.push('department')
   return tabs
 })
 
@@ -298,7 +294,7 @@ const setActiveTab = (preferredTab) => {
     activeTab.value = preferredTab
     return
   }
-  activeTab.value = userStore.isAdmin ? 'base' : availableTabs.value[0]
+  activeTab.value = availableTabs.value[0]
 }
 
 const handleClose = () => {

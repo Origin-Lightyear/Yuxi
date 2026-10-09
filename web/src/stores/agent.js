@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { agentApi, databaseApi, toolApi } from '@/apis'
 import { normalizeAgent } from '@/utils/agentConfigUtils'
 import { handleChatError } from '@/utils/errorHandler'
+import { useUserStore } from '@/stores/user'
 
 export const BUILTIN_AGENT_ID = 'default-chatbot'
 
@@ -44,6 +45,7 @@ function getConfigurableItems(agent) {
 export const useAgentStore = defineStore(
   'agent',
   () => {
+    const userStore = useUserStore()
     const agents = ref([])
     const selectedAgentId = ref(null)
 
@@ -103,6 +105,18 @@ export const useAgentStore = defineStore(
         toolMetadata.value = []
       }
     }
+
+    // Agent 可能先于 /auth/me 初始化；身份恢复后重新加载租户可见知识库。
+    watch(
+      [() => userStore.uid, () => userStore.isAdmin, () => userStore.saasMode],
+      ([uid, isAdmin, saasMode], [previousUid, previousIsAdmin, previousSaasMode]) => {
+        if (!uid) return
+        if (uid === previousUid && isAdmin === previousIsAdmin && saasMode === previousSaasMode) {
+          return
+        }
+        void fetchAccessibleKnowledgeBases()
+      }
+    )
 
     async function initialize() {
       if (isInitialized.value || isInitializing.value) return

@@ -4,6 +4,13 @@ import { authApi } from '@/apis/auth_api'
 import { useAgentStore } from './agent'
 import { useProjectsStore } from './projects'
 
+export function formatUserSummary({ saasMode, departmentName, username }) {
+  if (saasMode && departmentName) {
+    return `${departmentName} · ${username}`
+  }
+  return username
+}
+
 export const useUserStore = defineStore('user', () => {
   // 状态
   const token = ref(localStorage.getItem('user_token') || '')
@@ -15,6 +22,8 @@ export const useUserStore = defineStore('user', () => {
   const userRole = ref('')
   const departmentId = ref(null)
   const departmentName = ref('')
+  const saasMode = ref(false)
+  const employeeCode = ref('')
 
   // 计算属性
   const isLoggedIn = computed(() => !!token.value)
@@ -33,12 +42,17 @@ export const useUserStore = defineStore('user', () => {
     userRole.value = data.role
     departmentId.value = data.department_id || null
     departmentName.value = data.department_name || ''
+    saasMode.value = data.saas_mode || false
+    employeeCode.value = data.employee_code || ''
     localStorage.setItem('user_token', data.access_token)
   }
 
   async function login(credentials) {
     try {
       const data = await authApi.login(credentials)
+      if (data.need_select_tenant) {
+        return { needSelectTenant: true, tenants: data.tenants, mobile: data.mobile }
+      }
       applySession(data)
       return true
     } catch (error) {
@@ -47,7 +61,9 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  function logout() {
+  async function logout() {
+    const tokenBeforeLogout = token.value
+
     // 清除状态
     token.value = ''
     userId.value = null
@@ -58,6 +74,8 @@ export const useUserStore = defineStore('user', () => {
     userRole.value = ''
     departmentId.value = null
     departmentName.value = ''
+    saasMode.value = false
+    employeeCode.value = ''
 
     // 清除 agentStore 状态，确保重新登录时能正确加载数据
     const agentStore = useAgentStore()
@@ -66,6 +84,14 @@ export const useUserStore = defineStore('user', () => {
 
     // 只清除 token
     localStorage.removeItem('user_token')
+
+    if (tokenBeforeLogout) {
+      try {
+        await authApi.logout(tokenBeforeLogout)
+      } catch (error) {
+        console.warn('注销 SaaS 会话失败:', error)
+      }
+    }
   }
 
   async function initialize(admin) {
@@ -186,6 +212,8 @@ export const useUserStore = defineStore('user', () => {
       userRole.value = userData.role
       departmentId.value = userData.department_id || null
       departmentName.value = userData.department_name || ''
+      saasMode.value = userData.saas_mode || false
+      employeeCode.value = userData.employee_code || ''
 
       return userData
     } catch (error) {
@@ -225,6 +253,8 @@ export const useUserStore = defineStore('user', () => {
     userRole,
     departmentId,
     departmentName,
+    saasMode,
+    employeeCode,
 
     // 计算属性
     isLoggedIn,

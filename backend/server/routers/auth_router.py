@@ -1,8 +1,8 @@
 import re
-
+from datetime import timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
@@ -54,6 +54,12 @@ from yuxi.services.oidc_service import (
     oidc_login_url_handler,
 )
 
+# SaaS 多租户认证相关导入
+from yuxi.services.saas_auth_service import find_or_create_saas_user, upsert_saas_mcp_server, upsert_saas_model_provider
+from yuxi.services.saas_client import SaasAPIError, _parse_employee_permission_department_id, get_saas_client
+from yuxi.config import config as app_config
+from server.routers.model_provider_router import _refresh_model_cache
+
 # 创建路由器
 auth = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -70,6 +76,9 @@ class Token(BaseModel):
     role: str
     department_id: int | None = None
     department_name: str | None = None
+    # SaaS 模式下的扩展字段
+    saas_mode: bool = False
+    employee_code: str | None = None
 
 
 class UserCreate(BaseModel):
@@ -104,6 +113,8 @@ class UserResponse(BaseModel):
     role: str
     department_id: int | None = None
     department_name: str | None = None  # 部门名称
+    saas_mode: bool = False
+    employee_code: str | None = None
     created_at: str
     last_login: str | None = None
 
@@ -211,6 +222,215 @@ def _raise_cli_auth_error(exc: CLIAuthError) -> None:
     ) from exc
 
 
+async def _commit_saas_changes_and_refresh_model_cache(db) -> None:
+    """提交 SaaS 登录同步结果后，刷新跨进程模型缓存。"""
+    await db.commit()
+    await _refresh_model_cache()
+
+
+def _select_saas_mcp_server(servers: list[dict], fallback_url: str = "") -> tuple[str, str] | None:
+    """从 Tenant MCP 列表中选择当前 Agent 可用的 Runtime。"""
+    for server in servers:
+        if server.get("enabled") in (False, 0, "0", "DISABLED"):
+            continue
+        instance_id = str(server.get("instanceId") or server.get("mcpInstanceId") or "").strip()
+        mcp_url = str(server.get("url") or server.get("mcpUrl") or server.get("endpoint") or fallback_url).strip()
+        if instance_id and mcp_url:
+            return mcp_url, instance_id
+    return None
+
+
+@auth.post("/logout")
+async def logout(
+    current_user: User = Depends(get_required_user),
+):
+    """注销本地 JWT 对应的 SaaS AgentSession。"""
+    from yuxi.services.saas_session import clear_saas_agent_session, get_saas_agent_session
+
+    session = await get_saas_agent_session(current_user.uid)
+    if session is not None:
+        try:
+            await get_saas_client().logout_agent_session(session.token)
+        except Exception as exc:
+            logger.warning(f"Failed to logout SaaS AgentSession: {exc}")
+        await clear_saas_agent_session(current_user.uid)
+    return {"success": True}
+
+
+async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: int | None = None) -> dict:
+    """SaaS 模式登录：通过 Tenant 服务鉴权。
+
+    单租户：直接同步用户并返回 JWT。
+    多租户且未指定 tenant_id：返回租户列表供前端选择。
+    多租户且已指定 tenant_id：使用指定租户登录。
+    """
+    saas = get_saas_client()
+
+    try:
+        auth_result = await saas.authenticate_employee(mobile, password)
+    except SaasAPIError as exc:
+        logger.warning(f"SaaS employee auth failed: code={exc.code}, msg={exc.msg}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="手机号或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except Exception as exc:
+        logger.error(f"SaaS employee auth error: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="认证服务暂时不可用，请稍后重试",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 如果指定了 tenant_id，选择对应租户
+    if tenant_id:
+        emp = next((t for t in auth_result.tenants if t.tenant_id == tenant_id), None)
+        if not emp:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="指定的租户不存在",
+            )
+    elif len(auth_result.tenants) == 1:
+        emp = auth_result.primary
+    else:
+        # 多租户：返回列表供用户选择
+        return {
+            "need_select_tenant": True,
+            "mobile": auth_result.mobile,
+            "tenants": [
+                {
+                    "tenant_id": t.tenant_id,
+                    "tenant_name": t.tenant_name,
+                    "employee_name": t.employee_name,
+                    "department_name": t.department_name,
+                }
+                for t in auth_result.tenants
+            ],
+        }
+
+    if not emp:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该员工未绑定任何租户",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not emp.agent_session_token or not emp.agent_session_expires_at:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="SaaS 登录响应缺少 AgentSession")
+    if emp.enabled != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该员工账户已被禁用",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        tenant_cfg = await saas.get_tenant_config(emp.tenant_id)
+    except Exception as exc:
+        logger.warning(f"Failed to fetch tenant config: {exc}")
+        tenant_cfg = None
+
+    # MCP Runtime 实例和 URL 由 Tenant MCP 列表下发，不能由 Agent 自行推断。
+    try:
+        mcp_servers = await saas.list_mcp_servers(emp.tenant_id)
+    except Exception as exc:
+        logger.warning(f"Failed to load SaaS MCP servers: {exc}")
+        mcp_servers = []
+    selected_mcp = _select_saas_mcp_server(mcp_servers, fallback_url=tenant_cfg.mcp_url if tenant_cfg else "")
+    if selected_mcp:
+        try:
+            await upsert_saas_mcp_server(db, selected_mcp[0], selected_mcp[1])
+        except Exception as exc:
+            logger.warning(f"Failed to upsert SaaS MCP server: {exc}")
+
+    llm_key = emp.llm_key or (tenant_cfg.llm_key if tenant_cfg else "")
+    llm_url = emp.llm_url or (tenant_cfg.llm_url if tenant_cfg else "")
+    if llm_key and llm_url:
+        try:
+            await upsert_saas_model_provider(db, llm_key, llm_url)
+        except Exception as exc:
+            logger.warning(f"Failed to upsert SaaS model provider: {exc}")
+
+    user = await find_or_create_saas_user(
+        db,
+        mobile=mobile,
+        employee_code=emp.employee_code,
+        employee_name=emp.employee_name,
+        department_name=emp.department_name,
+    )
+
+    # 持久化 SaaS 员工身份，供 Agent 数据双写与定时任务使用
+    from yuxi.services.saas_identity import save_saas_employee_context
+    from yuxi.services.saas_session import (
+        SaasAgentSession,
+        get_saas_session_ttl_seconds,
+        save_saas_agent_session,
+    )
+
+    tenant_department_id = emp.department_id
+    try:
+        permission_snapshot = await saas.get_employee_permission(emp.tenant_id, emp.employee_id)
+        permission_department_id = _parse_employee_permission_department_id(permission_snapshot)
+        if permission_department_id is not None:
+            tenant_department_id = permission_department_id
+    except Exception as exc:
+        logger.warning(f"Failed to load SaaS employee permission: {exc}")
+
+    await save_saas_employee_context(
+        db,
+        user.uid,
+        emp.tenant_id,
+        emp.employee_id,
+        tenant_department_id=tenant_department_id,
+    )
+    await _commit_saas_changes_and_refresh_model_cache(db)
+
+    if selected_mcp:
+        await save_saas_agent_session(
+            user.uid,
+            SaasAgentSession(
+                token=emp.agent_session_token,
+                expires_at=emp.agent_session_expires_at,
+                tenant_id=emp.tenant_id,
+                employee_id=emp.employee_id,
+                mcp_instance_id=selected_mcp[1],
+            ),
+        )
+
+    token_data = {"sub": str(user.id)}
+    access_token = AuthUtils.create_access_token(
+        token_data,
+        expires_delta=timedelta(seconds=get_saas_session_ttl_seconds(emp.agent_session_expires_at)),
+    )
+
+    await log_operation(
+        db,
+        user.id,
+        "SaaS 登录",
+        f"tenant_id={emp.tenant_id}, employee_id={emp.employee_id}",
+    )
+
+    department_name = None
+    if user.department_id:
+        department_name = await DepartmentRepository(db).get_name_by_id(user.department_id)
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": user.id,
+        "username": user.username,
+        "uid": user.uid,
+        "phone_number": user.phone_number,
+        "avatar": normalize_public_minio_url(user.avatar),
+        "role": user.role,
+        "department_id": user.department_id,
+        "department_name": department_name,
+        "saas_mode": True,
+        "employee_code": emp.employee_code,
+    }
+
+
 # 路由：登录获取令牌
 # =============================================================================
 # === 认证分组 ===
@@ -222,6 +442,7 @@ async def login_for_access_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
+    tenant_id: int = Form(None),
 ):
     # 查找用户 - 支持user_id和phone_number登录
     login_identifier = form_data.username  # OAuth2表单中的username字段作为登录标识符
@@ -236,6 +457,11 @@ async def login_for_access_token(
             headers={"Retry-After": str(retry_after)},
         )
 
+    # --- SaaS 模式：委托 Tenant 服务鉴权 ---
+    if app_config.is_saas_enabled:
+        return await _saas_login(db, login_identifier, form_data.password, tenant_id)
+
+    # --- 本地认证模式 ---
     user_repository = UserRepository(db)
     user = await user_repository.get_by_login_identifier(login_identifier)
 
@@ -326,6 +552,8 @@ async def login_for_access_token(
         "role": user.role,
         "department_id": user.department_id,
         "department_name": department_name,
+        "saas_mode": False,
+        "employee_code": None,
     }
 
 
@@ -450,6 +678,12 @@ async def read_users_me(current_user: User = Depends(get_required_user), db: Asy
 
     if current_user.department_id:
         user_dict["department_name"] = await DepartmentRepository(db).get_name_by_id(current_user.department_id)
+
+    from yuxi.services.saas_identity import get_saas_employee_context
+
+    saas_context = await get_saas_employee_context(db, current_user.uid)
+    user_dict["saas_mode"] = saas_context is not None
+    user_dict["employee_code"] = current_user.uid if saas_context is not None else None
 
     return user_dict
 

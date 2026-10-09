@@ -25,10 +25,10 @@
         <a-menu>
           <a-menu-item key="user-info" @click="openProfile">
             <div class="user-info-display">
-              <div class="user-menu-username">{{ userStore.username }}</div>
+              <div class="user-menu-username">{{ userSummary }}</div>
               <div class="user-menu-details">
                 <span class="user-menu-info">ID: {{ userStore.uid }}</span>
-                <span class="user-menu-role">{{ userRoleText }}</span>
+                <span v-if="!userStore.saasMode" class="user-menu-role">{{ userRoleText }}</span>
               </div>
             </div>
           </a-menu-item>
@@ -80,6 +80,7 @@ import { BookOpen, Sun, Moon, LogOut, Settings, Terminal } from '@lucide/vue'
 import { useThemeStore } from '@/stores/theme'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
+import { formatUserSummary } from '@/stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -91,6 +92,7 @@ const slots = useSlots()
 const { openSettingsModal } = inject('settingsModal', {})
 
 const avatarDefaultSrc = computed(() => (userStore.uid ? generatePixelAvatar(userStore.uid) : ''))
+const userSummary = computed(() => formatUserSummary(userStore))
 
 defineProps({
   showRole: {
@@ -119,10 +121,10 @@ const userRoleText = computed(() => {
 
 // 退出登录
 const logout = () => {
-  userStore.logout()
+  // Store 同步清理本地状态，后端注销请求不阻塞页面跳转。
+  void userStore.logout()
   message.success('已退出登录')
-  // 跳转到首页
-  router.push('/login')
+  router.replace('/login')
 }
 
 // 前往登录页

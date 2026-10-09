@@ -9,8 +9,8 @@ from yuxi.agents.mcp.service import (
     delete_mcp_server,
     get_all_mcp_servers,
     get_all_mcp_tools,
-    inspect_mcp_server_tools,
     get_mcp_server,
+    inspect_mcp_server_tools,
     get_mcp_tools_stats,
     is_builtin_mcp_server,
     requires_mcp_transport_migration,
@@ -332,7 +332,7 @@ async def get_mcp_server_tools(
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(slug)
+            tools = await get_all_mcp_tools(slug, uid=current_user.uid)
             tool_list = []
 
             for tool in tools:
@@ -385,7 +385,7 @@ async def refresh_mcp_server_tools(
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(slug)
+            tools = await get_all_mcp_tools(slug, uid=current_user.uid)
 
             # 获取统计信息
             stats = get_mcp_tools_stats(slug)

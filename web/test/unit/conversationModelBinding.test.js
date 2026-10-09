@@ -16,7 +16,7 @@ test('模型选择按当前选择、Conversation、智能体默认的顺序解�
   for (const expression of [
     'selectedModelByThread',
     'currentThread.value?.metadata?.model_spec',
-    'agentDefaultModel.value'
+    'configuredAgentModel.value'
   ]) assert.ok(modelBlock.includes(expression), expression)
 
   assert.ok(
@@ -25,7 +25,7 @@ test('模型选择按当前选择、Conversation、智能体默认的顺序解�
   )
   assert.ok(
     modelBlock.indexOf('currentThread.value?.metadata?.model_spec') <
-      modelBlock.indexOf('agentDefaultModel.value')
+      modelBlock.indexOf('configuredAgentModel.value')
   )
 })
 

@@ -27,6 +27,7 @@ from yuxi.agents.buildin import get_agent_backend
 from yuxi.agents.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.agents.context import BaseContext
 from yuxi.agents.state import AgentStatePayload
+from yuxi.config import config as app_config
 from yuxi.models.utils import parse_assistant_message_body
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
@@ -34,6 +35,7 @@ from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.model_message_audit_repository import ModelMessageAuditRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.repositories.tool_message_audit_repository import ToolMessageAuditRepository
+from yuxi.services import agent_data_sync
 from yuxi.services.agent_run_manifest_service import PreparedRunExecution
 from yuxi.services.attachment_service import serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
@@ -834,6 +836,16 @@ async def save_messages_from_langgraph_state(
                     raise ValueError(f"AgentRun 输出已写入但 {terminal_status} 终态未能在同一事务提交")
                 cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(terminal_run)
             await conv_repo.db.commit()
+            # SaaS 模式下把最终回复双写到 Tenant 服务（fail-soft）；本地状态已提交，同步失败不影响结果
+            if last_ai_message and app_config.is_agent_data_sync_enabled:
+                try:
+                    conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
+                    if conversation is not None:
+                        await agent_data_sync.sync_assistant_message(
+                            conv_repo.db, conversation, last_ai_message, run_id
+                        )
+                except Exception as exc:
+                    logger.warning(f"Agent data sync: 最终回复双写失败 thread={thread_id}: {exc}")
             await publish_cancel_signals([run_id for run_id, _thread_id in cancelled_descendants])
             return terminal_status is not None
         return False

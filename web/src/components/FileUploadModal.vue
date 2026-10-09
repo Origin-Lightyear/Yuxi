@@ -335,6 +335,7 @@ const emit = defineEmits(['update:visible', 'success'])
 
 const store = useDatabaseStore()
 const configStore = useConfigStore()
+const userStore = useUserStore()
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
 const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
 
@@ -557,36 +558,38 @@ const canSubmit = computed(() => {
   return successUploadCount.value > 0 && !hasPendingUploads.value
 })
 
-const uploadModeOptions = computed(() => [
-  {
-    value: 'file',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FileUp, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '上传文件')
-    ])
-  },
-  {
-    value: 'folder',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FolderUp, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '上传文件夹')
-    ])
-  },
-  {
-    value: 'url',
-    label: h('div', { class: 'segmented-option' }, [
-      h(Link, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '解析 URL')
-    ])
-  },
-  {
-    value: 'workspace',
-    label: h('div', { class: 'segmented-option' }, [
-      h(FolderOpen, { size: 16, class: 'option-icon' }),
-      h('span', { class: 'option-text' }, '个人空间')
-    ])
-  }
-])
+const uploadModeOptions = computed(() =>
+  [
+    {
+      value: 'file',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FileUp, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '上传文件')
+      ])
+    },
+    {
+      value: 'folder',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FolderUp, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '上传文件夹')
+      ])
+    },
+    {
+      value: 'url',
+      label: h('div', { class: 'segmented-option' }, [
+        h(Link, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '解析 URL')
+      ])
+    },
+    {
+      value: 'workspace',
+      label: h('div', { class: 'segmented-option' }, [
+        h(FolderOpen, { size: 16, class: 'option-icon' }),
+        h('span', { class: 'option-text' }, '个人空间')
+      ])
+    }
+  ].filter((option) => !userStore.saasMode || option.value === 'file')
+)
 
 watch(uploadMode, (val) => {
   isFolderUpload.value = val === 'folder'

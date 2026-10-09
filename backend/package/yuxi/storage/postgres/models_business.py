@@ -277,6 +277,9 @@ class UserConfig(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     uid = Column(String, ForeignKey("users.uid"), nullable=False, unique=True, index=True)
     enable_memory = Column(Boolean, nullable=False, default=False)
+    tenant_id = Column(Integer, nullable=True)
+    employee_id = Column(Integer, nullable=True)
+    tenant_department_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
@@ -286,6 +289,9 @@ class UserConfig(Base):
         return {
             "uid": self.uid,
             "enable_memory": bool(self.enable_memory),
+            "tenant_id": self.tenant_id,
+            "employee_id": self.employee_id,
+            "tenant_department_id": self.tenant_department_id,
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }
@@ -710,6 +716,7 @@ class MCPServer(Base):
     headers = Column(JSON, nullable=True, comment="HTTP 请求头")
     timeout = Column(Integer, nullable=True, comment="HTTP 超时时间（秒）")
     sse_read_timeout = Column(Integer, nullable=True, comment="SSE 读取超时（秒）")
+    instance_id = Column(String(128), nullable=True, comment="SaaS MCP Runtime 实例标识")
 
     # UI 增强字段
     tags = Column(JSON, nullable=True, comment="标签数组")
@@ -741,6 +748,7 @@ class MCPServer(Base):
             "headers": self.headers or {},
             "timeout": self.timeout,
             "sse_read_timeout": self.sse_read_timeout,
+            "instance_id": self.instance_id,
             "tags": self.tags or [],
             "icon": self.icon,
             "enabled": bool(self.enabled),

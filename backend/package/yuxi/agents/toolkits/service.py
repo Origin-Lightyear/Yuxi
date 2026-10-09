@@ -128,7 +128,7 @@ async def resolve_configured_runtime_tools(context) -> list[Any]:
 
     async def _load_one(name: str):
         try:
-            return name, await get_enabled_mcp_tools(name)
+            return name, await get_enabled_mcp_tools(name, uid=getattr(context, "uid", None))
         except Exception as e:
             logger.warning(f"Failed to load configured MCP tools '{name}': {e}")
             return name, None

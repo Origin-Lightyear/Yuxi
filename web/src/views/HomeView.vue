@@ -486,10 +486,7 @@ onUnmounted(() => {
   text-decoration: none;
   color: var(--gray-600);
   border: 1px solid transparent;
-  transition:
-    color 0.2s ease,
-    background 0.2s ease,
-    border-color 0.2s ease;
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 
   &:hover {
     color: var(--main-700);

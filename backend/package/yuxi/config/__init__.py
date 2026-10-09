@@ -51,12 +51,17 @@ def __getattr__(name: str):
         from .user import UserConfig, UserConfigSchema
 
         return {"UserConfig": UserConfig, "UserConfigSchema": UserConfigSchema}[name]
+    if name == "config":
+        from .app import config
+
+        return config
     raise AttributeError(name)
 
 
 __all__ = [
     "UserConfig",
     "UserConfigSchema",
+    "config",
     "get_int_env",
     "get_runtime_dir",
     "get_legacy_storage_dir",

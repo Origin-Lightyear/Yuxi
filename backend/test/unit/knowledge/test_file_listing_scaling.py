@@ -40,6 +40,8 @@ class FakeKnowledgeBaseRepository:
             mindmap=None,
             sample_questions=[],
             created_by="user_1",
+            tenant_id=None,
+            uploader_id="0",
             created_at=None,
         )
 
@@ -213,6 +215,8 @@ async def test_get_databases_skips_rows_with_invalid_metadata(monkeypatch):
                     share_config=None,
                     created_at=None,
                     created_by="user_1",
+                    tenant_id=None,
+                    uploader_id="0",
                 ),
                 SimpleNamespace(
                     kb_id="kb_good",
@@ -226,6 +230,8 @@ async def test_get_databases_skips_rows_with_invalid_metadata(monkeypatch):
                     share_config=None,
                     created_at=None,
                     created_by="user_1",
+                    tenant_id=None,
+                    uploader_id="0",
                 ),
             ]
 

@@ -4,7 +4,7 @@
       <p>调整分块参数可以控制文本的切分方式，影响检索质量和文档加载效率。</p>
     </div>
     <a-form :model="localParams" name="chunkConfig" autocomplete="off" layout="vertical">
-      <a-form-item v-if="showPreset" name="chunk_preset_id">
+      <a-form-item v-if="showPreset && !userStore.saasMode" name="chunk_preset_id">
         <template #label>
           <span class="chunk-preset-label">
             分块策略
@@ -84,8 +84,10 @@
 import { computed, onMounted, ref } from 'vue'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { useChunkPresetOptions } from '@/composables/useChunkPresetOptions'
+import { useUserStore } from '@/stores/user'
 import { DEFAULT_CHUNK_PRESET_ID, isPlainObject } from '@/utils/chunkUtils'
 
+const userStore = useUserStore()
 const props = defineProps({
   tempChunkParams: {
     type: Object,
@@ -155,7 +157,8 @@ const effectivePresetId = computed(
 const presetDescription = computed(() => getChunkPresetDescription(effectivePresetId.value))
 
 onMounted(() => {
-  loadChunkPresetOptions()
+  // 员工沿用知识库默认策略，不请求管理员配置接口。
+  if (!userStore.saasMode) loadChunkPresetOptions()
 })
 </script>
 

@@ -2,6 +2,7 @@
   <BaseToolCall
     :tool-call="toolCall"
     :status="baseStatus"
+    :default-expanded="defaultExpanded"
     :force-show-result="hasDisplayResult"
   >
     <template #header>
@@ -40,6 +41,10 @@ const props = defineProps({
   toolCall: {
     type: Object,
     required: true
+  },
+  defaultExpanded: {
+    type: Boolean,
+    default: false
   }
 })
 

@@ -18,6 +18,7 @@ from yuxi.knowledge.schemas import (
     SearchInputSchema,
 )
 from yuxi.utils import logger
+from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES
 
 # ========== 通用知识库工具 ==========
 
@@ -25,7 +26,7 @@ from yuxi.utils import logger
 def get_common_kb_tools() -> list:
     """获取通用知识库工具列表
 
-    返回 7 个通用工具：
+    返回 9 个通用工具：
     - list_kbs: 列出用户可访问的知识库
     - get_mindmap: 获取指定知识库的思维导图
     - query_kb: 在指定知识库中检索
@@ -33,6 +34,8 @@ def get_common_kb_tools() -> list:
     - open_kb_document: 按 file_id 分段打开知识库文档
     - search_file: 搜索知识库中的文件
     - download_kb_file: 按 file_id 下载知识库原始文件到沙盒 outputs
+    - upload_kb_file: 上传沙盒文件到知识库目录并自动解析入库
+    - delete_kb_file: 删除知识库文档
     """
     return [
         list_kbs,
@@ -42,6 +45,8 @@ def get_common_kb_tools() -> list:
         open_kb_document,
         search_file,
         download_kb_file,
+        upload_kb_file,
+        delete_kb_file,
     ]
 
 
@@ -310,12 +315,13 @@ async def search_file(
     searchable_kbs = [kb for kb in target_kbs if knowledge_base.database_type_supports_documents(kb.get("kb_type"))]
     if not searchable_kbs:
         return "当前匹配的知识库只支持检索，不支持文件搜索"
-    return await knowledge_base.search_document_files(
+    result = await knowledge_base.search_document_files(
         searchable_kbs,
         query=query,
         offset=offset,
         limit=limit,
     )
+    return result
 
 
 class DownloadKBFileInput(BaseModel):
@@ -403,6 +409,132 @@ async def download_kb_file(
     }
 
 
+class UploadKBFileInput(BaseModel):
+    """上传知识库文档输入模型"""
+
+    kb_id: str = Field(description="知识库资源 ID，从 list_kbs 返回结果中获取")
+    virtual_path: str = Field(
+        description="沙盒内文件虚拟路径（workdir outputs 目录，例如 projects/demo/outputs/xxx.pdf）"
+    )
+    parent_id: str | None = Field(default=None, description="目标目录 ID；缺省上传到知识库根目录")
+
+
+@tool(category="knowledge", tags=["知识库"], args_schema=UploadKBFileInput)
+async def upload_kb_file(
+    kb_id: str,
+    virtual_path: str,
+    parent_id: str | None = None,
+    runtime: ToolRuntime = None,
+) -> dict[str, Any] | str:
+    """把沙盒中的文件上传到知识库目录，并自动解析入库。
+
+    当用户要求把生成/编辑好的文件（如报告、汇总文档）保存到知识库时使用。
+    需要指定目标知识库 kb_id 和目标目录 ID；仅能上传到当前用户有编辑权限的目录。
+    """
+    normalized_kb_id = str(kb_id or "").strip()
+    normalized_virtual_path = str(virtual_path or "").strip()
+    if not normalized_kb_id or not normalized_virtual_path:
+        return "请提供 kb_id 和 virtual_path"
+
+    visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
+    target_kb_id, target_error = _find_query_target(kb_id=normalized_kb_id, visible_kbs=visible_kbs)
+    if target_error:
+        return target_error
+
+    uid = _runtime_uid(runtime)
+    if not uid:
+        return "无法获取当前会话的用户信息"
+
+    write_error = await _kb_write_error(runtime, target_kb_id)
+    if write_error:
+        return write_error
+
+    sandbox_scope = _runtime_sandbox_scope(runtime)
+    if sandbox_scope is None:
+        return "无法获取当前会话的沙盒上下文，缺少 thread_id 或 uid"
+    runtime_thread_id, scope_uid, workdir_relative_path, _workdir_path = sandbox_scope
+
+    backend = ProvisionerSandboxBackend(
+        thread_id=runtime_thread_id,
+        uid=scope_uid,
+        workdir_path=workdir_relative_path,
+        create_if_missing=False,
+    )
+    with tempfile.TemporaryDirectory(prefix="yuxi-kb-upload-") as temp_dir:
+        source_path = Path(temp_dir) / (Path(normalized_virtual_path).name or "upload.bin")
+        try:
+            await asyncio.to_thread(
+                backend.download_authorized_file_to_path,
+                normalized_virtual_path,
+                str(source_path),
+                MAX_UPLOAD_SIZE_BYTES,
+            )
+        except FileNotFoundError:
+            return f"沙盒文件不存在: {normalized_virtual_path}"
+        except IsADirectoryError:
+            return f"沙盒路径是目录: {normalized_virtual_path}"
+        except ValueError as exc:
+            return str(exc)
+        except (OSError, RuntimeError) as exc:
+            logger.error(f"读取沙盒文件失败: {exc}")
+            return f"读取沙盒文件失败: {str(exc)}"
+
+        try:
+            from yuxi.services.employee_kb_ingest import upload_employee_document
+
+            return await upload_employee_document(target_kb_id, source_path, parent_id, uid)
+        except ValueError as exc:
+            return str(exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"上传知识库文档失败: {exc}")
+            return f"上传失败: {str(exc)}"
+
+
+class DeleteKBFileInput(BaseModel):
+    """删除知识库文档输入模型"""
+
+    kb_id: str = Field(description="知识库资源 ID，从 list_kbs 返回结果中获取")
+    file_id: str = Field(description="知识库文件 ID，来自 query_kb 或 search_file 的返回结果")
+
+
+@tool(category="knowledge", tags=["知识库"], args_schema=DeleteKBFileInput)
+async def delete_kb_file(kb_id: str, file_id: str, runtime: ToolRuntime = None) -> dict[str, Any] | str:
+    """删除知识库中的文档。
+
+    当用户要求删除知识库中的某个文档时使用。仅能删除当前用户有编辑权限目录下的文档，
+    不能删除目录（文件夹）。
+    """
+    normalized_kb_id = str(kb_id or "").strip()
+    normalized_file_id = str(file_id or "").strip()
+    if not normalized_kb_id or not normalized_file_id:
+        return "请提供 kb_id 和 file_id"
+
+    visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
+    target_kb_id, target_error = _find_query_target(kb_id=normalized_kb_id, visible_kbs=visible_kbs)
+    if target_error:
+        return target_error
+
+    from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+    record = await KnowledgeFileRepository().get_by_file_id(normalized_file_id)
+    if record is None or record.kb_id != target_kb_id:
+        return f"文件 '{normalized_file_id}' 不存在"
+    if record.is_folder:
+        return "无权删除目录"
+
+    write_error = await _kb_write_error(runtime, target_kb_id)
+    if write_error:
+        return write_error
+
+    try:
+        from yuxi.services.employee_kb_ingest import delete_employee_document
+
+        return await delete_employee_document(target_kb_id, normalized_file_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"删除知识库文档失败: {exc}")
+        return f"删除失败: {str(exc)}"
+
+
 # ========== 共享 helper（细节层） ==========
 
 
@@ -466,6 +598,34 @@ def _runtime_sandbox_scope(runtime: ToolRuntime | None) -> tuple[str, str, str, 
         str(workdir_relative_path),
         str(workdir_path),
     )
+
+
+async def _kb_write_error(runtime: ToolRuntime | None, kb_id: str) -> str | None:
+    """上传/删除文档的权限校验：KB 级 MANAGE（管理员或 manage_scope 命中的员工）。"""
+    uid = _runtime_uid(runtime)
+    if not uid:
+        return "无法获取当前会话的用户信息"
+
+    from yuxi.permissions import ResourcePermission, resolve_knowledge_base_permission
+    from yuxi.repositories.user_repository import UserRepository
+
+    user = await UserRepository().get_by_uid(uid)
+    if user is None:
+        return "无法获取当前会话的用户信息"
+    db_info = await _get_knowledge_base().get_database_info(kb_id)
+    if db_info is None:
+        return f"知识库 {kb_id} 不存在"
+    if resolve_knowledge_base_permission(user, db_info) != ResourcePermission.MANAGE:
+        return "需要知识库管理权限才能上传/删除文档"
+    return None
+
+
+def _runtime_uid(runtime: ToolRuntime | None) -> str | None:
+    """从 runtime.context 取 uid。"""
+    context = getattr(runtime, "context", None) if runtime else None
+    if context is None:
+        return None
+    return getattr(context, "uid", None)
 
 
 def _resolve_download_output_path(
