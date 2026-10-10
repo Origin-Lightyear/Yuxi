@@ -8,11 +8,12 @@
  * 服务地址优先级：环境变量 YUXI_BACKEND_URL > 用户上次保存的地址 > 默认 http://10.69.188.181:5173
  * 连接失败时弹窗提供地址输入，用户可修改并重试（保存到 userData/config.json）。
  */
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, screen, shell } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { isAllowedExternalUrl } = require('./url_policy.js');
+const { sanitizeWindowState } = require('./window_state.js');
 
 const DEFAULT_URL = 'http://10.69.188.181:5173';
 const CONFIG_FILE = 'config.json';
@@ -145,10 +146,44 @@ function askUrl(current) {
 // 窗口
 // ---------------------------------------------------------------------------
 
+let windowSaveTimer = null;
+
+function currentWindowState() {
+  const { x, y, width, height } = mainWindow.getNormalBounds();
+  return { x, y, width, height, maximized: mainWindow.isMaximized() };
+}
+
+// move/resize 高频触发，防抖合并写盘；close 时同步落盘并取消挂起的 timer
+function scheduleWindowStateSave() {
+  clearTimeout(windowSaveTimer);
+  windowSaveTimer = setTimeout(() => {
+    windowSaveTimer = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      saveConfig({ windowState: currentWindowState() });
+    }
+  }, 500);
+}
+
+function saveWindowStateNow() {
+  clearTimeout(windowSaveTimer);
+  windowSaveTimer = null;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    saveConfig({ windowState: currentWindowState() });
+  }
+}
+
 function createWindow(url) {
+  // 恢复上次布局；状态超界（显示器拔除等）时回默认，避免窗口不可见
+  const saved = sanitizeWindowState(
+    loadConfig().windowState,
+    screen.getAllDisplays().map((d) => d.workArea)
+  );
+  const initialBounds = saved
+    ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height }
+    : { width: 1280, height: 820 };
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    ...initialBounds,
     minWidth: 900,
     minHeight: 600,
     title: '大力水手',
@@ -159,6 +194,7 @@ function createWindow(url) {
       spellcheck: false,
     },
   });
+  if (saved && saved.maximized) mainWindow.maximize();
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     if (!isAllowedExternalUrl(target)) return { action: 'deny' };
@@ -176,6 +212,10 @@ function createWindow(url) {
 
   // 默认打开 /agent 聊天页；未登录由前端路由守卫自动跳转登录页，登录后跳回 /agent
   mainWindow.loadURL(`${url}/agent`);
+
+  mainWindow.on('move', scheduleWindowStateSave);
+  mainWindow.on('resize', scheduleWindowStateSave);
+  mainWindow.on('close', saveWindowStateNow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;

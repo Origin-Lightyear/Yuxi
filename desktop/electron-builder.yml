@@ -9,6 +9,7 @@ files:
   - preload.js
   - package.json
   - url_policy.js
+  - window_state.js
 
 mac:
   target:
