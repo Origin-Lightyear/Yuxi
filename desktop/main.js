@@ -217,6 +217,12 @@ function createWindow(url) {
     }
   });
 
+  // 可编辑区右键弹出编辑菜单；独立构建 popup 菜单，不依赖全局应用菜单的内部结构
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    if (!params.isEditable) return;
+    Menu.buildFromTemplate(editSubmenuTemplate()).popup({ window: mainWindow });
+  });
+
   // 默认打开 /agent 聊天页；未登录由前端路由守卫自动跳转登录页，登录后跳回 /agent
   mainWindow.loadURL(`${url}/agent`);
 
@@ -252,6 +258,46 @@ function showMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   if (!mainWindow.isVisible()) mainWindow.show();
   mainWindow.focus();
+}
+
+// ---------------------------------------------------------------------------
+// 应用菜单与可编辑区右键菜单
+// ---------------------------------------------------------------------------
+
+// 编辑菜单模板：主菜单与右键菜单共用同一份 role 清单，避免两处漂移
+function editSubmenuTemplate() {
+  return [
+    { role: 'undo', label: '撤销' },
+    { role: 'redo', label: '重做' },
+    { type: 'separator' },
+    { role: 'cut', label: '剪切' },
+    { role: 'copy', label: '复制' },
+    { role: 'paste', label: '粘贴' },
+    { role: 'selectAll', label: '全选' },
+  ];
+}
+
+function buildMenu() {
+  const template = [];
+  if (process.platform === 'darwin') {
+    template.push({
+      label: '大力水手',
+      submenu: [
+        { role: 'about', label: '关于' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出' },
+      ],
+    });
+  }
+  template.push(
+    { label: '编辑', submenu: editSubmenuTemplate() },
+    { label: '查看', submenu: [{ role: 'reload', label: '重新加载' }] },
+    // role quit 走 app.quit() -> before-quit 置 isQuitting，close 处理器不会拦截，真正退出
+    { label: '应用', submenu: [{ role: 'quit', label: '退出' }] }
+  );
+  return Menu.buildFromTemplate(template);
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +364,8 @@ if (!gotLock) {
     } else {
       console.warn('缺少托盘图标，跳过托盘创建');
     }
+
+    Menu.setApplicationMenu(buildMenu());
 
     // 先开窗：用户双击后立刻看到界面（服务不可达时显示浏览器的连接错误页），
     // 而不是健康检查通过前长时间无窗口、像没启动一样
