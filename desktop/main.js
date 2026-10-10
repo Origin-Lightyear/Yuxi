@@ -8,7 +8,7 @@
  * 服务地址优先级：环境变量 YUXI_BACKEND_URL > 用户上次保存的地址 > 默认 http://10.69.188.181:5173
  * 连接失败时弹窗提供地址输入，用户可修改并重试（保存到 userData/config.json）。
  */
-const { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, shell, Tray } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, session, shell, Tray } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -147,6 +147,44 @@ function askUrl(current) {
     win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
     win.once('ready-to-show', () => win.show());
   });
+}
+
+// ---------------------------------------------------------------------------
+// 连接确认（启动连接与托盘切换共用）
+// ---------------------------------------------------------------------------
+
+// 等待健康检查通过；失败弹窗三选（修改地址/重试/退出），直到成功或用户退出。
+// 成功返回可用 url；用户选退出返回 null，由调用方负责 app.quit()。
+// 每轮只等 5 秒，服务不可达时弹窗快速出现。
+async function ensureBackend(currentUrl) {
+  let url = currentUrl;
+  for (;;) {
+    try {
+      await waitForBackend(url, 5000);
+      return url;
+    } catch (err) {
+      const choice = await dialog.showMessageBox({
+        type: 'error',
+        title: '无法连接 大力水手 服务',
+        message: '无法连接 大力水手 服务',
+        detail:
+          `${String(err?.message || err)}\n\n` +
+          `当前服务地址：${url}\n` +
+          '请确认服务地址可达（网页版用什么地址访问，这里就填什么地址）。',
+        buttons: ['修改地址', '重试', '退出'],
+        defaultId: 0,
+        cancelId: 2,
+      });
+      if (choice.response === 2) return null;
+      if (choice.response === 0) {
+        const next = await askUrl(url);
+        if (!next) continue; // 用户取消输入，回到选择弹窗
+        url = next;
+        saveConfig({ backendUrl: url });
+      }
+      // choice.response === 1：直接重试
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +379,24 @@ if (!gotLock) {
         Menu.buildFromTemplate([
           { label: '显示主窗口', click: showMainWindow },
           { type: 'separator' },
-          { label: '切换服务地址', enabled: false }, // Task 9 启用并接线
+          {
+            label: '切换服务地址',
+            click: async () => {
+              const url = await askUrl(backendUrl);
+              if (!url) return; // 用户取消输入，保持当前地址
+              const ok = await ensureBackend(url);
+              if (ok === null) {
+                isQuitting = true;
+                app.quit();
+                return;
+              }
+              saveConfig({ backendUrl: ok });
+              backendUrl = ok;
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.loadURL(`${ok}/agent`);
+              }
+            },
+          },
           // 系统登录项为唯一事实源；开发直跑（isPackaged=false）禁用，避免误设系统登录项
           {
             label: '开机自启动',
@@ -367,6 +422,21 @@ if (!gotLock) {
 
     Menu.setApplicationMenu(buildMenu());
 
+    // 下载显式落系统下载目录：默认文件名 + 重名自动编号，不依赖 Electron 默认且不覆盖已有文件
+    session.defaultSession.on('will-download', (_event, item) => {
+      const dir = app.getPath('downloads');
+      const suggested = item.getFilename();
+      const ext = path.extname(suggested);
+      const name = path.basename(suggested, ext);
+      let target = path.join(dir, suggested);
+      let i = 1;
+      while (fs.existsSync(target)) {
+        target = path.join(dir, `${name} (${i})${ext}`);
+        i += 1;
+      }
+      item.setSavePath(target);
+    });
+
     // 先开窗：用户双击后立刻看到界面（服务不可达时显示浏览器的连接错误页），
     // 而不是健康检查通过前长时间无窗口、像没启动一样
     createWindow(backendUrl);
@@ -375,38 +445,13 @@ if (!gotLock) {
       if (BrowserWindow.getAllWindows().length === 0) createWindow(backendUrl);
     });
 
-    // 连接循环：失败 -> 弹窗（修改地址/重试/退出），直到成功或用户退出
-    // 每轮只等 5 秒，服务不可达时弹窗快速出现
-    for (;;) {
-      try {
-        await waitForBackend(backendUrl, 5000);
-        break;
-      } catch (err) {
-        const choice = await dialog.showMessageBox({
-          type: 'error',
-          title: '无法连接 大力水手 服务',
-          message: '无法连接 大力水手 服务',
-          detail:
-            `${String(err?.message || err)}\n\n` +
-            `当前服务地址：${backendUrl}\n` +
-            '请确认服务地址可达（网页版用什么地址访问，这里就填什么地址）。',
-          buttons: ['修改地址', '重试', '退出'],
-          defaultId: 0,
-          cancelId: 2,
-        });
-        if (choice.response === 2) {
-          app.quit();
-          return;
-        }
-        if (choice.response === 0) {
-          const url = await askUrl(backendUrl);
-          if (!url) continue; // 用户取消输入，回到选择弹窗
-          backendUrl = url;
-          saveConfig({ backendUrl });
-        }
-        // choice.response === 1：直接重试
-      }
+    // 连接循环：失败 -> 弹窗（修改地址/重试/退出），直到成功或用户退出（ensureBackend 内置）
+    const connected = await ensureBackend(backendUrl);
+    if (connected === null) {
+      app.quit();
+      return;
     }
+    backendUrl = connected;
 
     // 连接成功后加载页面（用户可能在弹窗里改过地址）
     if (mainWindow && !mainWindow.isDestroyed()) {
