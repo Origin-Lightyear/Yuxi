@@ -1,6 +1,6 @@
 # 桌面壳 v1：运行通知与客户端体验
 
-状态：proposed
+状态：implemented
 类型：feature
 Owner：desktop/main.js
 
@@ -14,7 +14,7 @@ Owner：desktop/main.js
 
 平台口径：Windows 是目标运行平台（NSIS 安装版，electron-builder appId `com.yuxi.desktop`）；macOS 只作为开发与测试平台。拖拽文件到附件区在 Electron 中预期已可用（antd 拖拽框走 File 字节上传），需实测确认而非默认。
 
-## 提案
+## 决策
 
 桌面壳 v1 一次交付四组能力：**运行通知**（当前会话流 + 定时任务轮询）、**常驻与通知配套**（关闭到托盘、开机自启、窗口状态、原生菜单与快捷键、拖拽实测）、**客户端便利**（通知直达会话、切换服务地址、断连检测）、**安全与系统集成**（openExternal 白名单、will-download 处理）。浏览器端打开 web 的行为保持零变化。
 
@@ -75,6 +75,10 @@ Non-goal（另行立项，本提案零代码）：自动更新与 CI 打包签�
 | 后端断连出现横幅，短断连恢复不刷新、长断连恢复自动刷新 | 页面静默变死，或短暂抖动触发刷新丢输入 | 断连检测逻辑（web utils + 挂载组件） | E2E：杀后端观察横幅；<30s 与 ≥30s 两种恢复路径 | 短断连恢复断言未执行刷新 | Not run |
 | 托盘可切换服务地址，不可达时复用连接弹窗 | 切换后白屏无退路 | `main.js`（复用 `askUrl`、`waitForBackend`） | Windows E2E：切到可达地址与不可达地址各一次 | 不可达地址断言出现修改/重试/退出弹窗 | Not run |
 | web lint + unit、desktop `node --test`、contracts、docs build 全部通过 | 回归破坏现有事件流或文档导航 | 各命令 Owner | `web/AGENTS.md` 命令、`node --test desktop/test`、`python3 scripts/verify_engineering_contracts.py`、docs build | 正向命令 | Passed |
+
+## 后果
+
+桌面壳关闭默认常驻托盘（托盘缺席时回退真实关闭）；隐藏窗口内定时器不再节流，后台耗电略增；浏览器环境打开 web 的行为不变，由桌面门控 fail-closed 保证；断连与通知能力仅在 Electron 壳内生效。已知限制与未验证边界记录于验证段。
 
 ## 风险
 
