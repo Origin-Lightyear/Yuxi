@@ -113,3 +113,36 @@ async def test_get_employee_permission_uses_inner_endpoint(monkeypatch):
         "kwargs": {"params": {"tenantId": 1, "employeeId": 2}},
     }
     assert _parse_employee_permission_department_id(payload) == 1
+
+
+class _RecordingLogger:
+    def __init__(self):
+        self.messages: list[str] = []
+
+    def info(self, message: str) -> None:
+        self.messages.append(str(message))
+
+    def warning(self, message: str) -> None:
+        self.messages.append(str(message))
+
+
+@pytest.mark.asyncio
+async def test_authenticate_employee_logs_masked_mobile(monkeypatch):
+    import yuxi.services.saas_client as saas_client_module
+
+    recorded = _RecordingLogger()
+    monkeypatch.setattr(saas_client_module, "logger", recorded)
+
+    async def fake_post(self, url, **kwargs):
+        del self, kwargs
+        assert url == "https://tenant.example.com/api/v1/agent/inner/auth"
+        return _FakeResponse({"code": 0, "msg": "ok", "data": {"mobile": "13612345678", "tenants": [{}]}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    result = await SaasClient(tenant_url="https://tenant.example.com").authenticate_employee("13612345678", "password")
+
+    assert result.mobile == "13612345678"
+    logged = "\n".join(recorded.messages)
+    assert "13612345678" not in logged
+    assert "136****5678" in logged

@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from server.routers import auth_router
 from server.routers.auth_router import _select_saas_mcp_server
+import yuxi.services.saas_auth_service as saas_auth_service
 from yuxi.services.saas_auth_service import find_or_create_saas_user, upsert_saas_mcp_server
 from yuxi.services.saas_client import EmployeeAuthResult, TenantEmployee
-from yuxi.storage.postgres.models_business import Base, Department, MCPServer, User
+from yuxi.storage.postgres.models_business import Base, Department, MCPServer, User, UserConfig
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -196,3 +197,85 @@ async def test_saas_login_limits_jwt_to_agent_session_lifetime(monkeypatch):
 
 async def _async_value(value):
     return value
+
+
+class _RecordingLogger:
+    def __init__(self):
+        self.messages: list[str] = []
+
+    def info(self, message: str) -> None:
+        self.messages.append(str(message))
+
+    def warning(self, message: str) -> None:
+        self.messages.append(str(message))
+
+
+async def test_saas_user_sync_keeps_uid_when_dependent_rows_exist(db_session, monkeypatch):
+    user = User(
+        username="本地老账号",
+        uid="local-001",
+        phone_number="13800000000",
+        password_hash="placeholder",
+        role="user",
+    )
+    db_session.add(user)
+    await db_session.flush()
+    db_session.add(UserConfig(uid="local-001"))
+    await db_session.commit()
+
+    recorded = _RecordingLogger()
+    monkeypatch.setattr(saas_auth_service, "logger", recorded)
+
+    synced_user = await find_or_create_saas_user(
+        db_session,
+        mobile="13800000000",
+        employee_code="E077",
+        employee_name="员工丙",
+        department_name="研发部",
+    )
+
+    assert synced_user.id == user.id
+    assert synced_user.uid == "local-001"
+    config_uids = list((await db_session.execute(select(UserConfig.uid))).scalars().all())
+    assert config_uids == ["local-001"]
+    assert any("uid rewrite skipped" in message for message in recorded.messages)
+
+
+async def test_saas_user_sync_rewrites_uid_without_dependent_rows(db_session):
+    user = User(
+        username="新员工",
+        uid="local-002",
+        phone_number="13700000000",
+        password_hash="placeholder",
+        role="user",
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    synced_user = await find_or_create_saas_user(
+        db_session,
+        mobile="13700000000",
+        employee_code="E078",
+        employee_name="新员工",
+        department_name="研发部",
+    )
+
+    assert synced_user.id == user.id
+    assert synced_user.uid == "E078"
+
+
+async def test_saas_user_sync_create_log_masks_mobile(db_session, monkeypatch):
+    recorded = _RecordingLogger()
+    monkeypatch.setattr(saas_auth_service, "logger", recorded)
+
+    await find_or_create_saas_user(
+        db_session,
+        mobile="13612345678",
+        employee_code="E090",
+        employee_name="新同事",
+        department_name="研发部",
+    )
+
+    logged = "\n".join(recorded.messages)
+    assert "13612345678" not in logged
+    assert "136****5678" in logged

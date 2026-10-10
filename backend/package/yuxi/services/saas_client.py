@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 from yuxi.utils.logging_config import logger
+from yuxi.utils.string_utils import mask_mobile
 
 DEFAULT_TIMEOUT_SECONDS = 15.0
 
@@ -170,7 +171,7 @@ class SaasClient:
         """
         url = _build_url(self._tenant_url, "/api/v1/agent/inner/auth")
         body = {"mobile": mobile, "password": password}
-        logger.info(f"SaaS employee auth request: mobile={mobile}")
+        logger.info(f"SaaS employee auth request: mobile={mask_mobile(mobile)}")
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(url, json=body)
@@ -179,7 +180,7 @@ class SaasClient:
 
         data = _check_response(payload)
         result = _parse_employee_auth(data)
-        logger.info(f"SaaS employee auth success: mobile={result.mobile}, tenants={len(result.tenants)}")
+        logger.info(f"SaaS employee auth success: mobile={mask_mobile(result.mobile)}, tenants={len(result.tenants)}")
         return result
 
     async def get_tenant_config(self, tenant_id: int) -> TenantConfigResult:

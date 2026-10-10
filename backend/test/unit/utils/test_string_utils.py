@@ -26,3 +26,10 @@ def test_truncate_utf8_keeps_content_within_budget_unchanged():
 
     assert result == "完整内容"
     assert truncated is False
+
+
+def test_mask_mobile_keeps_prefix_and_suffix():
+    import yuxi.utils.string_utils as string_utils
+
+    assert string_utils.mask_mobile("13612345678") == "136****5678"
+    assert string_utils.mask_mobile("123") == "***"

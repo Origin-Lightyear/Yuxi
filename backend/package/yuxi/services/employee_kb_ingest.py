@@ -1,7 +1,7 @@
 """Agent 工具侧的知识库文档上传/删除服务。
 
 上传走与 REST 管理端一致的链路：MinIO 上传 → add_file_record 建档 →
-tasker 复合任务串行 parse → index。权限（KB 级 MANAGE 或目录 edit）由调用方
+tasker 复合任务串行 parse → index。权限（KB 级 MANAGE）由调用方
 （Agent 工具 / REST 依赖）先行校验，本模块不再重复校验。
 """
 
@@ -12,10 +12,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from yuxi.knowledge.parser.capabilities import is_supported_file_extension
 from yuxi.knowledge.runtime import knowledge_base
+from yuxi.knowledge.utils import calculate_content_hash
 from yuxi.storage.minio.client import MinIOClient, aupload_file_to_minio
 from yuxi.utils import logger
-from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, calculate_content_hash, is_supported_file_extension
+from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES
 
 EMPLOYEE_INGEST_TASK_TYPE = "knowledge_employee_ingest"
 

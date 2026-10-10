@@ -4,10 +4,11 @@ import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.storage.postgres.models_business import Department, User
+from yuxi.storage.postgres.models_business import AgentEnv, Department, Project, ScheduledAgentJob, User, UserConfig
 from yuxi.utils import logger
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.utils.string_utils import mask_mobile
 
 
 async def find_or_create_saas_user(
@@ -38,7 +39,15 @@ async def find_or_create_saas_user(
 
         dept = await _resolve_department(db, department_name) if department_name else None
         user.username = employee_name
-        user.uid = employee_code
+        if user.uid != employee_code:
+            if await _has_uid_dependent_rows(db, user.uid):
+                # 子表外键无 ON UPDATE CASCADE，改写会被数据库拒绝；保留原 uid 并显式告警
+                logger.warning(
+                    f"SaaS uid rewrite skipped, dependent rows keep legacy uid: "
+                    f"uid={user.uid}, employee_code={employee_code}"
+                )
+            else:
+                user.uid = employee_code
         user.phone_number = mobile
         if dept is not None:
             user.department = dept
@@ -62,8 +71,17 @@ async def find_or_create_saas_user(
     db.add(new_user)
     await db.flush()
     await db.refresh(new_user)
-    logger.info(f"SaaS local user created: mobile={mobile}, name={employee_name}")
+    logger.info(f"SaaS local user created: mobile={mask_mobile(mobile)}, name={employee_name}")
     return new_user
+
+
+async def _has_uid_dependent_rows(db: AsyncSession, uid: str) -> bool:
+    """判断 uid 是否仍被 projects/agent_envs/user_config/scheduled_agent_jobs 引用。"""
+    for model in (Project, AgentEnv, UserConfig, ScheduledAgentJob):
+        result = await db.execute(select(model.id).where(model.uid == uid).limit(1))
+        if result.first() is not None:
+            return True
+    return False
 
 
 async def _resolve_department(db: AsyncSession, name: str) -> Department | None:

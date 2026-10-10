@@ -429,7 +429,7 @@ async def upload_kb_file(
     """把沙盒中的文件上传到知识库目录，并自动解析入库。
 
     当用户要求把生成/编辑好的文件（如报告、汇总文档）保存到知识库时使用。
-    需要指定目标知识库 kb_id 和目标目录 ID；仅能上传到当前用户有编辑权限的目录。
+    需要指定目标知识库 kb_id 和目标目录 ID；目标知识库须具备管理权限（KB 级 MANAGE），目录 ID 原样落库、不做归属校验。
     """
     normalized_kb_id = str(kb_id or "").strip()
     normalized_virtual_path = str(virtual_path or "").strip()
@@ -501,8 +501,8 @@ class DeleteKBFileInput(BaseModel):
 async def delete_kb_file(kb_id: str, file_id: str, runtime: ToolRuntime = None) -> dict[str, Any] | str:
     """删除知识库中的文档。
 
-    当用户要求删除知识库中的某个文档时使用。仅能删除当前用户有编辑权限目录下的文档，
-    不能删除目录（文件夹）。
+    当用户要求删除知识库中的某个文档时使用。仅能删除文档、不能删除目录（文件夹），
+    权限按知识库级管理校验。
     """
     normalized_kb_id = str(kb_id or "").strip()
     normalized_file_id = str(file_id or "").strip()

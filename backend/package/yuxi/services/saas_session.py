@@ -28,7 +28,7 @@ def _session_key(uid: str) -> str:
 
 def get_saas_session_ttl_seconds(expires_at: str) -> int:
     """计算 Tenant AgentSession 的剩余有效秒数。"""
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     try:
         return max(1, int(float(expires_at) - time.time()))
@@ -38,10 +38,9 @@ def get_saas_session_ttl_seconds(expires_at: str) -> int:
     normalized = expires_at.replace("Z", "+00:00")
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
-        expires_epoch = parsed.timestamp()
-    else:
-        expires_epoch = parsed.timestamp()
-    return max(1, int(expires_epoch - time.time()))
+        # Tenant 裸 ISO 串按 UTC 解释；按进程本地时区解释会让 TTL 偏移时区差
+        parsed = parsed.replace(tzinfo=UTC)
+    return max(1, int(parsed.timestamp() - time.time()))
 
 
 async def save_saas_agent_session(uid: str, session: SaasAgentSession) -> None:

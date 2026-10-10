@@ -18,3 +18,11 @@ def truncate_utf8(value: object, max_bytes: int) -> tuple[str, bool]:
     if not prefix:
         return TRUNCATION_MARKER.strip(), True
     return f"{prefix}{TRUNCATION_MARKER}", True
+
+
+def mask_mobile(mobile: object) -> str:
+    """手机号脱敏：保留前 3 后 4、中间打星；过短输入全星。"""
+    text = str(mobile or "")
+    if len(text) >= 8:
+        return f"{text[:3]}****{text[-4:]}"
+    return "*" * len(text)

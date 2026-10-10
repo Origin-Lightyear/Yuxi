@@ -54,7 +54,7 @@ async def ensure_employee_kb(kb_id: str, current_user: User):
 
 async def require_kb_read_or_employee(kb_id: str, current_user: User = Depends(get_required_user)) -> User:
     """管理员或 SaaS 员工均可通过的 KB 读取依赖（原 require_knowledge_base_read 的放开版）。"""
-    if current_user.role in ADMIN_ROLES:
+    if getattr(current_user, "role", None) in ADMIN_ROLES:
         await ensure_knowledge_base_permission(kb_id, current_user, ResourcePermission.READ)
         return current_user
     await ensure_employee_kb(kb_id, current_user)
@@ -109,7 +109,7 @@ async def require_documents_edit_or_kb_manage(
 ) -> None:
     """文档批量操作的权限：KB 级 MANAGE；文件夹目标一律拒绝员工。"""
     await _require_kb_document_manage(kb_id, current_user)
-    if current_user.role in ADMIN_ROLES:
+    if getattr(current_user, "role", None) in ADMIN_ROLES:
         return
 
     records = {str(record.file_id): record for record in await KnowledgeFileRepository().list_by_file_ids(file_ids)}
