@@ -34,7 +34,8 @@ const resolveTitle = ({ title, threadId }) => {
  *
  * 仅 Electron 渲染进程（存在 window.yuxiDesktop）且窗口失焦时构造；
  * 其余环境在门控处返回 false，不触碰任何浏览器全局。
- * 点击通知时回焦窗口，并在携带 threadId 时深链到对应会话。
+ * 点击通知时经桌面壳 show 通道恢复（可能被隐藏的）窗口并回焦，
+ * 并在携带 threadId 时深链到对应会话。
  *
  * @param {{ threadId?: string, status?: string, title?: string }} [payload]
  * @returns {boolean} 是否构造了通知；任一门控失败返回 false
@@ -47,6 +48,9 @@ export function notifyRunTerminal({ threadId, status, title } = {}) {
 
   const notification = new Notification(resolveTitle({ title, threadId }), { body })
   notification.onclick = () => {
+    // 隐藏到托盘时 Electron 对 focus() 是 no-op，先经 preload 的 show 通道由主进程恢复窗口；
+    // 非桌面或旧 preload 无该方法时 optional chaining 静默跳过
+    globalThis.window.yuxiDesktop?.showMainWindow?.()
     globalThis.window.focus()
     if (threadId) {
       globalThis.window.location.assign(`/agent/${encodeURIComponent(threadId)}`)

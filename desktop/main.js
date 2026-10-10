@@ -320,6 +320,10 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
+// Electron 对隐藏窗口 focus() 是 no-op，通知点击仅靠渲染层 window.focus() 无法恢复窗口；
+// 渲染层经此最小 show 通道请求主进程 restore/show/focus（非通知类 IPC）
+ipcMain.on('yuxi:show-main-window', () => showMainWindow());
+
 // ---------------------------------------------------------------------------
 // 应用菜单与可编辑区右键菜单
 // ---------------------------------------------------------------------------
@@ -472,8 +476,10 @@ if (!gotLock) {
     // 而不是健康检查通过前长时间无窗口、像没启动一样
     createWindow(backendUrl);
 
+    // 托盘隐藏场景下 Dock/任务栏点击也要恢复窗口，而不是只在窗口全关时才重建
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow(backendUrl);
+      else showMainWindow();
     });
 
     // 连接循环：失败 -> 弹窗（修改地址/重试/退出），直到成功或用户退出（ensureBackend 内置）

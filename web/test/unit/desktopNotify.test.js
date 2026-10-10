@@ -63,18 +63,29 @@ test('三终态文案映射', async () => {
     assert.equal(created.at(-1).body, body)
   }
 })
-test('点击通知回焦；无 threadId 点击不跳转', async () => {
+test('点击通知调用 showMainWindow 恢复窗口并回焦；无 threadId 点击不跳转', async () => {
   const { notifyRunTerminal, created } = await setup()
+  let shown = 0
   let focused = 0
   let assigned = null
+  globalThis.window.yuxiDesktop.showMainWindow = () => { shown += 1 }
   globalThis.window.focus = () => { focused += 1 }
   globalThis.window.location = { assign: (u) => { assigned = u } }
   notifyRunTerminal({ threadId: 't1', status: 'failed' })
   created[0].onclick()
+  assert.equal(shown, 1)
   assert.equal(focused, 1)
   assert.equal(assigned, '/agent/t1')
   const second = await setup()
   second.notifyRunTerminal({ status: 'completed' })
   second.created[0].onclick()
   assert.equal(assigned, '/agent/t1') // 无 threadId 不再调用 assign
+})
+test('yuxiDesktop 无 showMainWindow 方法时点击不抛错（旧 preload）', async () => {
+  // setup 的 yuxiDesktop 为空对象，等价于旧 preload 未暴露 show 通道
+  const { notifyRunTerminal, created } = await setup()
+  globalThis.window.focus = () => {}
+  globalThis.window.location = { assign: () => {} }
+  notifyRunTerminal({ threadId: 't1', status: 'completed' })
+  assert.doesNotThrow(() => created[0].onclick())
 })
