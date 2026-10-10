@@ -8,18 +8,25 @@
  * 服务地址优先级：环境变量 YUXI_BACKEND_URL > 用户上次保存的地址 > 默认 http://10.69.188.181:5173
  * 连接失败时弹窗提供地址输入，用户可修改并重试（保存到 userData/config.json）。
  */
-const { app, BrowserWindow, dialog, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, shell, Tray } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { isAllowedExternalUrl } = require('./url_policy.js');
 const { sanitizeWindowState } = require('./window_state.js');
 
+// 关闭到托盘后窗口隐藏/被遮挡，禁用 Chromium 后台节流，保证隐藏窗口内 30s 轮询不失速
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
 const DEFAULT_URL = 'http://10.69.188.181:5173';
 const CONFIG_FILE = 'config.json';
 
 let mainWindow = null;
 let backendUrl = null;
+// 退出标志：before-quit 与托盘「退出」共享；close 据此区分「关闭到托盘」与真正退出
+let isQuitting = false;
+let tray = null;
 
 // ---------------------------------------------------------------------------
 // 服务地址配置（userData/config.json 持久化）
@@ -215,11 +222,36 @@ function createWindow(url) {
 
   mainWindow.on('move', scheduleWindowStateSave);
   mainWindow.on('resize', scheduleWindowStateSave);
-  mainWindow.on('close', saveWindowStateNow);
+  // 关闭默认隐藏到托盘（先落盘窗口状态），只有退出路径才真正关闭
+  mainWindow.on('close', (e) => {
+    if (isQuitting) return;
+    e.preventDefault();
+    saveWindowStateNow();
+    mainWindow.hide();
+    firstTrayHint();
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+// ---------------------------------------------------------------------------
+// 托盘
+// ---------------------------------------------------------------------------
+
+// 关闭到托盘的首次提示只发一次，之后不再打扰
+function firstTrayHint() {
+  if (loadConfig().trayHintShown) return;
+  new Notification({ title: '大力水手', body: '已最小化到托盘，双击托盘图标可恢复' }).show();
+  saveConfig({ trayHintShown: true });
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -230,8 +262,13 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  app.on('before-quit', () => {
+    isQuitting = true;
+  });
+
   app.on('second-instance', () => {
     if (mainWindow) {
+      if (!mainWindow.isVisible()) mainWindow.show();
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
@@ -248,6 +285,29 @@ if (!gotLock) {
     const appIcon = resolveAppIcon();
     if (process.platform === 'darwin' && appIcon) {
       app.dock.setIcon(appIcon);
+    }
+
+    if (appIcon) {
+      tray = new Tray(appIcon);
+      tray.setContextMenu(
+        Menu.buildFromTemplate([
+          { label: '显示主窗口', click: showMainWindow },
+          { type: 'separator' },
+          { label: '切换服务地址', enabled: false }, // Task 9 启用并接线
+          { label: '开机自启动', enabled: false }, // Task 7 启用并接线
+          { type: 'separator' },
+          {
+            label: '退出',
+            click: () => {
+              isQuitting = true;
+              app.quit();
+            },
+          },
+        ])
+      );
+      tray.on('click', showMainWindow);
+    } else {
+      console.warn('缺少托盘图标，跳过托盘创建');
     }
 
     // 先开窗：用户双击后立刻看到界面（服务不可达时显示浏览器的连接错误页），
