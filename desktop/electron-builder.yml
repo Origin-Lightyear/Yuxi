@@ -8,6 +8,7 @@ files:
   - main.js
   - preload.js
   - package.json
+  - url_policy.js
 
 mac:
   target:

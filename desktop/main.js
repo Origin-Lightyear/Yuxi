@@ -12,6 +12,7 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { isAllowedExternalUrl } = require('./url_policy.js');
 
 const DEFAULT_URL = 'http://10.69.188.181:5173';
 const CONFIG_FILE = 'config.json';
@@ -160,6 +161,7 @@ function createWindow(url) {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (!isAllowedExternalUrl(target)) return { action: 'deny' };
     shell.openExternal(target);
     return { action: 'deny' };
   });
@@ -167,6 +169,7 @@ function createWindow(url) {
   mainWindow.webContents.on('will-navigate', (event, target) => {
     if (!target.startsWith(url)) {
       event.preventDefault();
+      if (!isAllowedExternalUrl(target)) return;
       shell.openExternal(target);
     }
   });
