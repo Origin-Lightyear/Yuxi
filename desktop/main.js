@@ -266,9 +266,11 @@ function createWindow(url) {
 
   mainWindow.on('move', scheduleWindowStateSave);
   mainWindow.on('resize', scheduleWindowStateSave);
-  // 关闭默认隐藏到托盘（先落盘窗口状态），只有退出路径才真正关闭
+  // 关闭默认隐藏到托盘（先落盘窗口状态），只有退出路径才真正关闭；
+  // 托盘缺席（图标缺失/创建失败）时无法靠托盘恢复，放行走真实关闭，不假装隐藏
   mainWindow.on('close', (e) => {
     if (isQuitting) return;
+    if (!tray) return;
     e.preventDefault();
     saveWindowStateNow();
     mainWindow.hide();
@@ -287,7 +289,7 @@ function createWindow(url) {
 // 关闭到托盘的首次提示只发一次，之后不再打扰
 function firstTrayHint() {
   if (loadConfig().trayHintShown) return;
-  new Notification({ title: '大力水手', body: '已最小化到托盘，双击托盘图标可恢复' }).show();
+  new Notification({ title: '大力水手', body: '已最小化到托盘，点击托盘图标可恢复' }).show();
   saveConfig({ trayHintShown: true });
 }
 
@@ -373,8 +375,19 @@ if (!gotLock) {
       app.dock.setIcon(appIcon);
     }
 
+    // 托盘创建失败（无图标或 Tray 抛错）时 tray 保持 null，close 处理器据此放行真实关闭
     if (appIcon) {
-      tray = new Tray(appIcon);
+      try {
+        tray = new Tray(appIcon);
+      } catch (err) {
+        tray = null;
+        console.warn('托盘创建失败，关闭窗口将真正退出:', err);
+      }
+    } else {
+      console.warn('缺少托盘图标，跳过托盘创建');
+    }
+
+    if (tray) {
       tray.setContextMenu(
         Menu.buildFromTemplate([
           { label: '显示主窗口', click: showMainWindow },
@@ -416,8 +429,6 @@ if (!gotLock) {
         ])
       );
       tray.on('click', showMainWindow);
-    } else {
-      console.warn('缺少托盘图标，跳过托盘创建');
     }
 
     Menu.setApplicationMenu(buildMenu());
