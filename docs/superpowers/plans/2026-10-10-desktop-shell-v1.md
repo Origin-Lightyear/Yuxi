@@ -19,7 +19,7 @@
 - `app.isPackaged === false`（开发直跑）时开机自启 checkbox 禁用。
 - `openExternal` 白名单仅 `http:`/`https:`/`mailto:`；will-download `setSavePath` 到 `app.getPath('downloads')`，重名编号，不弹保存对话框。
 - `desktop/electron-builder.yml` 的 `files` 是白名单：新增的 `desktop/*.js` 模块必须显式加入，否则打包缺失。
-- web 单测命令 `docker compose exec web pnpm run test:unit`（node --test，`test/**/*.test.js`）；lint gate `docker compose exec web pnpm run lint:check`；desktop 单测 `node --test desktop/test/`。
+- web 单测命令 `docker compose exec web pnpm run test:unit`（node --test，`test/**/*.test.js`）；lint gate `docker compose exec web pnpm run lint:check`；desktop 单测 `node --test "desktop/test/*.test.js"`。
 - 每任务一次中文 Conventional Commit（含 why body）。
 
 ## Review Focus
@@ -90,7 +90,7 @@ Expected: PASS（3 tests）
 
 - [ ] **Step 6: 回归 + 提交**
 
-Run: `node --test desktop/test/`
+Run: `node --test "desktop/test/*.test.js"`
 Expected: PASS
 
 ```bash
@@ -164,7 +164,7 @@ Expected: PASS（4 tests）
 
 - [ ] **Step 6: 回归 + 提交**
 
-Run: `node --test desktop/test/`
+Run: `node --test "desktop/test/*.test.js"`
 Expected: PASS
 
 ```bash
