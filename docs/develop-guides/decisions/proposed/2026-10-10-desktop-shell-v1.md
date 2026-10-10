@@ -56,22 +56,22 @@ Non-goal（另行立项，本提案零代码）：自动更新与 CI 打包签�
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
-| 桌面失焦时当前会话终态弹系统通知，点击直达对应会话 | 只回焦不跳转，或气泡内提示无系统通知 | `useAgentRunStream.js`、`desktopNotify.js` | Windows 安装版手工 E2E：发起会话、切走窗口、等待终态、点击通知 | 正向用例 | Not run |
-| 浏览器环境零变化，`Notification` 从不被调用 | 门控缺失打扰 web 用户 | `desktopNotify.js` 桌面门控 | web unit：非桌面环境触发终态 | 无 `yuxiDesktop` 时断言 `Notification` 构造未被调用 | Not run |
-| 聚焦时不弹通知 | 聚焦仍弹造成打扰 | `desktopNotify.js` 聚焦判定 | web unit：mock `document.hasFocus()` 为 true | 断言 `Notification` 构造未被调用 | Not run |
-| completed / failed / cancelled 三终态均给出对应中文文案 | 只覆盖成功态 | `desktopNotify.js` 状态映射 | web unit 表驱动三种状态 | 正向用例 | Not run |
-| 定时任务失焦时完成会弹通知（含任务名） | 只覆盖当前会话流，定时跑完无感知 | `scheduledRunPoller.js` | Windows E2E：run-now 触发定时任务、切走窗口、等待完成 | 正向用例 | Not run |
-| 轮询仅在桌面壳且失焦时运行 | 浏览器常轮询或聚焦仍轮询 | `scheduledRunPoller.js` 启停逻辑 | web unit：浏览器环境不启动；`focus` 事件停止轮询 | mock 聚焦后断言轮询器清除定时器 | Not run |
-| 托盘隐藏态下定时任务通知仍按期弹出 | renderer 后台被 Chromium 节流导致轮询失速 | `main.js` backgrounding switches | Windows E2E：关闭到托盘后 run-now 定时任务 | 正向用例 | Not run |
-| 窗口大小/位置重启后恢复，跨分辨率超界回默认 | 恢复到已拔显示器的坐标导致窗口不可见 | `main.js` + bounds 校验纯函数 | `node --test` 负向（超界 bounds 拒绝）+ E2E（移动后重启） | bounds 落在显示器外时断言返回默认值 | Not run |
-| 关闭进托盘常驻，托盘退出真正结束进程 | 关闭即退或退出后进程残留 | `main.js` close/quit 语义 | Windows E2E：关闭→托盘仍在→托盘退出→任务管理器无进程 | 正向用例 | Not run |
-| 开机自启 checkbox 与系统登录项一致，开发直跑禁用 | 状态不同步或 dev 模式误改登录项 | `main.js` setLoginItemSettings | Windows E2E：切换后查系统登录项；`npm start` 下 checkbox 禁用 | dev 直跑时断言 `setLoginItemSettings` 未被调用 | Not run |
-| 菜单快捷键（复制/粘贴/全选）与可编辑区右键菜单可用 | 壳内无快捷键、右键无菜单 | `main.js` Menu/context-menu | Windows/macOS 手工 E2E | 正向用例 | Not run |
-| 拖文件进附件区完成上传，区外拖拽不再外开 | 区内不可用或区外触发系统打开 | 附件区（web）、`url_policy.js` 白名单 | Windows E2E：区内拖拽上传；`node --test`（`javascript:`/`file:`/`data:` 拒绝，`http/https/mailto` 放行） | 非白名单协议构造链接断言拒绝外开 | Not run |
-| 下载显式落入系统下载目录且重名不覆盖 | 依赖 Electron 默认行为、重名覆盖旧文件 | `main.js` will-download | Windows E2E：触发导出下载，连续两次同名文件 | 正向用例 | Not run |
-| 后端断连出现横幅，短断连恢复不刷新、长断连恢复自动刷新 | 页面静默变死，或短暂抖动触发刷新丢输入 | 断连检测逻辑（web utils + 挂载组件） | E2E：杀后端观察横幅；<30s 与 ≥30s 两种恢复路径 | 短断连恢复断言未执行刷新 | Not run |
-| 托盘可切换服务地址，不可达时复用连接弹窗 | 切换后白屏无退路 | `main.js`（复用 `askUrl`、`waitForBackend`） | Windows E2E：切到可达地址与不可达地址各一次 | 不可达地址断言出现修改/重试/退出弹窗 | Not run |
-| web lint + unit、desktop `node --test`、contracts、docs build 全部通过 | 回归破坏现有事件流或文档导航 | 各命令 Owner | `web/AGENTS.md` 命令、`node --test desktop/test`、`python3 scripts/verify_engineering_contracts.py`、docs build | 正向命令 | Not run |
+| 桌面失焦时当前会话终态弹系统通知，点击直达对应会话 | 只回焦不跳转，或气泡内提示无系统通知 | `useAgentRunStream.js`、`desktopNotify.js` | Windows 安装版手工 E2E：发起会话、切走窗口、等待终态、点击通知 | 正向用例 | Pass（unit：构造与点击语义）；Windows E2E Not run |
+| 浏览器环境零变化，`Notification` 从不被调用 | 门控缺失打扰 web 用户 | `desktopNotify.js` 桌面门控 | web unit：非桌面环境触发终态 | 无 `yuxiDesktop` 时断言 `Notification` 构造未被调用 | Pass（unit） |
+| 聚焦时不弹通知 | 聚焦仍弹造成打扰 | `desktopNotify.js` 聚焦判定 | web unit：mock `document.hasFocus()` 为 true | 断言 `Notification` 构造未被调用 | Pass（unit） |
+| completed / failed / cancelled 三终态均给出对应中文文案 | 只覆盖成功态 | `desktopNotify.js` 状态映射 | web unit 表驱动三种状态 | 正向用例 | Pass（unit） |
+| 定时任务失焦时完成会弹通知（含任务名） | 只覆盖当前会话流，定时跑完无感知 | `scheduledRunPoller.js` | Windows E2E：run-now 触发定时任务、切走窗口、等待完成 | 正向用例 | Pass（unit：payload 含任务名）；Windows E2E Not run |
+| 轮询仅在桌面壳且失焦时运行 | 浏览器常轮询或聚焦仍轮询 | `scheduledRunPoller.js` 启停逻辑 | web unit：浏览器环境不启动；`focus` 事件停止轮询 | mock 聚焦后断言轮询器清除定时器 | Pass（unit） |
+| 托盘隐藏态下定时任务通知仍按期弹出 | renderer 后台被 Chromium 节流导致轮询失速 | `main.js` backgrounding switches | Windows E2E：关闭到托盘后 run-now 定时任务 | 正向用例 | Not run（switches 已接线，需实机验证） |
+| 窗口大小/位置重启后恢复，跨分辨率超界回默认 | 恢复到已拔显示器的坐标导致窗口不可见 | `main.js` + bounds 校验纯函数 | `node --test` 负向（超界 bounds 拒绝）+ E2E（移动后重启） | bounds 落在显示器外时断言返回默认值 | Pass（unit：超界/缺字段拒绝）；重启恢复 E2E Not run |
+| 关闭进托盘常驻，托盘退出真正结束进程 | 关闭即退或退出后进程残留 | `main.js` close/quit 语义 | Windows E2E：关闭→托盘仍在→托盘退出→任务管理器无进程 | 正向用例 | Not run（需实机验证） |
+| 开机自启 checkbox 与系统登录项一致，开发直跑禁用 | 状态不同步或 dev 模式误改登录项 | `main.js` setLoginItemSettings | Windows E2E：切换后查系统登录项；`npm start` 下 checkbox 禁用 | dev 直跑时断言 `setLoginItemSettings` 未被调用 | Not run（需实机验证） |
+| 菜单快捷键（复制/粘贴/全选）与可编辑区右键菜单可用 | 壳内无快捷键、右键无菜单 | `main.js` Menu/context-menu | Windows/macOS 手工 E2E | 正向用例 | Not run（需实机验证） |
+| 拖文件进附件区完成上传，区外拖拽不再外开 | 区内不可用或区外触发系统打开 | 附件区（web）、`url_policy.js` 白名单 | Windows E2E：区内拖拽上传；`node --test`（`javascript:`/`file:`/`data:` 拒绝，`http/https/mailto` 放行） | 非白名单协议构造链接断言拒绝外开 | Pass（unit：白名单拒绝/放行）；区内拖拽 E2E Not run |
+| 下载显式落入系统下载目录且重名不覆盖 | 依赖 Electron 默认行为、重名覆盖旧文件 | `main.js` will-download | Windows E2E：触发导出下载，连续两次同名文件 | 正向用例 | Not run（需实机验证） |
+| 后端断连出现横幅，短断连恢复不刷新、长断连恢复自动刷新 | 页面静默变死，或短暂抖动触发刷新丢输入 | 断连检测逻辑（web utils + 挂载组件） | E2E：杀后端观察横幅；<30s 与 ≥30s 两种恢复路径 | 短断连恢复断言未执行刷新 | Pass（unit：<30s 不刷新 / ≥30s 刷新一次）；杀后端实测 Not run |
+| 托盘可切换服务地址，不可达时复用连接弹窗 | 切换后白屏无退路 | `main.js`（复用 `askUrl`、`waitForBackend`） | Windows E2E：切到可达地址与不可达地址各一次 | 不可达地址断言出现修改/重试/退出弹窗 | Not run（需实机验证） |
+| web lint + unit、desktop `node --test`、contracts、docs build 全部通过 | 回归破坏现有事件流或文档导航 | 各命令 Owner | `web/AGENTS.md` 命令、`node --test desktop/test`、`python3 scripts/verify_engineering_contracts.py`、docs build | 正向命令 | Pass（2026-10-10 实测，见验证段） |
 
 ## 风险
 
@@ -80,3 +80,22 @@ Non-goal（另行立项，本提案零代码）：自动更新与 CI 打包签�
 - 长断连（≥30s）恢复自动刷新会丢未提交的输入，短断连不受影响；接受为数据一致性的代价。
 - macOS 只是开发/测试平台：通知权限受未签名影响、托盘/菜单行为差异仅影响开发期验证；验收以 Windows NSIS 安装版为准，开发直跑的通知降级形态需实测记录。
 - 通知点击深链依赖 run 事件载荷含 thread 标识，实现时若当前订阅流载荷缺该字段，需补取（以最小改动补齐，不扩大事件面）。
+
+## 验证
+
+实测环境：macOS 开发机，worktree 分支 `feat/desktop-shell-v1`，Node v24.19.0，无 docker（web/desktop 命令以 host 直跑等价执行）。
+
+2026-10-10 实际执行并全部通过：
+
+```bash
+node --test "desktop/test/*.test.js"        # 7/7
+cd web && corepack pnpm run lint:check      # exit 0
+cd web && corepack pnpm run test:unit       # 425/425
+cd web && corepack pnpm run build           # 成功（既有 chunk>500kB 警告）
+python3 scripts/verify_engineering_contracts.py   # 49 decisions OK
+python3 -m unittest scripts.test_verify_engineering_contracts  # OK
+```
+
+Windows NSIS 安装版 E2E 清单（验收矩阵中标 Not run 的实机行）未执行：本机为 macOS，无法产出 Windows 安装版证据。开发机 GUI 手工检查（关闭到托盘、托盘退出、菜单快捷键、右键菜单、自启勾选、下载落盘编号、拖拽上传、杀后端横幅、切地址两路径、开发直跑通知形态）同属 deferred，需在可运行桌面壳的环境补验。
+
+已知限制（代码审查确认、非阻塞）：`activate` 不恢复托盘隐藏窗口（仅托盘菜单与二次启动可恢复）；自启 checkbox 的 `checked` 启动时读取一次，系统登录项被外部改动后显示陈旧直至重启；poller 拉取失败产生 unhandled rejection 噪音（每 30s 一条 console error，无崩溃、下一 tick 自愈）；托盘切地址与启动连接循环存在理论并发窗口（单进程事件循环下 last-writer-wins，后果良性）；下载重名编号存在并发 TOCTOU（brief 指定伪代码的固有属性）。
