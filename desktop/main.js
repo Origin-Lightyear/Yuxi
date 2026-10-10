@@ -193,6 +193,18 @@ async function ensureBackend(currentUrl) {
 
 let windowSaveTimer = null;
 
+// 目标是否仍属当前服务地址同一 origin。用模块级 backendUrl 的运行时值比对：
+// createWindow(url) 的闭包 url 在托盘切换服务地址后已过期，按创建时前缀比对
+// 会把新地址的合法导航误判为外开。解析失败或非 http/https（origin 为 "null"）
+// 一律返回 false，交给 isAllowedExternalUrl 白名单门控。
+function isSameBackendOrigin(target) {
+  try {
+    return backendUrl !== null && new URL(target).origin === new URL(backendUrl).origin;
+  } catch (_) {
+    return false;
+  }
+}
+
 function currentWindowState() {
   const { x, y, width, height } = mainWindow.getNormalBounds();
   return { x, y, width, height, maximized: mainWindow.isMaximized() };
@@ -242,17 +254,25 @@ function createWindow(url) {
   if (saved && saved.maximized) mainWindow.maximize();
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (!isAllowedExternalUrl(target)) return { action: 'deny' };
+    // 同源弹窗不外开（v1 单窗口，直接拒绝），跨源仍走白名单
+    if (isSameBackendOrigin(target)) return { action: 'deny' };
+    if (!isAllowedExternalUrl(target)) {
+      console.warn('[yuxi] 拒绝外开非白名单 URL:', target);
+      return { action: 'deny' };
+    }
     shell.openExternal(target);
     return { action: 'deny' };
   });
 
+  // 深链/切地址后的导航必须留在应用内；比对失败（跨源或非 http/https）才交给白名单决定是否外开
   mainWindow.webContents.on('will-navigate', (event, target) => {
-    if (!target.startsWith(url)) {
-      event.preventDefault();
-      if (!isAllowedExternalUrl(target)) return;
-      shell.openExternal(target);
+    if (isSameBackendOrigin(target)) return;
+    event.preventDefault();
+    if (!isAllowedExternalUrl(target)) {
+      console.warn('[yuxi] 拒绝外开非白名单 URL:', target);
+      return;
     }
+    shell.openExternal(target);
   });
 
   // 可编辑区右键弹出编辑菜单；独立构建 popup 菜单，不依赖全局应用菜单的内部结构
