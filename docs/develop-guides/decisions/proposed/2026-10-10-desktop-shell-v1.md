@@ -22,15 +22,15 @@ Owner：desktop/main.js
 
 web 侧（渲染层，`yuxiDesktop` 存在性门控）：
 
-- `web/src/utils/desktopNotify.js`：`notifyRunTerminal({ title, threadId, status })`。顺序判定：非桌面壳直接返回；`document.hasFocus()` 为 true 直接返回；否则构造 `new Notification`（中文文案：已完成 / 执行失败 / 已取消），`onclick` 回焦窗口并导航到 `/agent/:thread_id`（通知直达会话）。
+- `web/src/utils/desktopNotify.js`：`notifyRunTerminal({ title, threadId, status })`。顺序判定：非桌面壳直接返回；`document.hasFocus()` 为 true 直接返回；否则构造 `new Notification`（中文文案：已完成 / 执行失败 / 已取消），`onclick` 经 preload 的 show 通道恢复窗口、回焦并导航到 `/agent/:thread_id`（通知直达会话）。
 - `web/src/composables/useAgentRunStream.js`：既有终态判定处（`RUN_TERMINAL_STATUSES`）调用上述通知函数。
 - `web/src/utils/scheduledRunPoller.js`：仅桌面壳且窗口失焦时，每 30s 轮询 `GET /api/scheduled-tasks`，内存维护 `run_id → status` 快照，发现新进终态的 run 调 `notifyRunTerminal`（标题为任务名）。聚焦时停止轮询；浏览器环境不启动。
 - 断连检测（仅桌面壳，同门控）：渲染层每 20s 探测 `/api/system/health`，失败显示全局横幅（断开状态与重试）；断连 <30s 恢复仅收起横幅，≥30s 恢复后自动刷新页面以重建数据一致性（代价见风险）。
 
-desktop 侧（`main.js` 及纯函数模块，`preload.js` 零改动）：
+desktop 侧（`main.js` 及纯函数模块；`preload.js` 仅新增恢复主窗口的 show 通道，通知仍由渲染层发出）：
 
 - **窗口状态**：`config.json` 增加 `windowState`，创建窗口时经纯函数校验 bounds 落在当前显示器内（超界回默认 1280×820），`move/resize` 防抖 500ms 与 `close` 时保存。
-- **关闭到托盘**：`close` → `preventDefault + hide`；`before-quit` 置 `isQuitting` 才真退出；托盘菜单 = 显示主窗口 / 切换服务地址 / 开机自启（checkbox）/ 退出。首次最小化到托盘弹一次告知性 toast（config 记一次性标志）。
+- **关闭到托盘**：`close` → `preventDefault + hide`（托盘缺席——图标缺失或创建失败——时放行真实关闭，不假装隐藏）；`before-quit` 置 `isQuitting` 才真退出；托盘菜单 = 显示主窗口 / 切换服务地址 / 开机自启（checkbox）/ 退出。首次最小化到托盘弹一次告知性 toast（config 记一次性标志）。
 - **后台保活**：启动时追加 `disable-renderer-backgrounding`、`disable-backgrounding-occluded-windows`，保证隐藏窗口内定时任务轮询仍按 30s 执行——这是「托盘常驻 + 定时任务通知」成立的前提。
 - **开机自启**：托盘 checkbox 驱动 `app.setLoginItemSettings`，系统登录项为事实源；`app.isPackaged === false`（开发直跑）时禁用。
 - **原生菜单**：`Menu.setApplicationMenu`（中文文案）含编辑 roles（撤销/重做/剪切/复制/粘贴/全选及快捷键）、查看（重载）、应用（退出），mac 补最小 app 菜单；`webContents.on('context-menu')` 在可编辑区弹编辑菜单。
@@ -46,6 +46,7 @@ Non-goal（另行立项，本提案零代码）：自动更新与 CI 打包签�
 
 - 新增用户级 SSE 终态通道替代定时任务轮询：覆盖面等价（都只在应用打开时生效），只省 30s 延迟，但要新建后端事件面（Owner、恢复、鉴权一整套），拒绝进本提案。
 - 主进程 IPC 发通知：能力与渲染层 `Notification` 等价，只增加 preload/IPC 改动面，拒绝。
+- 仅靠渲染层 `window.focus()` 恢复隐藏窗口：Electron 对隐藏窗口的 `focus()` 是 no-op，隐藏态点击通知无法恢复窗口，拒绝；改为 preload 暴露最小 IPC show 通道（只恢复窗口，不经 IPC 发通知）。
 - 浏览器端也开通知：改变 web 既有行为，超出桌面范围，拒绝。
 - 终态始终通知（含聚焦时）：用户盯着聊天气泡时属打扰，拒绝；「聚焦不打扰」为既定取舍。
 - 开机自启放 web 设置页：需要 preload 新增 IPC 与 web UI 入口，托盘 checkbox 同样可达且改动面更小，拒绝。
@@ -58,6 +59,8 @@ Non-goal（另行立项，本提案零代码）：自动更新与 CI 打包签�
 |---|---|---|---|---|---|
 | 桌面失焦时当前会话终态弹系统通知，点击直达对应会话 | 只回焦不跳转，或气泡内提示无系统通知 | `useAgentRunStream.js`、`desktopNotify.js` | Windows 安装版手工 E2E：发起会话、切走窗口、等待终态、点击通知 | 正向用例 | Pass（unit：构造与点击语义）；Windows E2E Not run |
 | 浏览器环境零变化，`Notification` 从不被调用 | 门控缺失打扰 web 用户 | `desktopNotify.js` 桌面门控 | web unit：非桌面环境触发终态 | 无 `yuxiDesktop` 时断言 `Notification` 构造未被调用 | Pass（unit） |
+| 隐藏态点击系统通知恢复主窗口 | 隐藏窗口 `focus()` 是 no-op，点击无可见反应 | `main.js` IPC show 通道、`preload.js`、`desktopNotify.js` onclick | web unit：点击调用 showMainWindow 与缺方法负向；Windows E2E：关闭到托盘后点通知断言窗口恢复前台 | 旧 preload（无 `showMainWindow`）点击不抛错 | Not run |
+| 切换服务地址后点通知/长断连刷新留在应用内 | 创建时 url 闭包过期，新地址导航被误判外开到系统浏览器 | `main.js` will-navigate/setWindowOpenHandler origin 比对 | Windows E2E：托盘切地址后点通知；杀后端 ≥30s 恢复刷新 | 切地址后断言未拉起系统浏览器打开应用地址 | Not run |
 | 聚焦时不弹通知 | 聚焦仍弹造成打扰 | `desktopNotify.js` 聚焦判定 | web unit：mock `document.hasFocus()` 为 true | 断言 `Notification` 构造未被调用 | Pass（unit） |
 | completed / failed / cancelled 三终态均给出对应中文文案 | 只覆盖成功态 | `desktopNotify.js` 状态映射 | web unit 表驱动三种状态 | 正向用例 | Pass（unit） |
 | 定时任务失焦时完成会弹通知（含任务名） | 只覆盖当前会话流，定时跑完无感知 | `scheduledRunPoller.js` | Windows E2E：run-now 触发定时任务、切走窗口、等待完成 | 正向用例 | Pass（unit：payload 含任务名）；Windows E2E Not run |
@@ -78,6 +81,7 @@ Non-goal（另行立项，本提案零代码）：自动更新与 CI 打包签�
 - backgrounding switches 会让所有隐藏窗口内的定时器不再节流（含 web 自身的轮询组件），后台耗电略增，接受。
 - 定时任务列表每次仅回每任务最近 3 条 run：30s 轮询间隔内同一任务完成超过 3 条可能挤出漏通知，概率极低，记录为已知限制。
 - 长断连（≥30s）恢复自动刷新会丢未提交的输入，短断连不受影响；接受为数据一致性的代价。
+- 断连阈值从首个失败探测起算，探测粒度 20s，真实断连时长存在 ±20s 模糊带；阈值附近的断连落在刷新或不刷新哪一侧随探测相位抖动。
 - macOS 只是开发/测试平台：通知权限受未签名影响、托盘/菜单行为差异仅影响开发期验证；验收以 Windows NSIS 安装版为准，开发直跑的通知降级形态需实测记录。
 - 通知点击深链依赖 run 事件载荷含 thread 标识，实现时若当前订阅流载荷缺该字段，需补取（以最小改动补齐，不扩大事件面）。
 
@@ -90,7 +94,7 @@ Non-goal（另行立项，本提案零代码）：自动更新与 CI 打包签�
 ```bash
 node --test "desktop/test/*.test.js"        # 7/7
 cd web && corepack pnpm run lint:check      # exit 0
-cd web && corepack pnpm run test:unit       # 425/425
+cd web && corepack pnpm run test:unit       # 426/426
 cd web && corepack pnpm run build           # 成功（既有 chunk>500kB 警告）
 python3 scripts/verify_engineering_contracts.py   # 49 decisions OK
 python3 -m unittest scripts.test_verify_engineering_contracts  # OK
@@ -98,4 +102,4 @@ python3 -m unittest scripts.test_verify_engineering_contracts  # OK
 
 Windows NSIS 安装版 E2E 清单（验收矩阵中标 Not run 的实机行）未执行：本机为 macOS，无法产出 Windows 安装版证据。开发机 GUI 手工检查（关闭到托盘、托盘退出、菜单快捷键、右键菜单、自启勾选、下载落盘编号、拖拽上传、杀后端横幅、切地址两路径、开发直跑通知形态）同属 deferred，需在可运行桌面壳的环境补验。
 
-已知限制（代码审查确认、非阻塞）：`activate` 不恢复托盘隐藏窗口（仅托盘菜单与二次启动可恢复）；自启 checkbox 的 `checked` 启动时读取一次，系统登录项被外部改动后显示陈旧直至重启；poller 拉取失败产生 unhandled rejection 噪音（每 30s 一条 console error，无崩溃、下一 tick 自愈）；托盘切地址与启动连接循环存在理论并发窗口（单进程事件循环下 last-writer-wins，后果良性）；下载重名编号存在并发 TOCTOU（brief 指定伪代码的固有属性）。
+已知限制（代码审查确认、非阻塞）：自启 checkbox 的 `checked` 启动时读取一次，系统登录项被外部改动后显示陈旧直至重启；poller 拉取失败产生 unhandled rejection 噪音（每 30s 一条 console error，无崩溃、下一 tick 自愈）；托盘切地址与启动连接循环存在并发窗口——启动循环 `waitForBackend` 旧地址成功时可能覆盖运行时地址，runtime/config 短暂分叉、重启回正；下载重名编号存在并发 TOCTOU（brief 指定伪代码的固有属性）。
