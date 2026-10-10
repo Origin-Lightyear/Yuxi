@@ -296,7 +296,14 @@ if (!gotLock) {
           { label: '显示主窗口', click: showMainWindow },
           { type: 'separator' },
           { label: '切换服务地址', enabled: false }, // Task 9 启用并接线
-          { label: '开机自启动', enabled: false }, // Task 7 启用并接线
+          // 系统登录项为唯一事实源；开发直跑（isPackaged=false）禁用，避免误设系统登录项
+          {
+            label: '开机自启动',
+            type: 'checkbox',
+            checked: app.getLoginItemSettings().openAtLogin,
+            enabled: app.isPackaged,
+            click: (menuItem) => app.setLoginItemSettings({ openAtLogin: menuItem.checked, path: process.execPath }),
+          },
           { type: 'separator' },
           {
             label: '退出',
