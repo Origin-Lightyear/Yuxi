@@ -264,6 +264,8 @@ if (!gotLock) {
 } else {
   app.on('before-quit', () => {
     isQuitting = true;
+    // close 处理器在退出时直接 return，退出路径在此落盘，避免丢最后 500ms 防抖期内的几何状态
+    saveWindowStateNow();
   });
 
   app.on('second-instance', () => {
