@@ -3,7 +3,7 @@ name: mysql reporter
 slug: mysql-reporter
 description: "生成 MySQL 查询报表。当用户需要查询 MySQL 数据库并以报表形式展示结果时使用此技能，包括：统计销售数据、分析用户行为、生成业务报表、查询业务指标等。"
 version: "2026.09.20"
-mcp_dependencies: ["saas-mcp", "mcp-server-chart"]
+mcp_dependencies: ["saas-mcp"]
 ---
 
 # MySQL 报表技能
@@ -18,7 +18,7 @@ mcp_dependencies: ["saas-mcp", "mcp-server-chart"]
 
 1. 优先调用 SaaS MCP 的 `linko_ent` 工具
 2. `message` 参数直接传入清晰完整的自然语言查询需求，不要自行拼接 SQL
-3. 使用工具返回的数据整理结果；需要可视化时再调用 Charts MCP
+3. 使用工具返回的数据整理结果；需要可视化时按「产出报表 artifact」章节写入图表
 
 如果 `linko_ent` 不可用，或返回 `Unauthorized`、`AgentSession` 不存在或已过期，应明确提示用户退出后重新登录。不要回退到沙盒 MySQL，也不要要求用户配置 `MYSQL_*` 环境变量。
 
@@ -34,6 +34,16 @@ mcp_dependencies: ["saas-mcp", "mcp-server-chart"]
 4. 必要时用 `uv run scripts/describe_table.py --table 表名` 查看表结构
 5. 生成正确且高效的只读 SQL，通过 `uv run scripts/query.py --sql "SQL语句" --timeout 60` 执行查询并获取结果
 6. 使用 Markdown 表格呈现查询结果，说明关键指标、变化与结论
+
+## 产出报表 artifact
+
+分析完成后调用 `write_report_artifact` 写入结构化报表，不要只在对话里贴 Markdown。写入前按以下清单自查：
+
+- 必填字段与报表 schema 一致：`schema_version`（当前为 1 的整数）、`title`、`generated_at`、`summary`（均为非空字符串）、`metrics[]`、`tables[]`、`charts[]`（均为对象数组）
+- `metrics[]` 每条含 `key`/`label`/`value`/`unit`；`tables[]` 每张含 `title`/`columns`（字符串数组）/`rows`（数组的数组）；`charts[]` 每张含 `type`（仅 `bar`/`line`/`pie`）、`xKey`、非空 `series`（每项 `name`/`dataKey`）与 `data`
+- 每条 metric 的 `source` 写明取数 SQL/脚本与统计口径，保证指标可溯源
+- 单报表规模建议：`tables` 行数 ≤ 200、`charts` 数据点 ≤ 500。报表工作台（S3）已知不提供分页，超限会难以浏览
+- `validation_status` 首版一律使用工具默认的 `agent_declared`；仅在完成独立重算校验后才可写非 `agent_declared` 值，并同时给出校验方式的自评说明
 
 ## 环境变量缺失处理
 
@@ -62,4 +72,5 @@ mcp_dependencies: ["saas-mcp", "mcp-server-chart"]
 
 - SaaS MCP `linko_ent`：查询当前员工有权访问的企业数据
 - terminal：执行 `scripts/list_tables.py`、`scripts/describe_table.py`、`scripts/query.py`
+- `write_report_artifact`：写入结构化报表 artifact
 - 网络检索工具：必要时补充背景信息

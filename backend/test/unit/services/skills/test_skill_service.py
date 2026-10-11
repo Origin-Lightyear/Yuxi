@@ -621,7 +621,7 @@ def test_mysql_reporter_builtin_skill_spec_replaces_reporter_and_deep_reporter(b
     assert mysql_reporter["name"] == "mysql reporter"
     assert mysql_reporter["version"] == "2026.09.20"
     assert mysql_reporter["tool_dependencies"] == []
-    assert mysql_reporter["mcp_dependencies"] == ["saas-mcp", "mcp-server-chart"]
+    assert mysql_reporter["mcp_dependencies"] == ["saas-mcp"]
     assert (mysql_reporter["source_dir"] / "SKILL.md").exists()
     skill_content = (mysql_reporter["source_dir"] / "SKILL.md").read_text(encoding="utf-8")
     assert "linko_ent" in skill_content
