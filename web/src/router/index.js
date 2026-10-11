@@ -77,6 +77,19 @@ const router = createRouter({
       ]
     },
     {
+      path: '/report',
+      name: 'report',
+      component: AppLayout,
+      children: [
+        {
+          path: ':thread_id/:path(.*)*',
+          name: 'ReportView',
+          component: () => import('../views/ReportView.vue'),
+          meta: { requiresAuth: true }
+        }
+      ]
+    },
+    {
       path: '/agent-manage',
       name: 'agent-manage',
       component: AppLayout,
