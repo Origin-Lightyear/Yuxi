@@ -1,16 +1,19 @@
 <template>
   <BaseToolCall
+    v-if="reportOk"
     :tool-call="toolCall"
     :appearance="appearance"
     :default-expanded="defaultExpanded"
     :hide-params="true"
     :status="isError ? 'failed' : ''"
   >
-    <template #header v-if="reportTitle">
+    <template #header v-if="!isError">
       <div class="sep-header">
         <span class="note">写入报表</span>
         <span class="separator">|</span>
         <span class="description" :title="reportTitle">{{ reportTitle }}</span>
+        <span class="tag" v-if="generatedAt">生成时间 {{ generatedAt }}</span>
+        <span class="tag" v-if="metricsCount !== null">指标数 {{ metricsCount }}</span>
       </div>
     </template>
 
@@ -30,6 +33,13 @@
       </div>
     </template>
   </BaseToolCall>
+  <BaseToolCall
+    v-else
+    :tool-call="toolCall"
+    :appearance="appearance"
+    :default-expanded="defaultExpanded"
+    :status="isError ? 'failed' : ''"
+  />
 </template>
 
 <script setup>
@@ -58,7 +68,7 @@ const route = useRoute()
 
 const parsedArgs = computed(() => parseToolCallArgs(props.toolCall))
 
-// report 参数可能是对象或 JSON 字符串；解析失败返回空标题，让 BaseToolCall 兜底展示，不在卡片内吞错。
+// report 参数可能是对象或 JSON 字符串；解析失败返回 null，不在此处吞错。
 const reportPayload = computed(() => {
   const report = parsedArgs.value.report
   if (typeof report !== 'string') return report ?? null
@@ -72,6 +82,20 @@ const reportPayload = computed(() => {
 const reportTitle = computed(() => {
   const title = reportPayload.value?.title
   return typeof title === 'string' && title.trim() ? title : ''
+})
+
+// payload 与非空 title 同时成立才走专用卡；否则整卡降级为 BaseToolCall 默认渲染。
+const reportOk = computed(() => Boolean(reportTitle.value))
+
+// 摘要字段缺失时返回空值让 span 隐藏，不渲染 undefined/null 文案。
+const generatedAt = computed(() => {
+  const value = reportPayload.value?.generated_at
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+})
+
+const metricsCount = computed(() => {
+  const metrics = reportPayload.value?.metrics
+  return Array.isArray(metrics) ? metrics.length : null
 })
 
 const resultText = computed(() => {
