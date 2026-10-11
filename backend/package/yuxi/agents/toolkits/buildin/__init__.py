@@ -1,6 +1,6 @@
 # buildin 工具包
-from . import report_artifact  # noqa: F401
 from .install_skill import install_skill
+from .report_artifact import write_report_artifact
 from .tools import ask_user_question, ocr_parse_file, present_artifacts
 
 __all__ = [
@@ -8,4 +8,5 @@ __all__ = [
     "install_skill",
     "ocr_parse_file",
     "present_artifacts",
+    "write_report_artifact",
 ]

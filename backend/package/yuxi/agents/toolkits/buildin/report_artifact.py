@@ -34,6 +34,8 @@ WRITE_REPORT_ARTIFACT_DESCRIPTION = """把结构化报表校验后写入当前 P
 6. tables[]：明细表对象数组，含 title/columns/rows
 7. charts[]：图表对象数组，含 type（仅 bar/line/pie）/xKey/series/name、dataKey/data
 
+可选 validation_status 首版仅接受 agent_declared（省略时默认盖章该值），传其他值同样校验失败。
+
 校验失败会返回错误且不写入任何文件（fail-closed）；文件名由服务端按 UTC 时间戳生成，
 模型输入不参与路径拼接。成功后返回的路径会并入 state artifacts，供前端展示。
 """
@@ -123,6 +125,10 @@ def _load_report_payload(report: str | dict) -> dict:
         value = payload.get(name)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"必填字段 {name} 必须是非空字符串")
+
+    if "validation_status" in payload and payload["validation_status"] != "agent_declared":
+        raise ValueError("validation_status 首版仅支持 agent_declared")
+
     for name in ("metrics", "tables", "charts"):
         items = payload.get(name)
         if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):

@@ -43,7 +43,7 @@ mcp_dependencies: ["saas-mcp"]
 - `metrics[]` 每条含 `key`/`label`/`value`/`unit`；`tables[]` 每张含 `title`/`columns`（字符串数组）/`rows`（数组的数组）；`charts[]` 每张含 `type`（仅 `bar`/`line`/`pie`）、`xKey`、非空 `series`（每项 `name`/`dataKey`）与 `data`
 - 每条 metric 的 `source` 写明取数 SQL/脚本与统计口径，保证指标可溯源
 - 单报表规模建议：`tables` 行数 ≤ 200、`charts` 数据点 ≤ 500。报表工作台（S3）已知不提供分页，超限会难以浏览
-- `validation_status` 首版一律使用工具默认的 `agent_declared`；仅在完成独立重算校验后才可写非 `agent_declared` 值，并同时给出校验方式的自评说明
+- `validation_status` 首版一律省略（工具默认盖章 `agent_declared`）；工具对该字段 fail-closed，写入其他值会直接报错且不落盘
 
 ## 环境变量缺失处理
 

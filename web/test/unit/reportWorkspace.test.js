@@ -149,6 +149,24 @@ test('buildTablesCsv 无特殊字符的普通单元格不加引号', () => {
   assert.equal(csv, '\uFEFF说明\r\n普通文本')
 })
 
+test('buildTablesCsv 以公式字符开头的字符串单元格前缀单引号防注入', () => {
+  const csv = buildTablesCsv({
+    columns: ['f', 'c'],
+    rows: [['=HYPERLINK("http://evil.example","点我")', '+cmd'], ['  =2+2', '@SUM(1)']]
+  })
+
+  assert.equal(
+    csv,
+    '\uFEFFf,c\r\n"\'=HYPERLINK(""http://evil.example"",""点我"")",\'+cmd\r\n\'  =2+2,\'@SUM(1)'
+  )
+})
+
+test('buildTablesCsv 数字与布尔不做公式防护且序列化为普通字面量', () => {
+  const csv = buildTablesCsv({ columns: ['n', 'd', 'b'], rows: [[-5, 12.5, true]] })
+
+  assert.equal(csv, '\uFEFFn,d,b\r\n-5,12.5,true')
+})
+
 test('buildEchartsOption line 图与 bar 同理生成 option', () => {
   const option = buildEchartsOption({
     type: 'line',

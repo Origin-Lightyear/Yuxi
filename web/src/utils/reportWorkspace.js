@@ -43,9 +43,16 @@ export function buildReportRoute(threadId, artifactPath) {
 
 /**
  * 转义单个 CSV 单元格：含逗号/引号/换行时加引号并把内嵌引号翻倍。
+ *
+ * 公式注入防护只作用于字符串类型的原始单元格：字符串去前导空白（制表符/CR 等空白本身也被剥离）
+ * 后以 `=`、`+`、`-`、`@` 开头时前缀单引号 `'`，使 Excel/WPS 按文本处理；数字与布尔是
+ * 类型化值，直接序列化为普通字面量（如 `-5` 保持 `-5`），不做前缀也不加引号。
  */
 function escapeCsvCell(value) {
   if (value === null || value === undefined) return ''
+  if (typeof value === 'string' && /^[=+\-@]/.test(value.trimStart())) {
+    value = `'${value}`
+  }
   const text = String(value)
   return /[,"\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }

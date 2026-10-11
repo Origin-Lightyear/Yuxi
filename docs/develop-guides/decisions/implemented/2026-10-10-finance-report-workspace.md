@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：feature
-Owner：backend/package/yuxi/agents/toolkits/buildin/tools.py
+Owner：backend/package/yuxi/agents/toolkits/buildin/report_artifact.py
 
 ## 问题
 
@@ -16,11 +16,11 @@ Owner：backend/package/yuxi/agents/toolkits/buildin/tools.py
 
 报表以**文件制 artifact** 交付，不新增 DB 表、不新增读取 API：
 
-- **报表格式**：`{workdir}/outputs/reports/report-<UTC时间戳>.json`，内容为固定 schema 的 JSON 对象——`schema_version`（整数，首版 1）、`title`、`generated_at`、`summary`、`metrics[]`（`key/label/value/unit`，可选 `source` 溯源描述对象）、`tables[]`（`title/columns/rows`）、`charts[]`（限 `bar|line|pie` 三型，`xKey/series/data`，复用 `web/src/utils/dashboardCharts.js` 已按需注册的类型）、`validation_status`（首版仅 `agent_declared`，由生产 Agent 自评并明示）。
+- **报表格式**：`{workdir}/outputs/reports/report-<UTC时间戳>.json`，内容为固定 schema 的 JSON 对象——`schema_version`（整数，首版 1）、`title`、`generated_at`、`summary`、`metrics[]`（`key/label/value/unit`，可选 `source` 溯源描述对象）、`tables[]`（`title/columns/rows`）、`charts[]`（限 `bar|line|pie` 三型，`xKey/series/data`，复用 `web/src/utils/dashboardCharts.js` 已按需注册的类型）、`validation_status`（首版仅接受 `agent_declared`，其他值工具 fail-closed，由生产 Agent 自评并明示）。
 - **写入工具** `write_report_artifact`（`toolkits/buildin` 新模块，`@tool` 注册）：入参为报表对象，同步做结构校验（必填字段、类型、charts 限三型、`schema_version ≤ 当前支持版本`），校验失败直接报错不落盘（fail-closed）；通过后写入 `outputs/reports/`（重名消解沿用 `ocr_parse_file` 的 `-1` 追加约定），并以 `Command(update={"artifacts": ...})` 把路径并入 state（沿用 `present_artifacts` 的合并方式）。默认 `tools="all"` 集合包含该工具，不依赖 Skill 门控即可用。
 - **财务流程**：`mysql-reporter/SKILL.md` 增加「分析完成后将核心指标、明细表、图表与逐指标 `source` 写入 `write_report_artifact`」指令；同一变更中移除 frontmatter 对已退役 `mcp-server-chart` 的 `mcp_dependencies` 残留（`mcp/service.py:_RETIRED_BUILTIN_MCP_SERVER_SLUGS` 已删除该服务器）。
 - **聊天卡片**：`ToolCallRenderer.vue` 的 `TOOL_RENDERERS` 注册 `write_report_artifact` 专用卡（`BaseToolCall` 基座）：显示标题、生成时间、指标数摘要与「打开报表」链接（跳 `/report/...`）。
-- **独立页** `/report/:thread_id/:path(.*)*`（AppLayout 子路由，`meta.requiresAuth`）：`ReportView.vue` 经既有 `getThreadArtifactUrl/previewThreadArtifact`（`agent_api.js`）取 JSON——授权由既有 artifact API 的线程归属校验承担；页内以 `a-table` 渲染 `metrics` 与 `tables`，`dashboardCharts.js` 的 echarts 实例渲染 `charts`，每行指标可点开溯源抽屉显示 `source`，并提供 CSV 导出（前端 Blob 下载，逐表导出）；`validation_status` 以 badge 展示；`schema_version` 高于前端支持版本时显示明确提示并不渲染主体。
+- **独立页** `/report/:thread_id/:path(.*)*`（AppLayout 子路由，`meta.requiresAuth`）：`ReportView.vue` 经既有 `getThreadArtifactUrl/downloadThreadArtifact`（`agent_api.js`）取 artifact 原始字节再 `parseReportArtifact`——`?preview=true` 路径对 `.json` 返回预览 envelope（JSON 包装且截断），不能用于报表解析；授权由既有 artifact API 的线程归属校验承担；页内以 `a-table` 渲染 `metrics` 与 `tables`，`dashboardCharts.js` 的 echarts 实例渲染 `charts`，每行指标可点开溯源抽屉显示 `source`，并提供 CSV 导出（前端 Blob 下载，逐表导出）；`validation_status` 以 badge 展示；`schema_version` 高于前端支持版本时显示明确提示并不渲染主体。
 - **通知卡片联动**：终态通知与定时任务通知不改（S3 零改动 `desktopNotify`/`scheduledRunPoller`）。
 
 ## 替代方案
@@ -55,7 +55,7 @@ Owner：backend/package/yuxi/agents/toolkits/buildin/tools.py
 |---|---|---|---|---|---|
 | 工具校验通过后 JSON 落盘 `outputs/reports/` 且 state artifacts 含该路径 | 静默写坏文件或路径不进交付物列表 | `toolkits` 报表工具 | `uv run --group test pytest test/unit/agents/toolkits/buildin/test_write_report_artifact.py -q`：27 passed | 缺必填字段/类型错误/超支持 `schema_version` 时断言报错且无文件产生 | Passed |
 | 聊天流出现报表卡片，标题正确且「打开报表」链接指向独立页 | 卡片缺失或链接 404 | `ToolCallRenderer` 报表卡 | lint+build 通过；`buildReportRoute` 纯函数单测 Passed；真实页面手工验证 Not run | 无卡片工具回退 `BaseToolCall` 不受影响 | Inspected |
-| 独立页渲染 metrics 表、tables、三型 charts 与溯源抽屉 | 只显示原始 JSON 或图表空白 | `ReportView.vue` | lint+build+`parseReportArtifact` 纯函数单测 Passed；页面渲染手工验证 Not run | `schema_version` 超支持版本时显示提示不渲染主体 | Inspected |
+| 独立页渲染 metrics 表、tables、三型 charts 与溯源抽屉 | 只显示原始 JSON 或图表空白 | `ReportView.vue` | 经 `downloadThreadArtifact` 取 artifact 原始字节（非 preview envelope）后 `parseReportArtifact` 纯函数单测 Passed；lint+build 通过；真实页面手工验证 Not run | `schema_version` 超支持版本时显示提示不渲染主体 | Inspected |
 | CSV 导出内容与 tables 一致 | 导出错列/丢行/编码损坏 | `ReportView.vue` 导出 | `buildTablesCsv` 纯函数单测 Passed（逗号/引号/中文/BOM/CRLF）；浏览器下载与 Excel 打开手工验证 Not run | 空 tables 不产生下载 | Inspected |
 | 无权限用户访问报表 artifact 返回 404/401 | 越权读他人报表 | 既有 `artifact_service.resolve_thread_artifact_view` | `uv run --group test pytest test/integration/api/test_skill_artifact_authorization.py -q`：本机 setup 即缺 `SANDBOX_PROVISIONER_TOKEN`（无 docker 服务栈）；既有 API 未改动 | 跨用户 404；未登录 401 | Not run |
 | mysql-reporter skill 改动后内置发现与门控测试仍通过 | skill 失联或误门控 | `services/skills/shared.py` 既有测试 | `uv run --group test pytest test/unit/agents/test_builtin_discovery.py test/unit/services/skills -q`：135 passed | frontmatter 去除已退役 MCP 后门控解析不报错 | Passed |

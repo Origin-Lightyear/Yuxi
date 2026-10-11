@@ -138,6 +138,20 @@ async def test_validation_status_default_stamped(fake_backend):
     assert result.update["artifacts"]
 
 
+async def test_validation_status_other_value_fails_closed(fake_backend):
+    report = _minimal_report()
+    report["validation_status"] = "independently_verified"
+
+    _assert_fail_closed(await _call_tool(report), fake_backend)
+
+
+async def test_validation_status_null_fails_closed(fake_backend):
+    report = _minimal_report()
+    report["validation_status"] = None
+
+    _assert_fail_closed(await _call_tool(report), fake_backend)
+
+
 async def test_missing_required_field_fails_closed(fake_backend):
     report = _minimal_report()
     del report["title"]

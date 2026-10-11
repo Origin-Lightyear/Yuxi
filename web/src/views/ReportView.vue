@@ -151,7 +151,9 @@ async function loadReport() {
 
   try {
     // 鉴权与线程归属由后端在 artifact API 处执行；404 无权访问与网络错误同走此错误分支。
-    const res = await threadApi.previewThreadArtifact(threadId, artifactPath)
+    // 下载路径返回 FileResponse 原始字节；preview=true 会返回预览 envelope（.json 为 JSON 包装且截断），
+    // 不能用于 parseReportArtifact。
+    const res = await threadApi.downloadThreadArtifact(threadId, artifactPath)
     const text = await res.text()
     const parsed = parseReportArtifact(text)
     if (!parsed.ok) {
