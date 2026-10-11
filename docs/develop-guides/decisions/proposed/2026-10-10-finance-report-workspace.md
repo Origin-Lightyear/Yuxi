@@ -34,7 +34,7 @@ Owner：backend/package/yuxi/agents/toolkits/buildin/tools.py
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
 | 工具校验通过后 JSON 落盘 `outputs/reports/` 且 state artifacts 含该路径 | 静默写坏文件或路径不进交付物列表 | `toolkits` 报表工具 | unit：构造合法报表调用工具，断言文件与 state | 缺必填字段/类型错误/超支持 `schema_version` 时断言报错且无文件产生 | Not run |
-| 聊天流出现报表卡片，标题正确且「打开报表」链接指向独立页 | 卡片缺失或链接 404 | `ToolCallRenderer` 报表卡 | web unit：mock 工具调用 JSON，断言卡片渲染与链接 | 无卡片工具回退 `BaseToolCall` 不受影响 | Not run |
+| 聊天流出现报表卡片，标题正确且「打开报表」链接指向独立页 | 卡片缺失或链接 404 | `ToolCallRenderer` 报表卡 | unit：buildReportRoute（Task 3）；卡片渲染 lint+build+手工验证 | 无卡片工具回退 `BaseToolCall` 不受影响 | Not run |
 | 独立页渲染 metrics 表、tables、三型 charts 与溯源抽屉 | 只显示原始 JSON 或图表空白 | `ReportView.vue` | web unit + 手工页面验证 | `schema_version` 超支持版本时显示提示不渲染主体 | Not run |
 | CSV 导出内容与 tables 一致 | 导出错列/丢行/编码损坏 | `ReportView.vue` 导出 | web unit：构造含逗号与中文的 rows，断言 Blob 内容 | 空 tables 不产生下载 | Not run |
 | 无权限用户访问报表 artifact 返回 404/401 | 越权读他人报表 | 既有 `artifact_service.resolve_thread_artifact_view` | HTTP integration：用户 B 请求用户 A 线程的报表路径 | 跨用户 404；未登录 401 | Not run |

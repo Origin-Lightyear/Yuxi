@@ -45,6 +45,7 @@ import AskUserQuestionTool from './tools/AskUserQuestionTool.vue'
 import ExecuteTool from './tools/ExecuteTool.vue'
 import OcrParseFileTool from './tools/OcrParseFileTool.vue'
 import RememberMemoryTool from './tools/RememberMemoryTool.vue'
+import ReportArtifactTool from './tools/ReportArtifactTool.vue'
 import { getToolCallId, isHiddenToolCall } from './toolRegistry'
 
 const props = defineProps({
@@ -101,6 +102,7 @@ const TOOL_RENDERERS = {
   doubao_search: WebSearchTool,
   text_to_img_qwen_image: ImageTool,
   write_file: WriteFileTool,
+  write_report_artifact: ReportArtifactTool,
   write_todos: TodoListTool
 }
 
