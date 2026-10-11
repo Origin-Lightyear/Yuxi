@@ -48,7 +48,7 @@ Owner：backend/package/yuxi/agents/toolkits/buildin/tools.py
 - `cd web && corepack pnpm run test:unit`：427 pass / 0 fail；`corepack pnpm run lint:check` 通过；`corepack pnpm run build` 通过。
 - `python3 scripts/verify_engineering_contracts.py`：通过（49 decisions / 5 workflows / 4 agents files / 189 docs / 27 routers / 255 web sources）；`python3 -m unittest scripts.test_verify_engineering_contracts`：63 tests OK。
 - `cd docs && npm run build`：build complete in 3.84s（先 `npm install` 安装本机缺失依赖）。
-- `git diff e2a5f5bf..HEAD --name-only`：改动集 14 文件，`desktopNotify.js`/`scheduledRunPoller.js` 命中数 0。
+- `git diff e2a5f5bf..HEAD --name-only`：改动集 14 代码文件（+1 spec），`desktopNotify.js`/`scheduledRunPoller.js` 命中数 0。
 - `uv run --group test pytest test/integration/api/test_skill_artifact_authorization.py -q`：setup 即 `RuntimeError: SANDBOX_PROVISIONER_TOKEN is required for integration sandbox cleanup`——本机无 docker 服务栈，记 Not run，不写成通过。
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
@@ -56,8 +56,8 @@ Owner：backend/package/yuxi/agents/toolkits/buildin/tools.py
 | 工具校验通过后 JSON 落盘 `outputs/reports/` 且 state artifacts 含该路径 | 静默写坏文件或路径不进交付物列表 | `toolkits` 报表工具 | `uv run --group test pytest test/unit/agents/toolkits/buildin/test_write_report_artifact.py -q`：27 passed | 缺必填字段/类型错误/超支持 `schema_version` 时断言报错且无文件产生 | Passed |
 | 聊天流出现报表卡片，标题正确且「打开报表」链接指向独立页 | 卡片缺失或链接 404 | `ToolCallRenderer` 报表卡 | lint+build 通过；`buildReportRoute` 纯函数单测 Passed；真实页面手工验证 Not run | 无卡片工具回退 `BaseToolCall` 不受影响 | Inspected |
 | 独立页渲染 metrics 表、tables、三型 charts 与溯源抽屉 | 只显示原始 JSON 或图表空白 | `ReportView.vue` | lint+build+`parseReportArtifact` 纯函数单测 Passed；页面渲染手工验证 Not run | `schema_version` 超支持版本时显示提示不渲染主体 | Inspected |
-| CSV 导出内容与 tables 一致 | 导出错列/丢行/编码损坏 | `ReportView.vue` 导出 | `buildTablesCsv` 纯函数单测 Passed（逗号/引号/中文/BOM/CRLF）；浏览器下载与 Excel 打开手工验证 Not run | 空 tables 不渲染导出入口 | Inspected |
+| CSV 导出内容与 tables 一致 | 导出错列/丢行/编码损坏 | `ReportView.vue` 导出 | `buildTablesCsv` 纯函数单测 Passed（逗号/引号/中文/BOM/CRLF）；浏览器下载与 Excel 打开手工验证 Not run | 空 tables 不产生下载 | Inspected |
 | 无权限用户访问报表 artifact 返回 404/401 | 越权读他人报表 | 既有 `artifact_service.resolve_thread_artifact_view` | `uv run --group test pytest test/integration/api/test_skill_artifact_authorization.py -q`：本机 setup 即缺 `SANDBOX_PROVISIONER_TOKEN`（无 docker 服务栈）；既有 API 未改动 | 跨用户 404；未登录 401 | Not run |
 | mysql-reporter skill 改动后内置发现与门控测试仍通过 | skill 失联或误门控 | `services/skills/shared.py` 既有测试 | `uv run --group test pytest test/unit/agents/test_builtin_discovery.py test/unit/services/skills -q`：135 passed | frontmatter 去除已退役 MCP 后门控解析不报错 | Passed |
 | 定时任务/终态通知行为零变化 | S3 误改通知链路 | `desktopNotify.js`/`scheduledRunPoller.js` 不在改动集 | `git diff e2a5f5bf..HEAD --name-only`：两文件命中数 0；web unit 427 全绿 | 改动集不含该两文件 | Passed |
-| 后端 unit/integration、web lint+unit+build、contracts、docs build 全部通过 | 回归破坏 | 各命令 Owner | 后端 unit 2641 passed；web 427 pass + lint + build；contracts + unittest gate 通过；docs build complete 3.84s；integration 本机 Not run（无服务栈） | 正向命令 | Passed |
+| 后端 unit 全量、web lint+unit+build、contracts、docs build 全部通过 | 回归破坏 | 各命令 Owner | 后端 unit 2641 passed；web 427 pass + lint + build；contracts + unittest gate 通过；docs build complete 3.84s；integration 未执行，见上表越权行 Not run | 正向命令 | Passed |
