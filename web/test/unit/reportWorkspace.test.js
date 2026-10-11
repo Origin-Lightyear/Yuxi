@@ -76,6 +76,36 @@ test('parseReportArtifact 缺 title 时失败', () => {
   assert.equal(result.error.includes('title'), true)
 })
 
+test('parseReportArtifact schema_version 非正整数或缺失时失败', () => {
+  for (const schemaVersion of [0, -1, '1', null, undefined]) {
+    const result = parseReportArtifact(
+      JSON.stringify({ ...minimalReport, schema_version: schemaVersion })
+    )
+
+    assert.equal(result.ok, false, `schema_version=${schemaVersion} 必须失败`)
+    assert.equal(result.report, null)
+    assert.equal(result.error.includes('schema_version'), true)
+  }
+
+  const withoutVersion = { ...minimalReport }
+  delete withoutVersion.schema_version
+  const missing = parseReportArtifact(JSON.stringify(withoutVersion))
+
+  assert.equal(missing.ok, false)
+  assert.equal(missing.report, null)
+  assert.equal(missing.error.includes('schema_version'), true)
+})
+
+test('parseReportArtifact 非对象 JSON 载荷返回失败而不抛错', () => {
+  for (const payload of ['null', '[]', '123', '"文本"']) {
+    const result = parseReportArtifact(payload)
+
+    assert.equal(result.ok, false, `${payload} 必须失败`)
+    assert.equal(result.report, null)
+    assert.equal(typeof result.error, 'string')
+  }
+})
+
 test('buildReportRoute 对线程与路径逐段编码', () => {
   assert.equal(
     buildReportRoute('t 1', 'u1/project/outputs/reports/a b.json'),
@@ -111,6 +141,24 @@ test('buildEchartsOption bar 图按 xKey 与 dataKey 生成普通 option', () =>
   assert.equal(option.series[0].name, '收入')
   assert.deepEqual(option.series[0].data, [120, 200])
   assert.deepEqual(option.xAxis.data, ['1 月', '2 月'])
+})
+
+test('buildTablesCsv 无特殊字符的普通单元格不加引号', () => {
+  const csv = buildTablesCsv({ columns: ['说明'], rows: [['普通文本']] })
+
+  assert.equal(csv, '\uFEFF说明\r\n普通文本')
+})
+
+test('buildEchartsOption line 图与 bar 同理生成 option', () => {
+  const option = buildEchartsOption({
+    type: 'line',
+    xKey: 'month',
+    series: [{ name: '趋势', dataKey: 'count' }],
+    data: [{ month: '1 月', count: 5 }]
+  })
+
+  assert.equal(option.series[0].type, 'line')
+  assert.deepEqual(option.series[0].data, [5])
 })
 
 test('buildEchartsOption pie 图取 series[0].dataKey 作为 value', () => {
