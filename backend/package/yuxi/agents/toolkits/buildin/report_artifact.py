@@ -32,7 +32,7 @@ WRITE_REPORT_ARTIFACT_DESCRIPTION = """把结构化报表校验后写入当前 P
 4. summary：结论摘要（非空字符串）
 5. metrics[]：指标对象数组，含 key/label/value/unit，可选 source 溯源说明
 6. tables[]：明细表对象数组，含 title/columns/rows
-7. charts[]：图表对象数组，type 仅支持 bar/line/pie
+7. charts[]：图表对象数组，含 type（仅 bar/line/pie）/xKey/series/name、dataKey/data
 
 校验失败会返回错误且不写入任何文件（fail-closed）；文件名由服务端按 UTC 时间戳生成，
 模型输入不参与路径拼接。成功后返回的路径会并入 state artifacts，供前端展示。
@@ -53,6 +53,7 @@ async def write_report_artifact(
     """校验报表并写入 outputs/reports/，把文件路径并入 state artifacts。"""
     try:
         payload = _validate_report_payload(report)
+        payload.setdefault("validation_status", "agent_declared")
         workdir_path = str(_runtime_scope_value(runtime, "workdir_path") or "").rstrip("/")
         if not workdir_path:
             raise ValueError("当前运行时缺少 workdir_path")
@@ -92,7 +93,16 @@ async def write_report_artifact(
 
 
 def _validate_report_payload(report: str | dict) -> dict:
-    """解析并校验报表负载，任何不符合 schema 的输入抛 ValueError。"""
+    """解析并逐层校验报表负载，任何不符合 schema 的输入抛 ValueError。"""
+    payload = _load_report_payload(report)
+    _validate_metrics(payload["metrics"])
+    _validate_tables(payload["tables"])
+    _validate_charts(payload["charts"])
+    return payload
+
+
+def _load_report_payload(report: str | dict) -> dict:
+    """解析报表输入并校验顶层字段。"""
     if isinstance(report, str):
         try:
             payload = json.loads(report)
@@ -106,25 +116,71 @@ def _validate_report_payload(report: str | dict) -> dict:
     schema_version = payload.get("schema_version")
     if isinstance(schema_version, bool) or not isinstance(schema_version, int):
         raise ValueError("schema_version 必须是整数")
-    if schema_version > SUPPORTED_REPORT_SCHEMA_VERSION:
-        raise ValueError(f"schema_version 超出当前支持版本 {SUPPORTED_REPORT_SCHEMA_VERSION}")
+    if not 1 <= schema_version <= SUPPORTED_REPORT_SCHEMA_VERSION:
+        raise ValueError(f"schema_version 必须在 1 到 {SUPPORTED_REPORT_SCHEMA_VERSION} 之间")
 
     for name in ("title", "generated_at", "summary"):
         value = payload.get(name)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"必填字段 {name} 必须是非空字符串")
-    for name in ("metrics", "tables"):
+    for name in ("metrics", "tables", "charts"):
         items = payload.get(name)
         if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
             raise ValueError(f"必填字段 {name} 必须是对象数组")
-
-    charts = payload.get("charts")
-    if not isinstance(charts, list):
-        raise ValueError("必填字段 charts 必须是数组")
-    for index, chart in enumerate(charts):
-        if not isinstance(chart, dict) or chart.get("type") not in _ALLOWED_CHART_TYPES:
-            raise ValueError(f"charts[{index}].type 仅支持 bar/line/pie")
     return payload
+
+
+def _validate_metrics(metrics: list[dict]) -> None:
+    """校验每条指标的 key/label/value/unit。"""
+    for index, metric in enumerate(metrics):
+        label = f"metrics[{index}]"
+        for name in ("key", "label"):
+            value = metric.get(name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{label} 缺少必填字段 {name} 或类型不符")
+        if "value" not in metric:
+            raise ValueError(f"{label} 缺少必填字段 value")
+        if not isinstance(metric.get("unit"), str):
+            raise ValueError(f"{label}.unit 必须是字符串")
+
+
+def _validate_tables(tables: list[dict]) -> None:
+    """校验每张明细表的 title/columns/rows。"""
+    for index, table in enumerate(tables):
+        label = f"tables[{index}]"
+        title = table.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError(f"{label} 缺少必填字段 title 或类型不符")
+        columns = table.get("columns")
+        if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
+            raise ValueError(f"{label}.columns 必须是字符串数组")
+        rows = table.get("rows")
+        if not isinstance(rows, list) or not all(isinstance(row, list) for row in rows):
+            raise ValueError(f"{label}.rows 必须是数组的数组")
+
+
+def _validate_charts(charts: list[dict]) -> None:
+    """校验每张图表的 type/xKey/series/data。"""
+    for index, chart in enumerate(charts):
+        label = f"charts[{index}]"
+        if chart.get("type") not in _ALLOWED_CHART_TYPES:
+            raise ValueError(f"{label}.type 仅支持 bar/line/pie")
+        x_key = chart.get("xKey")
+        if not isinstance(x_key, str) or not x_key.strip():
+            raise ValueError(f"{label} 缺少必填字段 xKey 或类型不符")
+        series = chart.get("series")
+        if not isinstance(series, list) or not series:
+            raise ValueError(f"{label}.series 必须是非空数组")
+        for series_index, entry in enumerate(series):
+            if not isinstance(entry, dict):
+                raise ValueError(f"{label}.series[{series_index}] 必须是对象")
+            for name in ("name", "dataKey"):
+                value = entry.get(name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"{label}.series[{series_index}] 缺少必填字段 {name} 或类型不符")
+        data = chart.get("data")
+        if not isinstance(data, list) or not all(isinstance(row, dict) for row in data):
+            raise ValueError(f"{label}.data 必须是对象数组")
 
 
 def _next_report_path(backend, workdir_path: str) -> str:
