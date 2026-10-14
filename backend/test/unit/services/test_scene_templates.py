@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, UTC
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -86,3 +86,33 @@ def test_pick_daily_tip_empty_pool_returns_none():
     assert agent_config_service.pick_daily_tip([], date(2026, 1, 1)) is None
     preset = AgentPreset(slug="tip-none", name="N", description="", scene="general", tips=())
     assert agent_config_service.pick_daily_tip([(preset, SimpleNamespace(id=1))], date(2026, 1, 1)) is None
+
+
+@pytest.mark.asyncio
+async def test_get_scene_templates_daily_tip_uses_utc_date(monkeypatch):
+    """服务入口按 UTC 日历日取每日一技，不随服务器本地时区漂移。"""
+    captured: dict = {}
+
+    def _spy(candidates, today):
+        captured["today"] = today
+        return None
+
+    monkeypatch.setattr(agent_config_service, "pick_daily_tip", _spy)
+
+    class _FakeDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is UTC
+            # 本地（UTC+8）已是 1 月 3 日，UTC 日历日仍是 1 月 2 日。
+            return datetime(2026, 1, 2, 23, 30, tzinfo=UTC)
+
+    monkeypatch.setattr(agent_config_service, "datetime", _FakeDateTime)
+    monkeypatch.setattr(
+        agent_config_service,
+        "AgentRepository",
+        lambda db: SimpleNamespace(list_by_slugs=AsyncMock(return_value=[])),
+    )
+
+    await agent_config_service.get_scene_templates(db=object())
+
+    assert captured["today"] == date(2026, 1, 2)

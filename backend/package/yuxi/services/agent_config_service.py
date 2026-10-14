@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, UTC
 from typing import Any, Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,7 +82,7 @@ async def get_scene_templates(db: AsyncSession) -> dict:
         ]
         if templates:
             scenes.append({"scene": scene_key, "label": scene_label, "templates": templates})
-    return {"scenes": scenes, "daily_tip": pick_daily_tip(candidates, date.today())}
+    return {"scenes": scenes, "daily_tip": pick_daily_tip(candidates, datetime.now(UTC).date())}
 
 
 DAILY_TIP_ANCHOR: Final = date(2026, 1, 1)
