@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from datetime import date
+from typing import Any, Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import get_agent_backend
@@ -9,9 +10,9 @@ from yuxi.agents.context import (
     filter_config_by_role,
     resolve_agent_resource_options,
 )
-from yuxi.agents.presets import discover_agent_presets
+from yuxi.agents.presets import SCENES, AgentPreset, discover_agent_presets
 from yuxi.repositories.agent_repository import AgentRepository
-from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_business import Agent, User
 
 
 async def prepare_agent_config_write(
@@ -56,3 +57,47 @@ async def initialize_agent_presets(db: AsyncSession) -> None:
     repository = AgentRepository(db)
     for preset in presets:
         await repository.ensure_preset(preset)
+
+
+async def get_scene_templates(db: AsyncSession) -> dict:
+    """聚合场景模板目录与每日一技；未种子化与空场景预置不产出。"""
+    presets = [preset for preset in discover_agent_presets() if preset.scene]
+    repository = AgentRepository(db)
+    agents = {agent.slug: agent for agent in await repository.list_by_slugs([preset.slug for preset in presets])}
+    candidates = [(preset, agents[preset.slug]) for preset in presets if preset.slug in agents]
+
+    scenes = []
+    for scene_key, scene_label in SCENES:
+        templates = [
+            {
+                "agent_id": agent.id,
+                "slug": preset.slug,
+                "name": preset.name,
+                "description": preset.description,
+                "icon": preset.icon,
+                "example_questions": preset.example_questions,
+            }
+            for preset, agent in candidates
+            if preset.scene == scene_key
+        ]
+        if templates:
+            scenes.append({"scene": scene_key, "label": scene_label, "templates": templates})
+    return {"scenes": scenes, "daily_tip": pick_daily_tip(candidates, date.today())}
+
+
+DAILY_TIP_ANCHOR: Final = date(2026, 1, 1)
+
+
+def pick_daily_tip(candidates: list[tuple[AgentPreset, Agent]], today: date) -> dict | None:
+    """按 SCENES × 预置定义顺序轮转选择每日一技；池为空时返回 None。"""
+    pool: list[tuple[AgentPreset, str, Agent]] = [
+        (preset, tip, agent)
+        for scene_key, _ in SCENES
+        for preset, agent in candidates
+        if preset.scene == scene_key
+        for tip in preset.tips
+    ]
+    if not pool:
+        return None
+    preset, tip, agent = pool[(today - DAILY_TIP_ANCHOR).days % len(pool)]
+    return {"tip": tip, "slug": preset.slug, "name": preset.name, "agent_id": agent.id}
