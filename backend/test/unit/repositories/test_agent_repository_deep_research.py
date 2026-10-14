@@ -44,6 +44,9 @@ async def test_discovered_presets_creates_orchestrator_and_subagents(monkeypatch
         "deep-research",
         "research-explorer",
         "fact-verifier",
+        "writing-assistant",
+        "weekly-report",
+        "data-interpreter",
     }
 
     explorer = created["research-explorer"]

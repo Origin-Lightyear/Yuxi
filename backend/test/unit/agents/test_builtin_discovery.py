@@ -31,6 +31,9 @@ def test_preset_discovery_includes_shipping_roles():
         "deep-research",
         "research-explorer",
         "fact-verifier",
+        "writing-assistant",
+        "weekly-report",
+        "data-interpreter",
     }
     assert found["deep-research"].context["subagents"] == ["research-explorer", "fact-verifier"]
     assert found["general-purpose"].context == {}
@@ -80,6 +83,34 @@ def test_duplicate_preset_slug_is_rejected(tmp_path, monkeypatch):
         )
     invalidate_caches()
     with pytest.raises(ValueError, match="重复的预置 Agent slug: duplicate"):
+        presets.discover_agent_presets()
+
+
+def test_scene_metadata_and_content_templates():
+    from yuxi.agents.presets import SCENES, discover_agent_presets, preset_slug_set
+
+    presets = {p.slug: p for p in discover_agent_presets()}
+    assert presets["default-chatbot"].scene == "general"
+    assert presets["default-chatbot"].example_questions  # 非空
+    assert presets["fact-verifier"].scene == ""  # 子 Agent 排除
+    for slug in ("writing-assistant", "weekly-report", "data-interpreter"):
+        assert presets[slug].backend_id == "ChatbotAgent"
+        assert presets[slug].tips and presets[slug].example_questions
+    assert [key for key, _ in SCENES] == ["general", "writing", "research"]
+    assert preset_slug_set() >= {"default-chatbot", "deep-research", "writing-assistant"}
+
+
+def test_discover_rejects_unknown_scene(tmp_path, monkeypatch):
+    """scene 不在 SCENES 中的预置必须阻止发现成功。"""
+    monkeypatch.setattr(presets, "__file__", str(tmp_path / "__init__.py"))
+    monkeypatch.setattr(presets, "__path__", [str(tmp_path)])
+    (tmp_path / "test_unknown_scene.py").write_text(
+        "from yuxi.agents.presets import AgentPreset\n"
+        'PRESET = AgentPreset(slug="unknown-scene-role", name="未知场景", '
+        'description="测试", scene="astronomy")\n'
+    )
+    invalidate_caches()
+    with pytest.raises(ValueError, match="scene"):
         presets.discover_agent_presets()
 
 

@@ -24,4 +24,15 @@ PRESET = AgentPreset(
         "subagents": ["research-explorer", "fact-verifier"],
         "skills": ["deep-research"],
     },
+    scene="research",
+    icon="telescope",
+    example_questions=(
+        "调研国内低空经济产业链的主要玩家与最新融资情况",
+        "对比三款主流向量数据库的选型差异并给出建议",
+        "整理今年国内外人形机器人量产进展并给出结论",
+    ),
+    tips=(
+        "明确研究范围与信息截止时间，避免结论发散或过时。",
+        "要求关键结论标注来源，报告即可保持可追溯。",
+    ),
 )
