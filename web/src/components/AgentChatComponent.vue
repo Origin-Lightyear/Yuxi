@@ -169,6 +169,39 @@
                 <h1>{{ randomGreeting }}</h1>
               </div>
 
+              <!-- /help 本地帮助卡片：静态能力说明 + 可切换的场景模板 -->
+              <section v-if="helpCardOpen" class="help-capability-card" aria-label="能力说明">
+                <div class="help-card-header">
+                  <h2>我可以帮你做什么</h2>
+                  <button
+                    type="button"
+                    class="help-card-close lucide-icon-btn"
+                    aria-label="关闭帮助卡片"
+                    @click="helpCardOpen = false"
+                  >
+                    <X :size="16" />
+                  </button>
+                </div>
+                <ul class="help-card-capabilities">
+                  <li>多智能体对话：写作、研究、周报等场景模板一键切换</li>
+                  <li>知识问答：基于已接入知识库回答问题并给出引用来源</li>
+                  <li>文件与图片：上传附件让我读取、分析与生成内容</li>
+                  <li>随时输入 /help 重新打开本卡片</li>
+                </ul>
+                <div v-if="helpTemplates.length" class="help-card-templates">
+                  <button
+                    v-for="template in helpTemplates"
+                    :key="template.agent_id"
+                    type="button"
+                    class="help-template-item"
+                    @click="selectHelpTemplate(template)"
+                  >
+                    <span class="help-template-name">{{ template.name }}</span>
+                    <span class="help-template-desc">{{ template.description }}</span>
+                  </button>
+                </div>
+              </section>
+
               <SceneCatalog
                 v-if="isNewConversation && sceneTemplates"
                 :scenes="sceneTemplates"
@@ -880,7 +913,8 @@ import {
   ListCollapse,
   Play,
   RefreshCw,
-  Trash2
+  Trash2,
+  X
 } from '@lucide/vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
@@ -954,6 +988,7 @@ import {
 import { AUTO_PROJECT_ID } from '@/utils/projectSelection'
 import { createSingleFlight } from '@/utils/singleFlight'
 import { createThreadForContext } from '@/utils/threadCreation'
+import { isHelpCommand } from '@/utils/commandInput'
 import {
   FILE_TREE_SECTION,
   MESSAGE_DEBUG_SECTION,
@@ -1006,6 +1041,8 @@ const threadDraftStore = createThreadDraftStore()
 const threadDraftSession = createThreadDraftSession(threadDraftStore, currentThreadId.value)
 const userInput = ref(threadDraftStore.read(currentThreadId.value || DRAFT_THREAD_ID))
 watch(userInput, (text) => threadDraftSession.saveInput(text))
+// /help 本地帮助卡片：与会话状态无关，仅由发送链路开关
+const helpCardOpen = ref(false)
 const agentInputAreaRef = ref(null)
 const sendCooldownActive = ref(false)
 const cancellingRequestIds = reactive(new Set())
@@ -1033,6 +1070,16 @@ const selectedTemplate = computed(() => {
 const fillExampleQuestion = (question) => {
   userInput.value = question
   agentInputAreaRef.value?.focus()
+}
+
+// /help 卡片复用场景模板数据展示可切换的智能体
+const helpTemplates = computed(() =>
+  (sceneTemplates.value || []).flatMap((group) => group.templates || [])
+)
+
+const selectHelpTemplate = (template) => {
+  helpCardOpen.value = false
+  void agentStore.selectAgent(template.agent_id)
 }
 
 watch(
@@ -3388,6 +3435,8 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
 
   // 发送后进入短暂冷却，防止连续触发停止
   startSendCooldown()
+  // 真实消息发送成功路径关闭帮助卡片
+  helpCardOpen.value = false
 
   let threadId = currentChatId.value
   if (!threadId) {
@@ -3586,6 +3635,13 @@ const handleContextCompression = async () => {
 
 // 发送或中断
 const handleSendOrStop = async (payload) => {
+  // /help 在任何请求/线程逻辑前本地拦截，只开帮助卡片
+  if (isHelpCommand(userInput.value)) {
+    userInput.value = ''
+    helpCardOpen.value = true
+    if (!sceneTemplates.value) void agentStore.loadSceneTemplates()
+    return
+  }
   if (sendCooldownActive.value) {
     return
   }
@@ -4267,6 +4323,75 @@ watch(currentChatId, (threadId, oldThreadId) => {
     font-size: 1.4rem;
     color: var(--gray-1000);
     margin: 0;
+  }
+}
+
+.help-capability-card {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  background: var(--gray-0);
+  text-align: left;
+
+  .help-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+
+    h2 {
+      margin: 0;
+      font-size: 15px;
+      color: var(--gray-1000);
+    }
+  }
+
+  .help-card-close {
+    flex-shrink: 0;
+  }
+
+  .help-card-capabilities {
+    margin: 0 0 10px;
+    padding-left: 18px;
+    color: var(--gray-700);
+    font-size: 13px;
+    line-height: 22px;
+  }
+
+  .help-card-templates {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+  }
+
+  .help-template-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    background: var(--gray-0);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+
+    &:hover {
+      border-color: var(--main-color);
+    }
+
+    .help-template-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-900);
+    }
+
+    .help-template-desc {
+      font-size: 12px;
+      color: var(--gray-600);
+    }
   }
 }
 

@@ -125,6 +125,13 @@ export const agentApi = {
   deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
 
   /**
+   * 把可访问的主智能体另存为当前用户私有的副本
+   * @param {number} agentId - 智能体数字主键（该端点不吃 slug）
+   * @returns {Promise<{agent: Object}>} - 新副本智能体
+   */
+  duplicateAgent: (agentId) => apiPost(`/api/agent/${agentId}/duplicate`),
+
+  /**
    * 创建异步运行任务（Run）
    * @param {Object} data - run 请求体
    * @returns {Promise<Object>}

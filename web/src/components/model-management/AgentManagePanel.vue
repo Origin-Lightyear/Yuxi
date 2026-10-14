@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { Plus, RefreshCw, Trash2, SquarePen, Bot, ChevronRight } from '@lucide/vue'
+import { Plus, RefreshCw, Trash2, SquarePen, Bot, ChevronRight, CopyPlus } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 
 import { agentApi } from '@/apis/agent_api'
@@ -70,6 +70,13 @@ const getAgentDefaultIconSrc = (agent) => (agent.id ? generatePixelAvatar(agent.
 /** 返回智能体共享范围的简短展示文案。 */
 const getAgentShareLabel = (agent) => getShareConfigLabel(agent?.share_config)
 
+/** 卡片标签：共享范围 + 模板徽标。 */
+const agentCardTags = (agent) => {
+  const tags = [{ name: getAgentShareLabel(agent), color: 'gray' }]
+  if (agent.is_template) tags.push({ name: '模板', color: 'blue' })
+  return tags
+}
+
 // ============ Agent Operations ============
 const loadAgentBackends = async () => {
   try {
@@ -122,6 +129,19 @@ const openAgentChat = (agent) => {
 
 const refreshAgentLists = async () => {
   await Promise.all([loadAgents(), agentStore.fetchAgents()])
+}
+
+/** 把模板另存为当前用户私有副本，成功后跳进副本对话页。 */
+const duplicateAgent = async (agent) => {
+  try {
+    const response = await agentApi.duplicateAgent(agent.id)
+    const newAgent = response.agent
+    await refreshAgentLists()
+    router.push({ name: 'AgentComp', query: { agent_id: newAgent.id } })
+    message.success('已另存为我的副本')
+  } catch (error) {
+    message.error(error.message || '另存为副本失败')
+  }
 }
 
 const deleteAgent = async (agent) => {
@@ -202,7 +222,7 @@ defineExpose({
             :subtitle="agent.slug || agent.id"
             :description="agent.description || '暂无描述'"
             :default-icon="Bot"
-            :tags="[{ name: getAgentShareLabel(agent), color: 'gray' }]"
+            :tags="agentCardTags(agent)"
             class="config-card agent-card"
             @click="canManageAgent(agent) && openEditAgentModal(agent)"
           >
@@ -220,15 +240,30 @@ defineExpose({
               />
             </template>
 
-            <template v-if="canManageAgent(agent)" #card-more-action-corner>
+            <template v-if="canManageAgent(agent) || agent.is_template" #card-more-action-corner>
               <a-menu>
-                <a-menu-item key="edit" @click.stop="openEditAgentModal(agent)">
+                <a-menu-item
+                  v-if="canManageAgent(agent)"
+                  key="edit"
+                  @click.stop="openEditAgentModal(agent)"
+                >
                   <span class="lucide-menu-item">
                     <SquarePen :size="14" />
                     <span>编辑智能体</span>
                   </span>
                 </a-menu-item>
                 <a-menu-item
+                  v-if="agent.is_template"
+                  key="duplicate"
+                  @click.stop="duplicateAgent(agent)"
+                >
+                  <span class="lucide-menu-item">
+                    <CopyPlus :size="14" />
+                    <span>另存为我的副本</span>
+                  </span>
+                </a-menu-item>
+                <a-menu-item
+                  v-if="canManageAgent(agent)"
                   key="delete"
                   :disabled="isBuiltinAgent(agent)"
                   :danger="!isBuiltinAgent(agent)"
