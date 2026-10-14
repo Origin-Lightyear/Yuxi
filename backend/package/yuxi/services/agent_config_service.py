@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import copy
 from datetime import date, datetime, UTC
 from typing import Any, Final
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import get_agent_backend
 from yuxi.agents.context import (
     BaseContext,
     filter_config_by_role,
+    filter_declared_config,
     resolve_agent_resource_options,
 )
 from yuxi.agents.presets import SCENES, AgentPreset, discover_agent_presets
-from yuxi.repositories.agent_repository import AgentRepository
+from yuxi.repositories.agent_repository import AgentRepository, user_can_access_agent
 from yuxi.storage.postgres.models_business import Agent, User
 
 
@@ -47,6 +50,48 @@ async def prepare_agent_config_write(
             raise RuntimeError(f"智能体资源字段 {field_name} 缺少权限解析结果")
         resource_access[field_name] = {option["key"] for option in options[option_field]}
     return filtered, resource_access
+
+
+async def duplicate_agent(agent_id: str, *, user: User, db: AsyncSession) -> dict:
+    """把可访问的主智能体另存为当前用户私有的副本，返回与创建端点同形的响应。"""
+    repo = AgentRepository(db)
+    source = await repo.get_by_id(agent_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    if not user_can_access_agent(user, source):
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    if source.is_subagent:
+        raise HTTPException(status_code=400, detail="子智能体不能另存为副本")
+
+    backend = get_agent_backend(source.backend_id)
+    config_json, config_resource_access = await prepare_agent_config_write(
+        copy.deepcopy(source.config_json),
+        context_schema=backend.context_schema,
+        db=db,
+        user=user,
+    )
+    item = await repo.create(
+        name=f"{source.name} 副本",
+        slug=None,
+        backend_id=source.backend_id,
+        description=source.description,
+        icon=source.icon,
+        pics=source.pics,
+        config_json=config_json,
+        config_resource_access=config_resource_access,
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "user", "department_ids": [], "user_uids": [str(user.uid)]},
+            "manage_scope": {"access_level": "user", "department_ids": [], "user_uids": [str(user.uid)]},
+        },
+        is_default=False,
+        is_subagent=False,
+        created_by=str(user.uid),
+        creator=user,
+    )
+    data = await repo.serialize(item, user=user, include_configurable_items=True)
+    data["config_json"] = filter_declared_config(data.get("config_json") or {}, context_schema=backend.context_schema)
+    return {"agent": data}
 
 
 async def initialize_agent_presets(db: AsyncSession) -> None:

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from yuxi.agents.context import BaseContext, ResourceSelection
 from yuxi.services import agent_config_service
@@ -98,6 +99,105 @@ async def test_prepare_agent_config_write_does_not_load_resources_for_strategy_s
 
     assert config == {"context": {"skills": selection, "mcps": selection, "preload_skills": selection}}
     assert resource_access == {}
+
+
+@pytest.mark.asyncio
+async def test_duplicate_agent_missing_source_returns_404(monkeypatch):
+    """主键读不到源智能体时按不存在拒绝，且不触发创建。"""
+    repo = _DuplicateAgentRepo(source=None)
+    monkeypatch.setattr(agent_config_service, "AgentRepository", lambda db: repo)
+
+    with pytest.raises(HTTPException) as exc:
+        await agent_config_service.duplicate_agent("42", user=_dup_user(), db=object())
+
+    assert exc.value.status_code == 404
+    assert repo.created_kwargs is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_agent_inaccessible_source_returns_404(monkeypatch):
+    """他人私有源在访问判定处按不存在拒绝，且不触发创建。"""
+    repo = _DuplicateAgentRepo(source=_dup_source())
+    monkeypatch.setattr(agent_config_service, "AgentRepository", lambda db: repo)
+    monkeypatch.setattr(agent_config_service, "user_can_access_agent", lambda user, agent: False)
+
+    with pytest.raises(HTTPException) as exc:
+        await agent_config_service.duplicate_agent("42", user=_dup_user(), db=object())
+
+    assert exc.value.status_code == 404
+    assert repo.created_kwargs is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_agent_subagent_returns_400(monkeypatch):
+    """可访问的子智能体在创建前被拒绝。"""
+    repo = _DuplicateAgentRepo(source=_dup_source(is_subagent=True))
+    monkeypatch.setattr(agent_config_service, "AgentRepository", lambda db: repo)
+    monkeypatch.setattr(agent_config_service, "user_can_access_agent", lambda user, agent: True)
+
+    with pytest.raises(HTTPException) as exc:
+        await agent_config_service.duplicate_agent("42", user=_dup_user(), db=object())
+
+    assert exc.value.status_code == 400
+    assert repo.created_kwargs is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_agent_creates_private_copy_for_current_user(monkeypatch):
+    """副本以当前用户私有共享配置落库，返回与创建端点同形的响应。"""
+    repo = _DuplicateAgentRepo(source=_dup_source())
+    monkeypatch.setattr(agent_config_service, "AgentRepository", lambda db: repo)
+    monkeypatch.setattr(agent_config_service, "user_can_access_agent", lambda user, agent: True)
+
+    result = await agent_config_service.duplicate_agent("42", user=_dup_user(), db=object())
+
+    assert set(result) == {"agent"}
+    kwargs = repo.created_kwargs
+    assert kwargs["name"] == "研究模板 副本"
+    assert kwargs["slug"] is None
+    assert kwargs["backend_id"] == "ChatbotAgent"
+    assert kwargs["share_config"] == {
+        "version": 2,
+        "read_scope": {"access_level": "user", "department_ids": [], "user_uids": ["u1"]},
+        "manage_scope": {"access_level": "user", "department_ids": [], "user_uids": ["u1"]},
+    }
+    assert kwargs["is_default"] is False
+    assert kwargs["is_subagent"] is False
+    assert kwargs["created_by"] == "u1"
+
+
+def _dup_user() -> SimpleNamespace:
+    return SimpleNamespace(uid="u1", role="admin")
+
+
+def _dup_source(*, is_subagent: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+        name="研究模板",
+        backend_id="ChatbotAgent",
+        description="源描述",
+        icon=None,
+        pics=[],
+        config_json={"context": {}},
+        is_subagent=is_subagent,
+    )
+
+
+class _DuplicateAgentRepo:
+    """仅覆盖 duplicate_agent 读写面的内存替身。"""
+
+    def __init__(self, source):
+        self.source = source
+        self.created_kwargs = None
+
+    async def get_by_id(self, agent_id: str):
+        return self.source
+
+    async def create(self, **kwargs):
+        self.created_kwargs = kwargs
+        return SimpleNamespace(id=9)
+
+    async def serialize(self, item, *, user, include_configurable_items: bool = False):
+        return {"id": item.id, "config_json": {}}
 
 
 @dataclass(kw_only=True)

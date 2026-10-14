@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.context import BaseContext, validate_resource_selection
-from yuxi.agents.presets import AgentPreset
+from yuxi.agents.presets import AgentPreset, preset_slug_set
 from yuxi.agents.presets.default_chatbot import PRESET as DEFAULT_AGENT
 from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_agent_permission
 from yuxi.storage.postgres.models_business import Agent, User
@@ -170,6 +170,15 @@ class AgentRepository:
         if user.role == "superadmin":
             return agents
         return [agent for agent in agents if user_can_access_agent(user, agent)]
+
+    async def get_by_id(self, agent_id: str) -> Agent | None:
+        """按主键读取智能体；无法解析的主键按不存在处理。"""
+        try:
+            pk = int(agent_id)
+        except (TypeError, ValueError):
+            return None
+        result = await self.db.execute(select(Agent).where(Agent.id == pk))
+        return result.scalar_one_or_none()
 
     async def get_by_slug(self, slug: str) -> Agent | None:
         result = await self.db.execute(select(Agent).where(Agent.slug == slug))
@@ -377,6 +386,7 @@ class AgentRepository:
         data["effective_permission"] = permission.value
         data["is_builtin"] = is_builtin
         data["permission_locked"] = is_builtin
+        data["is_template"] = agent.slug in preset_slug_set() and not agent.is_subagent
 
         from yuxi.agents.buildin import get_agent_backend
 

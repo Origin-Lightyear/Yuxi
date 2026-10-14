@@ -25,6 +25,7 @@ from yuxi.services.agent_request_queue_service import (
     stream_request_events,
 )
 from yuxi.services.agent_config_service import (
+    duplicate_agent,
     get_scene_templates as get_scene_templates_svc,
     prepare_agent_config_write,
 )
@@ -195,6 +196,15 @@ async def create_agent(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"agent": await _serialize_agent(repo, item, current_user, include_configurable_items=True)}
+
+
+@agent_router.post("/{agent_id}/duplicate")
+async def duplicate_agent_route(
+    agent_id: str,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await duplicate_agent(agent_id, user=current_user, db=db)
 
 
 @agent_router.get("/scene-templates")
