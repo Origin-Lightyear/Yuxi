@@ -55,6 +55,12 @@ export const agentApi = {
     return apiGet(query ? `/api/agent?${query}` : '/api/agent')
   },
 
+  /**
+   * 获取开始屏场景模板目录与每日一技
+   * @returns {Promise<{scenes: Array, daily_tip: Object|null}>} - 场景分组与每日一技
+   */
+  fetchSceneTemplates: () => apiGet('/api/agent/scene-templates'),
+
   getAgentBackends: () => apiGet('/api/agent/backends'),
 
   /**

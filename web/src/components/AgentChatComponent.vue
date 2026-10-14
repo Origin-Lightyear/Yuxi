@@ -169,6 +169,28 @@
                 <h1>{{ randomGreeting }}</h1>
               </div>
 
+              <SceneCatalog
+                v-if="isNewConversation && sceneTemplates"
+                :scenes="sceneTemplates"
+                :daily-tip="dailyTip"
+                @select="agentStore.selectAgent"
+              />
+
+              <div
+                v-if="isNewConversation && selectedTemplate?.example_questions?.length"
+                class="example-question-chips"
+              >
+                <button
+                  v-for="question in selectedTemplate.example_questions"
+                  :key="question"
+                  type="button"
+                  class="example-question-chip"
+                  @click="fillExampleQuestion(question)"
+                >
+                  {{ question }}
+                </button>
+              </div>
+
               <section
                 v-if="currentQueuedRequests.length"
                 class="queued-request-panel"
@@ -864,6 +886,7 @@ import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 import { CheckCircleOutlined, CloseCircleOutlined, SyncOutlined } from '@ant-design/icons-vue'
 import AgentInputArea from '@/components/AgentInputArea.vue'
+import SceneCatalog from '@/components/SceneCatalog.vue'
 import ContextUsageRing from '@/components/ContextUsageRing.vue'
 import ToolApprovalModeSelector from '@/components/ToolApprovalModeSelector.vue'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
@@ -965,8 +988,15 @@ const configStore = useConfigStore()
 const infoStore = useInfoStore()
 const userStore = useUserStore()
 const messageDebugEnabled = computed(() => infoStore.debugMode && userStore.isSuperAdmin)
-const { agents, selectedAgentId, agentConfig, configurableItems, availableKnowledgeBases } =
-  storeToRefs(agentStore)
+const {
+  agents,
+  selectedAgentId,
+  agentConfig,
+  configurableItems,
+  availableKnowledgeBases,
+  sceneTemplates,
+  dailyTip
+} = storeToRefs(agentStore)
 const { threads, currentThreadId, currentThread, threadCreationInFlight } =
   storeToRefs(chatThreadsStore)
 
@@ -992,6 +1022,26 @@ const greetingMessages = [
 
 // 随机选择一个打招呼文本
 const randomGreeting = greetingMessages[Math.floor(Math.random() * greetingMessages.length)]
+
+// 当前选中智能体对应的场景模板；无匹配模板时不展示示例问题 chips
+const selectedTemplate = computed(() => {
+  const templates = (sceneTemplates.value || []).flatMap((group) => group.templates || [])
+  return templates.find((template) => template.agent_id === selectedAgentId.value) || null
+})
+
+// 示例问题只填充输入框，不触发发送
+const fillExampleQuestion = (question) => {
+  userInput.value = question
+  agentInputAreaRef.value?.focus()
+}
+
+watch(
+  () => props.isNewConversation,
+  (isNew) => {
+    if (isNew) void agentStore.loadSceneTemplates()
+  },
+  { immediate: true }
+)
 
 // 业务状态（保留在组件本地）
 const chatState = reactive({
@@ -4217,6 +4267,32 @@ watch(currentChatId, (threadId, oldThreadId) => {
     font-size: 1.4rem;
     color: var(--gray-1000);
     margin: 0;
+  }
+}
+
+.example-question-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 14px;
+
+  .example-question-chip {
+    padding: 6px 12px;
+    border: 1px solid var(--gray-200);
+    border-radius: 999px;
+    background: var(--gray-0);
+    color: var(--gray-700);
+    font-size: 13px;
+    cursor: pointer;
+    transition:
+      border-color 0.15s ease,
+      color 0.15s ease;
+
+    &:hover {
+      border-color: var(--main-color);
+      color: var(--main-color);
+    }
   }
 }
 

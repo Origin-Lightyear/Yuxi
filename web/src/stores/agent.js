@@ -53,6 +53,9 @@ export const useAgentStore = defineStore(
     // 完整工具元数据（含 buildin / knowledge 等全部分类的 display_name），用于工具名称展示映射
     const toolMetadata = ref([])
 
+    const sceneTemplates = ref(null)
+    const dailyTip = ref(null)
+
     const agentConfig = ref({})
     const originalAgentConfig = ref({})
     const agentDetails = ref({})
@@ -151,6 +154,18 @@ export const useAgentStore = defineStore(
         throw err
       } finally {
         isLoadingAgents.value = false
+      }
+    }
+
+    /** 加载开始屏场景模板目录；成功后幂等跳过，失败仅告警并允许下次重试。 */
+    async function loadSceneTemplates() {
+      if (sceneTemplates.value) return
+      try {
+        const data = await agentApi.fetchSceneTemplates()
+        sceneTemplates.value = data.scenes || []
+        dailyTip.value = data.daily_tip || null
+      } catch (e) {
+        console.warn('Failed to fetch scene templates:', e)
       }
     }
 
@@ -305,6 +320,8 @@ export const useAgentStore = defineStore(
       selectedAgentId,
       availableKnowledgeBases,
       toolMetadata,
+      sceneTemplates,
+      dailyTip,
       agentConfig,
       originalAgentConfig,
       agentDetails,
@@ -321,6 +338,7 @@ export const useAgentStore = defineStore(
       changedAgentConfig,
       initialize,
       fetchAgents,
+      loadSceneTemplates,
       fetchAgentDetail,
       selectAgent,
       saveAgentConfig,
