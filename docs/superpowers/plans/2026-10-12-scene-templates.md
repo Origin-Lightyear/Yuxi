@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI + SQLAlchemy async（既有）、pytest integration（真实 HTTP+PostgreSQL）、Vue 3 SFC、node --test（既有 SFC 源码切片 harness 模式）。
 
-**Spec:** `docs/develop-guides/decisions/proposed/2026-10-12-scene-templates-and-discoverability.md`
+**Spec:** `docs/develop-guides/decisions/implemented/2026-10-12-scene-templates-and-discoverability.md`
 
 **Plan 额外内容（spec 未枚举，已在设计对话确认）:** 模板数量 = 既有 2 个（default-chatbot、deep-research）+ 新增 3 个内容场景 preset（写作润色、周报生成、数据解读），共 5 模板、3 个场景分组。
 
