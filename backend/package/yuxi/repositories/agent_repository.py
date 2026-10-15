@@ -171,15 +171,6 @@ class AgentRepository:
             return agents
         return [agent for agent in agents if user_can_access_agent(user, agent)]
 
-    async def get_by_id(self, agent_id: str) -> Agent | None:
-        """按主键读取智能体；无法解析的主键按不存在处理。"""
-        try:
-            pk = int(agent_id)
-        except (TypeError, ValueError):
-            return None
-        result = await self.db.execute(select(Agent).where(Agent.id == pk))
-        return result.scalar_one_or_none()
-
     async def get_by_slug(self, slug: str) -> Agent | None:
         result = await self.db.execute(select(Agent).where(Agent.slug == slug))
         return result.scalar_one_or_none()

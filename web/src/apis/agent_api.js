@@ -126,7 +126,7 @@ export const agentApi = {
 
   /**
    * 把可访问的主智能体另存为当前用户私有的副本
-   * @param {number} agentId - 智能体数字主键（该端点不吃 slug）
+   * @param {string} agentId - 智能体 slug（与 GET/PUT/DELETE 同一身份）
    * @returns {Promise<{agent: Object}>} - 新副本智能体
    */
   duplicateAgent: (agentId) => apiPost(`/api/agent/${agentId}/duplicate`),

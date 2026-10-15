@@ -4,7 +4,7 @@
       v-if="dailyTip"
       type="button"
       class="scene-daily-tip"
-      @click="emit('select', dailyTip.agent_id)"
+      @click="emit('select', dailyTip.slug)"
     >
       <Lightbulb :size="16" aria-hidden="true" />
       <span class="scene-daily-tip-text">{{ dailyTip.tip }}</span>
@@ -19,7 +19,7 @@
           :key="template.agent_id"
           type="button"
           class="scene-template-card"
-          @click="emit('select', template.agent_id)"
+          @click="emit('select', template.slug)"
         >
           <component :is="sceneIcon(template.icon)" :size="18" class="scene-template-icon" />
           <span class="scene-template-info">

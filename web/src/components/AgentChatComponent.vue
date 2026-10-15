@@ -1063,7 +1063,7 @@ const randomGreeting = greetingMessages[Math.floor(Math.random() * greetingMessa
 // 当前选中智能体对应的场景模板；无匹配模板时不展示示例问题 chips
 const selectedTemplate = computed(() => {
   const templates = (sceneTemplates.value || []).flatMap((group) => group.templates || [])
-  return templates.find((template) => template.agent_id === selectedAgentId.value) || null
+  return templates.find((template) => template.slug === selectedAgentId.value) || null
 })
 
 // 示例问题只填充输入框，不触发发送
@@ -1079,7 +1079,7 @@ const helpTemplates = computed(() =>
 
 const selectHelpTemplate = (template) => {
   helpCardOpen.value = false
-  void agentStore.selectAgent(template.agent_id)
+  void agentStore.selectAgent(template.slug)
 }
 
 watch(

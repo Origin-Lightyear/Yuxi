@@ -52,10 +52,10 @@ async def prepare_agent_config_write(
     return filtered, resource_access
 
 
-async def duplicate_agent(agent_id: str, *, user: User, db: AsyncSession) -> dict:
-    """把可访问的主智能体另存为当前用户私有的副本，返回与创建端点同形的响应。"""
+async def duplicate_agent(agent_slug: str, *, user: User, db: AsyncSession) -> dict:
+    """按 slug 读取可访问的主智能体并另存为当前用户私有的副本，返回与创建端点同形的响应。"""
     repo = AgentRepository(db)
-    source = await repo.get_by_id(agent_id)
+    source = await repo.get_by_slug(agent_slug)
     if source is None:
         raise HTTPException(status_code=404, detail="智能体不存在")
     if not user_can_access_agent(user, source):

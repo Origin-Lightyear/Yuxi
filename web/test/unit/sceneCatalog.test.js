@@ -150,7 +150,7 @@ test('渲染场景分组与模板卡，点卡 emit select', async () => {
     )
     assert.ok(card, '模板卡渲染为可点击元素')
     card.props.onClick()
-    assert.deepEqual(emitted, [['select', 'agent-weekly']], '点卡 emit select(agent_id)')
+    assert.deepEqual(emitted, [['select', 'weekly-report']], '点卡 emit select(slug)')
   } finally {
     app.unmount()
   }
@@ -175,7 +175,7 @@ test('dailyTip 为空不渲染横幅，非空渲染且点横幅 emit select', as
     const banner = find(host, (node) => node.props.class === 'scene-daily-tip')
     assert.ok(banner, '横幅渲染为可点击元素')
     banner.props.onClick()
-    assert.deepEqual(emitted, [['select', 'agent-daily']], '点横幅 emit select(agent_id)')
+    assert.deepEqual(emitted, [['select', 'default-chatbot']], '点横幅 emit select(slug)')
   } finally {
     app.unmount()
   }
@@ -218,4 +218,30 @@ test('AgentChatComponent 挂载目录并仅填充示例问题，不触发发送'
   assert.ok(apiSource.includes("apiGet('/api/agent/scene-templates')"), 'api 指向场景模板端点')
   assert.ok(storeSource.includes('async function loadSceneTemplates()'), 'store 提供加载动作')
   assert.ok(storeSource.includes('if (sceneTemplates.value) return'), '加载幂等：已加载跳过')
+})
+
+test('选中链路统一按 slug 派发与匹配，失败有可见提示', () => {
+  assert.ok(
+    chatSource.includes('templates.find((template) => template.slug === selectedAgentId.value)'),
+    'chips 模板按 slug 匹配当前选中智能体（selectedAgentId 是 slug）'
+  )
+  assert.ok(
+    chatSource.includes('agentStore.selectAgent(template.slug)'),
+    'help 卡模板点击按 slug 选中'
+  )
+  assert.ok(!chatSource.includes('agentStore.selectAgent(template.agent_id)'), '不按数字 agent_id 选中')
+  assert.ok(!/template\.agent_id === selectedAgentId/.test(chatSource), '匹配不回落到 agent_id')
+
+  assert.ok(catalogSource.includes("emit('select', template.slug)"), '模板卡 emit slug')
+  assert.ok(catalogSource.includes("emit('select', dailyTip.slug)"), '每日一技横幅 emit slug')
+  assert.ok(
+    !catalogSource.includes("emit('select', template.agent_id)") &&
+      !catalogSource.includes("emit('select', dailyTip.agent_id)"),
+    '目录不再 emit 数字 agent_id'
+  )
+
+  assert.ok(
+    storeSource.includes("handleChatError(err, 'fetch')"),
+    '选中失败经 fetchAgentDetail 的 handleChatError 给出用户可见提示'
+  )
 })

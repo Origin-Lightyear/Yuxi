@@ -22,7 +22,7 @@ async def test_duplicate_template_creates_private_copy_for_current_user(test_cli
     source = detail.json()["agent"]
     assert source["is_template"] is True
 
-    response = await test_client.post(f"/api/agent/{source['id']}/duplicate", headers=admin_headers)
+    response = await test_client.post(f"/api/agent/{source['slug']}/duplicate", headers=admin_headers)
     assert response.status_code == 200, response.text
     agent = response.json()["agent"]
     try:
@@ -39,8 +39,8 @@ async def test_duplicate_template_creates_private_copy_for_current_user(test_cli
 
 
 async def test_duplicate_nonexistent_agent_returns_404(test_client, admin_headers):
-    """不存在的主键直接 404。"""
-    response = await test_client.post("/api/agent/999999999/duplicate", headers=admin_headers)
+    """不存在的 slug 直接 404。"""
+    response = await test_client.post("/api/agent/no-such-agent-slug/duplicate", headers=admin_headers)
     assert response.status_code == 404, response.text
 
 
@@ -49,7 +49,7 @@ async def test_duplicate_other_private_agent_returns_404(test_client, standard_u
     owner_uid = f"pytest-dup-owner-{uuid.uuid4().hex[:8]}"
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    created_id: int | None = None
+    created_slug: str | None = None
     try:
         async with session_factory() as db:
             repo = AgentRepository(db)
@@ -64,15 +64,15 @@ async def test_duplicate_other_private_agent_returns_404(test_client, standard_u
                 },
                 created_by=owner_uid,
             )
-            created_id = source.id
+            created_slug = source.slug
 
-        response = await test_client.post(f"/api/agent/{created_id}/duplicate", headers=standard_user["headers"])
+        response = await test_client.post(f"/api/agent/{created_slug}/duplicate", headers=standard_user["headers"])
         assert response.status_code == 404, response.text
     finally:
-        if created_id is not None:
+        if created_slug is not None:
             async with session_factory() as db:
                 repo = AgentRepository(db)
-                stale = await repo.get_by_id(str(created_id))
+                stale = await repo.get_by_slug(created_slug)
                 if stale is not None:
                     await repo.delete(agent=stale)
         await engine.dispose()
@@ -85,5 +85,5 @@ async def test_duplicate_subagent_returns_400(test_client, admin_headers):
     subagents = [agent for agent in listing.json()["agents"] if agent["slug"] == "fact-verifier"]
     assert subagents, "fact-verifier 预置子智能体未落库"
 
-    response = await test_client.post(f"/api/agent/{subagents[0]['id']}/duplicate", headers=admin_headers)
+    response = await test_client.post(f"/api/agent/{subagents[0]['slug']}/duplicate", headers=admin_headers)
     assert response.status_code == 400, response.text

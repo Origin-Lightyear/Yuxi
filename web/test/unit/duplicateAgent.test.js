@@ -20,9 +20,14 @@ test('管理列表放开模板卡片操作插槽并提供另存为副本', () =>
   assert.ok(panelSource.includes("name: '模板'"), '渲染模板徽标')
   assert.ok(
     panelSource.includes('agentApi.duplicateAgent(agent.id)'),
-    '副本调用传数字主键 agent.id'
+    '副本调用传 agent.id（规范身份即 slug）'
   )
   assert.ok(panelSource.includes("name: 'AgentComp'"), '副本创建后跳转对话页')
+  assert.ok(
+    panelSource.includes('query: { agent_id: newAgent.agent_id || newAgent.slug }'),
+    '跳转用响应 agent_id（即 slug），不用数字 newAgent.id'
+  )
+  assert.ok(!panelSource.includes('agent_id: newAgent.id'), '不再按数字 id 跳转')
   assert.ok(panelSource.includes('message.success'), '副本创建成功有反馈')
 
   const editGuardIndex = panelSource.indexOf('key="edit"')
@@ -50,10 +55,10 @@ test('/help 在发送派发前本地拦截', () => {
   )
 })
 
-test('duplicateAgent 指向数字主键副本端点', () => {
+test('duplicateAgent 指向按 slug 寻址的副本端点', () => {
   assert.ok(apiSource.includes('duplicateAgent'), 'api 暴露副本请求')
   assert.ok(
     apiSource.includes('apiPost(`/api/agent/${agentId}/duplicate`)'),
-    'api 指向 /api/agent/{id}/duplicate'
+    'api 指向 /api/agent/{slug}/duplicate'
   )
 })

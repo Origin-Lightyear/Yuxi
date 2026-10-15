@@ -137,7 +137,7 @@ const duplicateAgent = async (agent) => {
     const response = await agentApi.duplicateAgent(agent.id)
     const newAgent = response.agent
     await refreshAgentLists()
-    router.push({ name: 'AgentComp', query: { agent_id: newAgent.id } })
+    router.push({ name: 'AgentComp', query: { agent_id: newAgent.agent_id || newAgent.slug } })
     message.success('已另存为我的副本')
   } catch (error) {
     message.error(error.message || '另存为副本失败')
