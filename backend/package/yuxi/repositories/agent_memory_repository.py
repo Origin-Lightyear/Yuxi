@@ -23,9 +23,15 @@ class AgentMemoryRepository:
         )
         return [row.to_dict() for row in result.scalars().all()]
 
-    async def add(self, *, uid: str, agent_slug: str, content: str, source_run_id: str) -> dict:
-        """写入一条记忆；source_run_id 冲突时上抛唯一约束异常，由调用方跳过该条。"""
-        memory = AgentMemory(uid=uid, agent_slug=agent_slug, content=content, source_run_id=source_run_id)
+    async def add(self, *, uid: str, agent_slug: str, content: str, source_run_id: str, extract_index: int) -> dict:
+        """写入一条记忆；(source_run_id, extract_index) 冲突时上抛唯一约束异常，由调用方跳过该条。"""
+        memory = AgentMemory(
+            uid=uid,
+            agent_slug=agent_slug,
+            content=content,
+            source_run_id=source_run_id,
+            extract_index=extract_index,
+        )
         self.db.add(memory)
         await self.db.flush()
         return memory.to_dict()

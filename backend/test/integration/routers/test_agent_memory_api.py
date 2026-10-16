@@ -40,7 +40,7 @@ async def _create_agent_visible_to(session_factory, uid: str) -> str:
 async def _add_memory(session_factory, *, uid: str, slug: str, content: str) -> int:
     async with session_factory() as db:
         created = await AgentMemoryRepository(db).add(
-            uid=uid, agent_slug=slug, content=content, source_run_id=uuid.uuid4().hex
+            uid=uid, agent_slug=slug, content=content, source_run_id=uuid.uuid4().hex, extract_index=0
         )
         await db.commit()
         return int(created["id"])

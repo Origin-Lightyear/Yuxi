@@ -1133,11 +1133,15 @@ class PostgresManager(metaclass=SingletonMeta):
                 agent_slug VARCHAR(255) NOT NULL,
                 content TEXT NOT NULL,
                 source_run_id VARCHAR(64) NOT NULL,
+                extract_index INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
             )
             """,
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_memories_source_run_id ON agent_memories(source_run_id)",
+            "ALTER TABLE IF EXISTS agent_memories ADD COLUMN IF NOT EXISTS extract_index INTEGER NOT NULL DEFAULT 0",
+            "DROP INDEX IF EXISTS ux_agent_memories_source_run_id",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_memories_source_run_index "
+            "ON agent_memories(source_run_id, extract_index)",
             "CREATE INDEX IF NOT EXISTS ix_agent_memories_uid_agent ON agent_memories(uid, agent_slug)",
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_agents_default

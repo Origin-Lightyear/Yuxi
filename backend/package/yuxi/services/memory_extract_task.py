@@ -57,15 +57,21 @@ async def run_memory_extract(context: TaskContext) -> dict:
     extracted = 0
     async with pg_manager.get_async_session_context() as db:
         repository = AgentMemoryRepository(db)
-        for item in items:
+        for extract_index, item in enumerate(items):
             try:
-                await repository.add(uid=uid, agent_slug=agent_slug, content=item, source_run_id=run_id)
+                await repository.add(
+                    uid=uid,
+                    agent_slug=agent_slug,
+                    content=item,
+                    source_run_id=run_id,
+                    extract_index=extract_index,
+                )
                 await db.commit()
                 extracted += 1
             except IntegrityError:
                 # add 只 flush；唯一冲突会让事务失效，必须回滚后跳过该条，已提交的前序条目不受影响。
                 await db.rollback()
-                logger.warning("记忆 source_run_id 冲突，跳过该条: run_id=%s", run_id)
+                logger.warning("记忆 (run_id, extract_index) 冲突，跳过该条: run_id=%s index=%s", run_id, extract_index)
         await repository.delete_oldest_over_limit(uid=uid, agent_slug=agent_slug, limit=AGENT_MEMORY_LIMIT)
 
     await context.set_progress(100.0, f"记忆抽取完成，新增 {extracted} 条")

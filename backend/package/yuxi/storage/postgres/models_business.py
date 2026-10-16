@@ -1040,14 +1040,18 @@ class AgentMemory(Base):
     """跨会话的用户×Agent 记忆条目。"""
 
     __tablename__ = "agent_memories"
-    __table_args__ = (Index("ix_agent_memories_uid_agent", "uid", "agent_slug"),)
+    __table_args__ = (
+        UniqueConstraint("source_run_id", "extract_index", name="ux_agent_memories_source_run_index"),
+        Index("ix_agent_memories_uid_agent", "uid", "agent_slug"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     uid = Column(String(64), nullable=False, index=True)
     agent_slug = Column(String(255), nullable=False, index=True)
     content = Column(Text, nullable=False)
-    # 抽取幂等键：同一 run 只允许落一条记忆，重复抽取由唯一约束兜底。
-    source_run_id = Column(String(64), nullable=False, unique=True, index=True)
+    # 抽取幂等键：每个 Run 抽 0~N 条，按序号 (source_run_id, extract_index) 唯一，重复抽取由唯一约束兜底。
+    source_run_id = Column(String(64), nullable=False, index=True)
+    extract_index = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=utc_now_naive, nullable=False)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
@@ -1058,6 +1062,7 @@ class AgentMemory(Base):
             "agent_slug": self.agent_slug,
             "content": self.content,
             "source_run_id": self.source_run_id,
+            "extract_index": int(self.extract_index or 0),
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }

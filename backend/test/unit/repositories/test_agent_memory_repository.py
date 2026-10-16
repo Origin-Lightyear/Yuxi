@@ -27,7 +27,9 @@ async def session():
 async def test_add_list_and_count_stay_scoped_and_ordered(session):
     repository = AgentMemoryRepository(session)
     for index in range(3):
-        await repository.add(uid="u1", agent_slug="a1", content=f"记忆{index}", source_run_id=f"r{index}")
+        await repository.add(
+            uid="u1", agent_slug="a1", content=f"记忆{index}", source_run_id=f"r{index}", extract_index=0
+        )
 
     rows = await repository.list_by_agent(uid="u1", agent_slug="a1")
     count = await repository.count_by_agent(uid="u1", agent_slug="a1")
@@ -39,13 +41,25 @@ async def test_add_list_and_count_stay_scoped_and_ordered(session):
     assert all(row["uid"] == "u1" and row["agent_slug"] == "a1" for row in rows)
 
 
-async def test_duplicate_source_run_id_raises_unique_violation(session):
+async def test_same_run_different_extract_index_writes_both_rows(session):
     repository = AgentMemoryRepository(session)
-    await repository.add(uid="u1", agent_slug="a1", content="首次抽取", source_run_id="r1")
+    await repository.add(uid="u1", agent_slug="a1", content="首条", source_run_id="r1", extract_index=0)
+    await repository.add(uid="u1", agent_slug="a1", content="次条", source_run_id="r1", extract_index=1)
+    await session.commit()
+
+    rows = await repository.list_by_agent(uid="u1", agent_slug="a1")
+
+    assert await repository.count_by_agent(uid="u1", agent_slug="a1") == 2
+    assert sorted(row["extract_index"] for row in rows) == [0, 1]
+
+
+async def test_duplicate_source_run_id_and_extract_index_raises_unique_violation(session):
+    repository = AgentMemoryRepository(session)
+    await repository.add(uid="u1", agent_slug="a1", content="首次抽取", source_run_id="r1", extract_index=0)
     await session.commit()
 
     with pytest.raises(IntegrityError):
-        await repository.add(uid="u1", agent_slug="a1", content="重复抽取", source_run_id="r1")
+        await repository.add(uid="u1", agent_slug="a1", content="重复抽取", source_run_id="r1", extract_index=0)
     await session.rollback()
 
     assert await repository.count_by_agent(uid="u1", agent_slug="a1") == 1
@@ -53,7 +67,7 @@ async def test_duplicate_source_run_id_raises_unique_violation(session):
 
 async def test_delete_requires_matching_uid_and_agent_slug(session):
     repository = AgentMemoryRepository(session)
-    created = await repository.add(uid="u1", agent_slug="a1", content="归属记忆", source_run_id="r1")
+    created = await repository.add(uid="u1", agent_slug="a1", content="归属记忆", source_run_id="r1", extract_index=0)
 
     deleted = await repository.delete(uid="other", agent_slug="a1", memory_id=created["id"])
     wrong_agent = await repository.delete(uid="u1", agent_slug="a2", memory_id=created["id"])
@@ -68,10 +82,12 @@ async def test_delete_requires_matching_uid_and_agent_slug(session):
 async def test_delete_oldest_over_limit_trims_only_overflow(session):
     repository = AgentMemoryRepository(session)
     for index in range(50):
-        await repository.add(uid="u1", agent_slug="a1", content=f"记忆{index}", source_run_id=f"r{index}")
+        await repository.add(
+            uid="u1", agent_slug="a1", content=f"记忆{index}", source_run_id=f"r{index}", extract_index=0
+        )
 
     untouched = await repository.delete_oldest_over_limit(uid="u1", agent_slug="a1", limit=50)
-    await repository.add(uid="u1", agent_slug="a1", content="超限条目", source_run_id="r50")
+    await repository.add(uid="u1", agent_slug="a1", content="超限条目", source_run_id="r50", extract_index=0)
     trimmed = await repository.delete_oldest_over_limit(uid="u1", agent_slug="a1", limit=50)
 
     rows = await repository.list_by_agent(uid="u1", agent_slug="a1")

@@ -102,10 +102,10 @@ def _patch_memories(monkeypatch: pytest.MonkeyPatch, *, fail_add_at: int | None 
         def __init__(self, _db):
             pass
 
-        async def add(self, *, uid: str, agent_slug: str, content: str, source_run_id: str) -> dict:
+        async def add(self, *, uid: str, agent_slug: str, content: str, source_run_id: str, extract_index: int) -> dict:
             nonlocal add_count
             add_count += 1
-            calls.append(("add", uid, agent_slug, content, source_run_id))
+            calls.append(("add", uid, agent_slug, content, source_run_id, extract_index))
             if fail_add_at is not None and add_count == fail_add_at:
                 raise IntegrityError("INSERT INTO agent_memories", {}, Exception("duplicate key"))
             return {"content": content}
@@ -216,6 +216,7 @@ async def test_run_memory_extract_writes_items_then_trims_to_limit(monkeypatch: 
     adds = [call for call in memory_calls if call[0] == "add"]
     assert [call[3] for call in adds] == ["喜欢简洁回答", "负责财务报表"]
     assert all(call[1] == "u1" and call[2] == "assistant" and call[4] == "run-1" for call in adds)
+    assert [call[5] for call in adds] == [0, 1]
     assert task.AGENT_MEMORY_LIMIT == 50
     assert ("trim", "u1", "assistant", 50) in memory_calls
     assert "commit" in events
@@ -235,7 +236,8 @@ async def test_run_memory_extract_skips_conflicting_item_and_keeps_first(
     assert result == {"extracted": 1}
     adds = [call for call in memory_calls if call[0] == "add"]
     assert [call[3] for call in adds] == ["第一条事实", "第二条事实"]
-    assert adds[0][4] == "run-1"
+    assert [call[4] for call in adds] == ["run-1", "run-1"]
+    assert [call[5] for call in adds] == [0, 1]
     assert "rollback" in events
     assert events[-1] == "commit"
     assert ("trim", "u1", "assistant", 50) in memory_calls
