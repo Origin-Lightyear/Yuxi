@@ -18,7 +18,10 @@ from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.config import get_int_env
+from yuxi.config.options import system_options
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
+from yuxi.repositories.task_repository import TaskRepository
+from yuxi.services.agent_memory_service import is_memory_enabled
 from yuxi.services.agent_request_queue_service import (
     dispatch_next_request,
     recover_pending_dispatches,
@@ -49,6 +52,7 @@ from yuxi.services.task_queue_service import (
     TASK_RECONCILIATION_HEALTH_KEY,
     TASK_RECONCILIATION_HEALTH_TTL_SECONDS,
     TASK_RECONCILIATION_SECONDS,
+    publish_task,
     reconcile_and_publish_tasks,
 )
 from yuxi.services.task_service import TASKER_DEFAULT_TIMEOUT_SECONDS, process_task
@@ -1484,6 +1488,42 @@ async def process_agent_run(ctx, run_id: str):
                 agent_slug=agent_slug,
                 thread_id=thread_id,
             )
+            await _publish_memory_extract(
+                uid=uid,
+                agent_slug=agent_slug,
+                thread_id=thread_id,
+                final_run=final_run,
+            )
+
+
+async def _publish_memory_extract(*, uid: str, agent_slug: str, thread_id: str, final_run: AgentRun) -> None:
+    """completed Run 终态后 best-effort 发布记忆抽取任务；任何失败只记日志，不改变 Run 结果。"""
+    try:
+        if not await is_memory_enabled(uid):
+            return
+        model_spec = final_run.input_payload.get("model_spec") or (await system_options.get())["default_model"]
+        if not model_spec:
+            logger.warning("记忆抽取缺少 model_spec，跳过发布: run=%s", final_run.id)
+            return
+        task_id = uuid.uuid4().hex
+        await TaskRepository().create(
+            task_id,
+            {
+                "name": "记忆抽取",
+                "type": "memory_extract",
+                "payload": {
+                    "uid": uid,
+                    "agent_slug": agent_slug,
+                    "thread_id": thread_id,
+                    "run_id": final_run.id,
+                    "model_spec": model_spec,
+                },
+                "handler_version": 1,
+            },
+        )
+        await publish_task(task_id)
+    except Exception:
+        logger.error("记忆抽取任务发布失败: run=%s", final_run.id, exc_info=True)
 
 
 async def _load_input_message(message_id: int | None) -> Message | None:
