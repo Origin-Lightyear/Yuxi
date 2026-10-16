@@ -86,6 +86,11 @@ _TASK_DEFINITIONS = {
             success_function="finish_rag_evaluation_task",
             failure_function="fail_rag_evaluation_task",
         ),
+        TaskDefinition(
+            "memory_extract",
+            "yuxi.services.memory_extract_task",
+            "run_memory_extract",
+        ),
     )
 }
 
