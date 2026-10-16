@@ -100,6 +100,15 @@
                     <Plus :size="15" class="config-dropdown-item-icon" />
                     <span class="config-dropdown-item-label">新建智能体</span>
                   </button>
+                  <button
+                    v-if="currentAgentOption && enableMemory"
+                    type="button"
+                    class="config-dropdown-item action-item"
+                    @click="handleOpenMemoryPanel"
+                  >
+                    <Brain :size="15" class="config-dropdown-item-icon" />
+                    <span class="config-dropdown-item-label">记忆</span>
+                  </button>
                 </div>
               </template>
             </ActionDropdown>
@@ -112,19 +121,26 @@
       :backend-options="agentBackendOptions"
       @saved="handleAgentSaved"
     />
+    <AgentMemoryPanel
+      :agent-slug="memoryPanelAgentSlug"
+      :open="openMemoryPanel"
+      @close="openMemoryPanel = false"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { Settings2, Check, Plus } from '@lucide/vue'
+import { Brain, Settings2, Check, Plus } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentApi } from '@/apis/agent_api'
+import { userConfigApi } from '@/apis/user_config_api'
 import ActionDropdown from '@/components/common/ActionDropdown.vue'
 import ActionTrigger from '@/components/common/ActionTrigger.vue'
 import AgentChatComponent from '@/components/AgentChatComponent.vue'
 import AgentEditModal from '@/components/model-management/AgentEditModal.vue'
+import AgentMemoryPanel from '@/components/AgentMemoryPanel.vue'
 import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
 import { handleChatError } from '@/utils/errorHandler'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
@@ -248,6 +264,7 @@ const agentQuickSwitchOptions = computed(() =>
     .map((agent) => ({
       label: agent.name || agent.id,
       value: agent.id,
+      slug: agent.slug,
       icon: agent.icon || '',
       defaultIcon: agent.id ? generatePixelAvatar(agent.id) : '',
       isBuiltin: isBuiltinAgent(agent)
@@ -335,6 +352,25 @@ const openAgentManagement = async () => {
     message.error(error.message || '打开智能体配置失败')
   }
 }
+
+const enableMemory = ref(false)
+const openMemoryPanel = ref(false)
+const memoryPanelAgentSlug = ref('')
+
+const handleOpenMemoryPanel = () => {
+  agentDropdownOpen.value = false
+  memoryPanelAgentSlug.value = currentAgentOption.value?.slug || ''
+  openMemoryPanel.value = true
+}
+
+onMounted(async () => {
+  try {
+    const res = await userConfigApi.get()
+    enableMemory.value = Boolean(res.enable_memory)
+  } catch (error) {
+    console.error('加载用户配置失败:', error)
+  }
+})
 </script>
 
 <style lang="less" scoped>

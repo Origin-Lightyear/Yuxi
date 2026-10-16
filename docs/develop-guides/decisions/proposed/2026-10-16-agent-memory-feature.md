@@ -62,7 +62,7 @@ Owner：backend/package/yuxi/agents/middlewares/memory.py
 | enable_memory 关闭：不注入两套且不发布抽取 | 开关语义分裂 | memory middleware + run_worker | unit：开关关闭断言跳过 | 关闭后零注入零发布 | Not run |
 | GET/DELETE 端点所有权：他人条目 404、不可见 agent 404 | 越权读删 | `agent_memory_router.py` + service | HTTP+PostgreSQL integration | 非本人 memory_id → 404 | Not run |
 | agent_slug 身份来自 Run 行不信任外部输入 | 伪造 agent 身份读他人记忆 | `agent_run_manifest_service.py` | unit：context.agent_slug 与 Run 行一致 | 外部传入被忽略 | Not run |
-| 前端面板：列表/空态/删除确认、开关关闭入口消失 | UI 不可用或误导 | `AgentMemoryPanel` | web unit（源码断言/纯逻辑） | 空列表渲染空态文案 | Not run |
+| 前端面板：列表/空态/删除确认、开关关闭入口消失 | UI 不可用或误导 | `web/src/components/AgentMemoryPanel.vue` + `web/src/views/AgentView.vue` | web unit：`cd web && npm run test:unit`（AgentMemoryPanel 4 用例源码断言，全量 442 pass） | 空列表渲染空态文案；enable_memory 为假不渲染不拉取 | Passed |
 | 全量门禁通过（后端 unit、web unit/lint/build、contracts、docs build） | 回归破坏 | 各命令 Owner | 测试规范命令全量执行 | 正向命令 | Not run |
 
 ## 风险
