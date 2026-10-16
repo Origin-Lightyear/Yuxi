@@ -1036,6 +1036,33 @@ class ScheduledAgentRun(Base):
         }
 
 
+class AgentMemory(Base):
+    """跨会话的用户×Agent 记忆条目。"""
+
+    __tablename__ = "agent_memories"
+    __table_args__ = (Index("ix_agent_memories_uid_agent", "uid", "agent_slug"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    uid = Column(String(64), nullable=False, index=True)
+    agent_slug = Column(String(255), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    # 抽取幂等键：同一 run 只允许落一条记忆，重复抽取由唯一约束兜底。
+    source_run_id = Column(String(64), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "uid": self.uid,
+            "agent_slug": self.agent_slug,
+            "content": self.content,
+            "source_run_id": self.source_run_id,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
 class APIKey(Base):
     """API Key 模型"""
 

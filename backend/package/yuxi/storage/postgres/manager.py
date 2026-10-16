@@ -1127,6 +1127,19 @@ class PostgresManager(metaclass=SingletonMeta):
                 "ON scheduled_agent_runs(status, created_at)"
             ),
             """
+            CREATE TABLE IF NOT EXISTS agent_memories (
+                id SERIAL PRIMARY KEY,
+                uid VARCHAR(64) NOT NULL,
+                agent_slug VARCHAR(255) NOT NULL,
+                content TEXT NOT NULL,
+                source_run_id VARCHAR(64) NOT NULL,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            )
+            """,
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_memories_source_run_id ON agent_memories(source_run_id)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_memories_uid_agent ON agent_memories(uid, agent_slug)",
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_agents_default
             ON agents(is_default)
             WHERE is_default IS TRUE
