@@ -1139,9 +1139,13 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             """,
             "ALTER TABLE IF EXISTS agent_memories ADD COLUMN IF NOT EXISTS extract_index INTEGER NOT NULL DEFAULT 0",
+            # 旧 ensure 产出 ux_ 前缀唯一索引，旧 create_all(unique=True, index=True) 产出 ix_ 前缀唯一索引，
+            # 两者都要删；随后重建模型 index=True 的非唯一单列索引，让 fresh 库与迁移库收敛到同一形态。
             "DROP INDEX IF EXISTS ux_agent_memories_source_run_id",
+            "DROP INDEX IF EXISTS ix_agent_memories_source_run_id",
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_memories_source_run_index "
             "ON agent_memories(source_run_id, extract_index)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_memories_source_run_id ON agent_memories(source_run_id)",
             "CREATE INDEX IF NOT EXISTS ix_agent_memories_uid_agent ON agent_memories(uid, agent_slug)",
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_agents_default

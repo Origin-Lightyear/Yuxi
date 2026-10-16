@@ -200,6 +200,32 @@ async def test_ensure_business_schema_backfills_unviewed_marker_for_no_run_threa
 
 
 @pytest.mark.asyncio
+async def test_ensure_business_schema_replaces_both_legacy_source_run_index_names():
+    """ensure 的 ux_ 与 create_all 的 ix_ 两种旧唯一索引名都必须删除，并重建复合唯一与非唯一单列索引。"""
+    async with _recording_manager() as (manager, connection):
+        await manager.ensure_business_schema()
+
+    statements = connection.statements
+
+    def position(fragment: str) -> int:
+        return next(index for index, statement in enumerate(statements) if fragment in statement)
+
+    assert "DROP INDEX IF EXISTS ux_agent_memories_source_run_id" in statements
+    assert "DROP INDEX IF EXISTS ix_agent_memories_source_run_id" in statements
+
+    ix_drop = position("DROP INDEX IF EXISTS ix_agent_memories_source_run_id")
+    composite_create = position("CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_memories_source_run_index")
+    ix_create = position("CREATE INDEX IF NOT EXISTS ix_agent_memories_source_run_id")
+
+    assert position("DROP INDEX IF EXISTS ux_agent_memories_source_run_id") < composite_create
+    assert ix_drop < composite_create
+    assert ix_drop < ix_create
+    assert not any(
+        statement.startswith("DROP") and "ux_agent_memories_source_run_index" in statement for statement in statements
+    )
+
+
+@pytest.mark.asyncio
 async def test_ensure_business_schema_creates_user_config_table():
     async with _recording_manager() as (manager, connection):
         await manager.ensure_business_schema()
