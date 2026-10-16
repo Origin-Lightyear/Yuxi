@@ -9,6 +9,7 @@ from deepagents.middleware._utils import append_to_system_message
 from langchain.agents.middleware.types import AgentMiddleware, ContextT, ModelRequest, ModelResponse, ResponseT
 
 from yuxi.services import agent_memory_service
+from yuxi.utils.logging_config import logger
 
 AGENT_MEMORY_SYSTEM_PROMPT = (
     "## Agent 记忆\n\n"
@@ -24,7 +25,11 @@ async def create_agent_memory_middleware(context) -> YuxiAgentMemoryMiddleware |
     agent_slug = str(getattr(context, "agent_slug", "") or "").strip()
     if not uid or not agent_slug:
         return None
-    entries = await agent_memory_service.load_injection_entries(uid=uid, agent_slug=agent_slug)
+    try:
+        entries = await agent_memory_service.load_injection_entries(uid=uid, agent_slug=agent_slug)
+    except Exception as exc:
+        logger.warning(f"读取智能体记忆失败，降级为不注入：uid={uid} agent_slug={agent_slug} error={exc}")
+        return None
     if not entries:
         return None
     return YuxiAgentMemoryMiddleware(entries)

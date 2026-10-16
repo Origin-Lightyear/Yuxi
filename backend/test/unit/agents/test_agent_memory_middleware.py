@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -47,6 +48,33 @@ async def test_create_agent_memory_middleware_returns_none_for_empty_entries(mon
     _patch_entries(monkeypatch, [])
 
     assert await agent_memory.create_agent_memory_middleware(_context()) is None
+
+
+async def test_create_agent_memory_middleware_degrades_on_query_failure(monkeypatch: pytest.MonkeyPatch):
+    async def failing_load(*, uid: str, agent_slug: str, limit: int = 20) -> list[str]:
+        raise RuntimeError("db down")
+
+    warnings: list[str] = []
+    monkeypatch.setattr(agent_memory, "logger", SimpleNamespace(warning=warnings.append), raising=False)
+    monkeypatch.setattr(agent_memory_service, "load_injection_entries", failing_load)
+
+    middleware = await agent_memory.create_agent_memory_middleware(_context())
+
+    assert middleware is None
+    assert len(warnings) == 1
+    assert "db down" in warnings[0]
+    assert "user-1" in warnings[0]
+    assert "my-agent" in warnings[0]
+
+
+async def test_query_failure_does_not_swallow_cancellation(monkeypatch: pytest.MonkeyPatch):
+    async def cancelled_load(*, uid: str, agent_slug: str, limit: int = 20) -> list[str]:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(agent_memory_service, "load_injection_entries", cancelled_load)
+
+    with pytest.raises(asyncio.CancelledError):
+        await agent_memory.create_agent_memory_middleware(_context())
 
 
 @pytest.mark.parametrize(
