@@ -171,6 +171,11 @@ class BaseContext:
         metadata={"name": "运行 ID", "configurable": False, "hide": True},
     )
 
+    agent_slug: str | None = field(
+        default=None,
+        metadata={"name": "Agent Slug", "configurable": False, "hide": True},
+    )
+
     request_id: str | None = field(
         default=None,
         metadata={"name": "请求 ID", "configurable": False, "hide": True},

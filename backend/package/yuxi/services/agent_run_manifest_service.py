@@ -156,6 +156,7 @@ async def prepare_run_execution(
             "thread_id": run.conversation_thread_id,
             "uid": str(user.uid),
             "run_id": run.id,
+            "agent_slug": run.agent_slug,
             "request_id": run.request_id,
             "worker_id": worker_id,
             "runtime_scope_id": run.runtime_scope_id or run.conversation_thread_id,

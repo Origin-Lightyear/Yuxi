@@ -58,7 +58,7 @@ Owner：backend/package/yuxi/agents/middlewares/memory.py
 | completed Run 终态发布抽取任务且仅 completed 发布 | 失败/中断 Run 误抽取 | `services/run_worker.py` | integration：构造三态 Run 断言发布次数 | failed/interrupted 零发布 | Not run |
 | 抽取幂等：同 Run 重试不重复写条目 | 重试产生重复记忆 | durable task 模块 | unit：同 source_run_id 二次写入被唯一约束拒绝 | 重复插入失败 | Not run |
 | 容量 50 截断删最旧 | 超限无界增长 | durable task 模块 | unit：插入 51 条断言最旧被删 | 第 51 条后计数=50 且最旧消失 | Not run |
-| 注入：有条目追加 `<agent_memory>`、无条目不追加空块 | 空块污染提示词 | `agents/middlewares/memory.py` | unit：mock service 断言 system message | 空列表不出现块标签 | Not run |
+| 注入：有条目追加 `<agent_memory>`、无条目不追加空块 | 空块污染提示词 | `agents/middlewares/agent_memory.py` | unit：mock service 断言 system message | 空列表不出现块标签 | Not run |
 | enable_memory 关闭：不注入两套且不发布抽取 | 开关语义分裂 | memory middleware + run_worker | unit：开关关闭断言跳过 | 关闭后零注入零发布 | Not run |
 | GET/DELETE 端点所有权：他人条目 404、不可见 agent 404 | 越权读删 | `agent_memory_router.py` + service | HTTP+PostgreSQL integration | 非本人 memory_id → 404 | Not run |
 | agent_slug 身份来自 Run 行不信任外部输入 | 伪造 agent 身份读他人记忆 | `agent_run_manifest_service.py` | unit：context.agent_slug 与 Run 行一致 | 外部传入被忽略 | Not run |
