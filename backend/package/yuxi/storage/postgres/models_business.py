@@ -1004,3 +1004,45 @@ Index(
     AgentRunRequest.created_at,
     AgentRunRequest.id,
 )
+
+
+class IMBotConfig(Base):
+    """IM 机器人配置（飞书 / 钉钉）。"""
+
+    __tablename__ = "im_bot_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(16), nullable=False)
+    name = Column(String(100), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    credentials_encrypted = Column(Text, nullable=False)
+    owner_uid = Column(String(64), nullable=False, index=True)
+    api_key_id = Column(Integer, ForeignKey("api_keys.id"), nullable=True)
+    api_key_cipher = Column(Text, nullable=True)
+    agent_slug = Column(String(100), nullable=False)
+    allowed_users = Column(JSON, nullable=False, default=list)
+    require_mention = Column(Boolean, nullable=False, default=True)
+    group_sessions_per_user = Column(Boolean, nullable=False, default=True)
+    created_by = Column(String(100), nullable=True)
+    updated_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化机器人配置，绝不包含凭证或 API Key 密文。"""
+        return {
+            "id": self.id,
+            "platform": self.platform,
+            "name": self.name,
+            "enabled": bool(self.enabled),
+            "owner_uid": self.owner_uid,
+            "api_key_id": self.api_key_id,
+            "agent_slug": self.agent_slug,
+            "allowed_users": list(self.allowed_users or []),
+            "require_mention": bool(self.require_mention),
+            "group_sessions_per_user": bool(self.group_sessions_per_user),
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }

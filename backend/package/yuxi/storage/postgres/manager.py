@@ -631,6 +631,27 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS im_bot_configs (
+                id SERIAL PRIMARY KEY,
+                platform VARCHAR(16) NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                credentials_encrypted TEXT NOT NULL,
+                owner_uid VARCHAR(64) NOT NULL,
+                api_key_id INTEGER REFERENCES api_keys(id),
+                api_key_cipher TEXT,
+                agent_slug VARCHAR(100) NOT NULL,
+                allowed_users JSONB NOT NULL DEFAULT '[]'::jsonb,
+                require_mention BOOLEAN NOT NULL DEFAULT TRUE,
+                group_sessions_per_user BOOLEAN NOT NULL DEFAULT TRUE,
+                created_by VARCHAR(100),
+                updated_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_im_bot_configs_owner_uid ON im_bot_configs(owner_uid)",
+            """
             CREATE TABLE IF NOT EXISTS subagent_threads (
                 id SERIAL PRIMARY KEY,
                 uid VARCHAR(64) NOT NULL,
