@@ -1,3 +1,8 @@
+/**
+ * 将用户输入的文本解析为允许用户列表，按空白、英文/中文逗号切分并去重
+ * @param {string} text - 原始文本，可用空白或中英文逗号分隔
+ * @returns {string[]} - 去重后的用户标识列表
+ */
 export function parseAllowedUsers(text) {
   const seen = []
   for (const raw of String(text || '').split(/[\s,，]+/)) {
@@ -7,6 +12,11 @@ export function parseAllowedUsers(text) {
   return seen
 }
 
+/**
+ * 将表单模型转换为后端接口所需的机器人配置载荷
+ * @param {Object} form - 表单数据
+ * @returns {Object} - 后端机器人配置对象，仅在填写凭据时附带 credentials
+ */
 export function buildImBotPayload(form) {
   const payload = {
     platform: form.platform,
@@ -22,6 +32,11 @@ export function buildImBotPayload(form) {
   return payload
 }
 
+/**
+ * 将后端机器人配置还原为表单模型，凭据不回填（需重新输入）
+ * @param {Object} bot - 后端返回的机器人配置
+ * @returns {Object} - 表单数据，凭据固定为 null
+ */
 export function formFromImBot(bot) {
   return {
     platform: bot.platform || 'feishu',
