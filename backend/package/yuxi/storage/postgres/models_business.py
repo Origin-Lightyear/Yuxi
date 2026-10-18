@@ -1017,7 +1017,7 @@ class IMBotConfig(Base):
     enabled = Column(Boolean, nullable=False, default=True)
     credentials_encrypted = Column(Text, nullable=False)
     owner_uid = Column(String(64), nullable=False, index=True)
-    api_key_id = Column(Integer, ForeignKey("api_keys.id"), nullable=True)
+    api_key_id = Column(Integer, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     api_key_cipher = Column(Text, nullable=True)
     agent_slug = Column(String(100), nullable=False)
     allowed_users = Column(JSON, nullable=False, default=list)

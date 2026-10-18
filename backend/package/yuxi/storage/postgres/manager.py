@@ -638,7 +638,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 credentials_encrypted TEXT NOT NULL,
                 owner_uid VARCHAR(64) NOT NULL,
-                api_key_id INTEGER REFERENCES api_keys(id),
+                api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
                 api_key_cipher TEXT,
                 agent_slug VARCHAR(100) NOT NULL,
                 allowed_users JSONB NOT NULL DEFAULT '[]'::jsonb,

@@ -16,6 +16,7 @@ from yuxi.repositories.im_bot_repository import (
 from yuxi.storage.postgres.models_business import APIKey, IMBotConfig, User
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.utils.crypto_utils import decrypt_secret, encrypt_secret
+from yuxi.utils.logging_config import logger
 
 PLATFORMS = {"feishu", "dingtalk"}
 
@@ -213,19 +214,27 @@ async def get_gateway_configs(db: AsyncSession) -> list[dict]:
     for bot in await _list(db):
         if not bot.enabled:
             continue
+        # api_key_id 为 NULL 说明关联的 API Key 已被吊销，此时 cipher 是陈旧数据，不能再对外提供。
+        if bot.api_key_id is None:
+            continue
         if not bot.api_key_cipher:
             continue
-        configs.append(
-            {
-                "id": bot.id,
-                "platform": bot.platform,
-                "name": bot.name,
-                "credentials": decrypt_credentials(bot.platform, bot.credentials_encrypted),
-                "api_key": decrypt_secret(bot.api_key_cipher),
-                "agent_slug": bot.agent_slug,
-                "allowed_users": list(bot.allowed_users or []),
-                "require_mention": bool(bot.require_mention),
-                "group_sessions_per_user": bool(bot.group_sessions_per_user),
-            }
-        )
+        try:
+            configs.append(
+                {
+                    "id": bot.id,
+                    "platform": bot.platform,
+                    "name": bot.name,
+                    "credentials": decrypt_credentials(bot.platform, bot.credentials_encrypted),
+                    "api_key": decrypt_secret(bot.api_key_cipher),
+                    "agent_slug": bot.agent_slug,
+                    "allowed_users": list(bot.allowed_users or []),
+                    "require_mention": bool(bot.require_mention),
+                    "group_sessions_per_user": bool(bot.group_sessions_per_user),
+                }
+            )
+        except Exception as exc:
+            # 单个机器人密文损坏（密钥轮换 / 数据被篡改）时只跳过该机器人，避免拖垮整个网关配置接口。
+            logger.warning(f"跳过无法解密的 IM 机器人配置 {bot.id}: {exc}")
+            continue
     return configs
