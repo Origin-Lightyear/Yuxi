@@ -106,10 +106,10 @@ async def _revoke_api_key(db: AsyncSession, api_key_id: int | None) -> None:
 async def create_im_bot(db: AsyncSession, payload: dict, username: str) -> IMBotConfig:
     """创建机器人配置，并自动创建绑定属主的 API Key。"""
     platform = str(payload.get("platform", "")).strip().lower()
-    name = str(payload.get("name", "")).strip()
+    name = str(payload.get("name") or "").strip()
     if not name:
         raise ValueError("name 不能为空")
-    agent_slug = str(payload.get("agent_slug", "")).strip()
+    agent_slug = str(payload.get("agent_slug") or "").strip()
     if not agent_slug:
         raise ValueError("agent_slug 不能为空")
     owner = await _resolve_owner(db, payload.get("owner_uid"))
@@ -146,7 +146,11 @@ async def update_im_bot(db: AsyncSession, bot_id: int, payload: dict, username: 
         owner = await _resolve_owner(db, payload.get("owner_uid"))
         if owner.uid != bot.owner_uid:
             # 属主变更时回收旧 Key，并为新属主重新签发，保证凭证始终与属主绑定。
-            await _revoke_api_key(db, bot.api_key_id)
+            # 先清空外键引用再删除旧 Key，避免 flush 时触发 api_keys 外键约束。
+            old_key_id = bot.api_key_id
+            bot.api_key_id = None
+            await db.flush()
+            await _revoke_api_key(db, old_key_id)
             api_key, full_key = await _provision_api_key(db, owner, bot.name)
             bot.owner_uid = owner.uid
             bot.api_key_id = api_key.id
@@ -154,9 +158,9 @@ async def update_im_bot(db: AsyncSession, bot_id: int, payload: dict, username: 
     if "credentials" in payload:
         bot.credentials_encrypted = encrypt_credentials(bot.platform, payload.get("credentials") or {})
     if "name" in payload:
-        bot.name = str(payload.get("name")).strip() or bot.name
+        bot.name = str(payload.get("name") or "").strip() or bot.name
     if "agent_slug" in payload:
-        bot.agent_slug = str(payload.get("agent_slug")).strip() or bot.agent_slug
+        bot.agent_slug = str(payload.get("agent_slug") or "").strip() or bot.agent_slug
     if "enabled" in payload:
         bot.enabled = bool(payload.get("enabled"))
     if "allowed_users" in payload:
@@ -188,8 +192,12 @@ async def delete_im_bot(db: AsyncSession, bot_id: int) -> bool:
     bot = await get_im_bot(db, bot_id)
     if bot is None:
         return False
-    await _revoke_api_key(db, bot.api_key_id)
+    # 先清空外键引用并删除 Bot，再回收 API Key，避免 flush 时触发 api_keys 外键约束。
+    key_id = bot.api_key_id
+    bot.api_key_id = None
+    await db.flush()
     await _delete(db, bot)
+    await _revoke_api_key(db, key_id)
     return True
 
 
