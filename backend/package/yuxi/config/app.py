@@ -76,6 +76,9 @@ class Config(BaseModel):
         default="",
         description="Tenant 服务调用租户知识库管理 API 的静态密钥（Tenant 侧持有）",
     )
+    im_gateway_token: str = Field(
+        default="", description="IM 网关拉取机器人配置的静态服务令牌；未配置时内部接口返回 404"
+    )
 
     _config_file: Path | None = PrivateAttr(default=None)
     _runtime_sync_thread: Any = PrivateAttr(default=None)
@@ -106,6 +109,7 @@ class Config(BaseModel):
             ("saas_service_url", "SAAS_SERVICE_URL"),
             ("platform_service_url", "PLATFORM_SERVICE_URL"),
             ("tenant_admin_api_key", "TENANT_ADMIN_API_KEY"),
+            ("im_gateway_token", "IM_GATEWAY_TOKEN"),
         ):
             env_val = os.getenv(env_key, "").strip()
             if env_val:

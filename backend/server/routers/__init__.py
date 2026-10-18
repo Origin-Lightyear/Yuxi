@@ -11,6 +11,7 @@ from server.routers.auth_router import auth
 from server.routers.chat_router import chat
 from server.routers.dashboard_router import dashboard
 from server.routers.filesystem_router import filesystem_router
+from server.routers.im_bot_router import im_bots, im_gateway
 from server.routers.mcp_router import mcp
 from server.routers.mention_router import mention_router
 from server.routers.model_provider_router import model_providers
@@ -40,6 +41,8 @@ router.include_router(department)  # /api/departments/* 部门与权限相关数
 router.include_router(tasks)  # /api/tasks/* 后台任务查询与管理
 router.include_router(mcp)  # /api/system/mcp-servers/* MCP 服务管理
 router.include_router(model_providers)  # /api/system/model-providers/* 独立模型配置
+router.include_router(im_bots)  # /api/system/im-bots/*
+router.include_router(im_gateway)  # /api/internal/im-gateway/*
 router.include_router(skills)  # /api/system/skills/* Skills 管理
 router.include_router(user_skills)  # /api/skills/* 用户可用 Skills
 router.include_router(tools)  # /api/system/tools/* 工具列表与配置
