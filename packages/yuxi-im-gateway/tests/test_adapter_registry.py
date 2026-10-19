@@ -25,3 +25,10 @@ def test_build_adapter_returns_adapter_for_feishu():
         _bot("feishu", {"app_id": "1", "app_secret": "s"}), on_inbound=lambda m: None
     )
     assert isinstance(adapter, Adapter)
+
+
+def test_build_adapter_returns_adapter_for_dingtalk():
+    adapter = build_adapter(
+        _bot("dingtalk", {"client_id": "1", "client_secret": "s"}), on_inbound=lambda m: None
+    )
+    assert isinstance(adapter, Adapter)
