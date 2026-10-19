@@ -86,10 +86,13 @@ class GatewayRunner:
         if entry is None:
             logger.debug("机器人已移除，丢弃入站消息 bot=%s message=%s", bot.id, msg.message_id)
             return
+        # 用配置轮询的最新视图覆盖闭包捕获的启动时配置，使 api_key / 白名单等变更即时生效；
+        # 适配器刚启动、reconcile 尚未写入 _bots 时回退到传入的 bot。
+        current = self._bots.get(bot.id, bot)
         await handle_inbound(
             client=self._client,
             adapter=entry[1],
-            bot=bot,
+            bot=current,
             dedupe=self._dedupe,
             sessions=self._sessions,
             msg=msg,
