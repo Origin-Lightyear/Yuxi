@@ -51,7 +51,7 @@ class FeishuAdapter(Adapter):
         def on_message(data: P2ImMessageReceiveV1) -> None:
             message = self._normalize(data)
             if message is not None:
-                asyncio.run_coroutine_threadsafe(self._on_inbound(message), self._loop)
+                self._dispatch(self._on_inbound(message))
 
         def on_card(data) -> None:
             self._handle_card(data)
@@ -73,6 +73,18 @@ class FeishuAdapter(Adapter):
     async def stop(self) -> None:
         """仅丢弃线程引用；SDK 无干净关闭接口，守护线程由进程退出兜底。"""
         self._thread = None
+
+    def _dispatch(self, coro) -> None:
+        """把协程调度回主事件循环，并记录后台任务的未处理异常。"""
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        future.add_done_callback(self._log_task_error)
+
+    @staticmethod
+    def _log_task_error(future) -> None:
+        """记录后台任务异常，避免审批 / 回复失败被静默丢弃。"""
+        exc = future.exception()
+        if exc is not None:
+            logger.warning("飞书回调处理失败: %s", exc)
 
     async def send_text(self, chat_id: str, text: str) -> None:
         """发送纯文本消息。"""
@@ -98,15 +110,19 @@ class FeishuAdapter(Adapter):
         await asyncio.to_thread(self._send_message, chat_id, "interactive", json.dumps(card, ensure_ascii=False))
 
     def _normalize(self, data) -> InboundMessage | None:
-        """把飞书消息事件归一化为 InboundMessage；非文本消息回复提示并忽略。"""
+        """把飞书消息事件归一化为 InboundMessage；非文本消息回复提示并忽略。
+
+        前置条件：群聊接收依赖飞书「群聊中仅 @ 机器人」的事件订阅范围
+        （``im:message.group_at_msg``），该范围下收到的每条群消息都必然 @ 了本机器人，
+        故此处以 mentions 非空判定。若将来授予更宽的群消息范围，必须改为把 mention 的
+        ``id.open_id`` 与本机器人自身 open_id 比对——该值无法从事件或 lark-oapi 1.7.5
+        直接获得，需额外调用原始 API。
+        """
         event = data.event
         message = event.message
         message_type = getattr(message, "message_type", "")
         if message_type != "text":
-            asyncio.run_coroutine_threadsafe(
-                self.send_text(message.chat_id, "暂不支持非文本消息"),
-                self._loop,
-            )
+            self._dispatch(self.send_text(message.chat_id, "暂不支持非文本消息"))
             return None
         content = json.loads(message.content or "{}")
         text = str(content.get("text") or "")
@@ -133,10 +149,7 @@ class FeishuAdapter(Adapter):
             decision, thread_id, run_id, requester_id = parse_card_action(value)
         except (ValueError, json.JSONDecodeError):
             return
-        asyncio.run_coroutine_threadsafe(
-            self._resolve(decision, thread_id, run_id, operator_id, requester_id),
-            self._loop,
-        )
+        self._dispatch(self._resolve(decision, thread_id, run_id, operator_id, requester_id))
 
     async def _resolve(self, decision, thread_id, run_id, operator_id, requester_id) -> None:
         """从主 loop 调用编排层处理审批（client/bot 由 main 注入）。"""
