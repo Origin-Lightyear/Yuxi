@@ -40,12 +40,17 @@ async def run_memory_extract(context: TaskContext) -> dict:
 
     await context.set_progress(10.0, "读取对话历史")
     async with pg_manager.get_async_session_context() as db:
-        history = await ConversationRepository(db).read_memory_messages(
-            uid=uid,
-            thread_id=thread_id,
-            limit=20,
-            include_tools=False,
-        )
+        try:
+            history = await ConversationRepository(db).read_memory_messages(
+                uid=uid,
+                thread_id=thread_id,
+                limit=20,
+                include_tools=False,
+            )
+        except ValueError:
+            # subagent 子线程、invocation 来源与归档线程对普通用户不可见，抽取语义是跳过而非失败。
+            logger.info("记忆抽取跳过不可见线程: thread_id=%s run_id=%s", thread_id, run_id)
+            return {"skipped": True}
     messages = history.get("messages") or []
     if not messages:
         return {"skipped": True}

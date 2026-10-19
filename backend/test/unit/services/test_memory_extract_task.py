@@ -188,6 +188,29 @@ async def test_run_memory_extract_skips_when_switch_disabled(monkeypatch: pytest
     assert memory_calls == []
 
 
+async def test_run_memory_extract_skips_on_invisible_thread(monkeypatch: pytest.MonkeyPatch):
+    """不可见线程（subagent/归档）应记为 skipped，而非 failed durable task。"""
+    _patch_session(monkeypatch)
+    _patch_switch(monkeypatch, enabled=True)
+
+    class InvisibleRepository:
+        def __init__(self, _db):
+            pass
+
+        async def read_memory_messages(self, **_kwargs):
+            raise ValueError("历史线程不存在或不可见")
+
+    monkeypatch.setattr(task, "ConversationRepository", InvisibleRepository)
+    sent = _patch_model(monkeypatch, '["喜欢简洁回答"]')
+    memory_calls = _patch_memories(monkeypatch)
+
+    result = await task.run_memory_extract(FakeContext(PAYLOAD))
+
+    assert result == {"skipped": True}
+    assert sent == []
+    assert memory_calls == []
+
+
 async def test_run_memory_extract_skips_on_empty_conversation(monkeypatch: pytest.MonkeyPatch):
     _patch_session(monkeypatch)
     _patch_switch(monkeypatch, enabled=True)

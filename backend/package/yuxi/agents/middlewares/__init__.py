@@ -1,3 +1,4 @@
+from .agent_memory import create_agent_memory_middleware
 from .context import context_aware_prompt, context_based_model
 from .dynamic_tool import DynamicToolMiddleware
 from .memory import create_memory_middleware
@@ -17,6 +18,7 @@ __all__ = [
     "ToolErrorGuardMiddleware",
     "context_aware_prompt",
     "context_based_model",
+    "create_agent_memory_middleware",
     "create_memory_middleware",
     "create_summary_middleware",
     "create_summary_middleware_from_context",

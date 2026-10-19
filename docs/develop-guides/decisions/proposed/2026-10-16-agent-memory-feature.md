@@ -18,7 +18,7 @@ Owner：backend/package/yuxi/agents/middlewares/agent_memory.py
 
 **数据模型**（仿 `scheduled_agent_jobs` 四层模式，无 Alembic，幂等 DDL 进 `ensure_business_schema`）
 
-- 表 `agent_memories`：`id`、`uid`（FK users）、`agent_slug`、`content`（text）、`source_run_id`（FK agent_runs）+ `extract_index`（同 Run 内序号，二者**复合唯一**，抽取幂等键）、`created_at`/`updated_at`；**硬删除**（隐私语义，不留 `deleted_at`）。
+- 表 `agent_memories`：`id`、`uid`、`agent_slug`、`content`（text）、`source_run_id` + `extract_index`（同 Run 内序号，二者**复合唯一**，抽取幂等键）、`created_at`/`updated_at`；`uid` 与 `source_run_id` 不建外键，所有权由 repository 强制 `uid` 过滤保证，条目随 Run 生命周期由清理逻辑收敛；**硬删除**（隐私语义，不留 `deleted_at`）。
 - 模型 `AgentMemory` + `to_dict()`；repository `agent_memory_repository.py`：`list_by_agent(uid, agent_slug)`、`delete(uid, agent_slug, memory_id)`、`add(...)`、`count_by_agent`——所有查询强制 `uid` 过滤。
 
 **抽取管线**（Run 完成后 LLM 自动抽取，后台不阻塞派发）
@@ -26,7 +26,7 @@ Owner：backend/package/yuxi/agents/middlewares/agent_memory.py
 - `task_registry` 注册 durable Task `memory_extract`（knowledge ingest 同款 lease/reconcile/重试）。
 - `run_worker.process_agent_run` 的 finally 中，仅当 `final_run.status == completed` 时 `publish_task`；失败/中断的 Run 不抽取；发布失败只记日志，不改 Run 结果。
 - 任务内读取该 Run 线程消息，用系统默认模型服务一次性抽取 0~N 条值得长期记住的用户事实/偏好（中文、每条 ≤100 字；无则空返回）；逐条写入（`extract_index` 0..N-1），`(source_run_id, extract_index)` 复合唯一约束兜底重试幂等。
-- 容量：写入前该 (uid, agent_slug) 计数 ≥50 则按 `created_at` 升序删最旧至 49 再写。
+- 容量：逐条写入后按 `created_at` 升序 trim 至 50 条（`delete_oldest_over_limit`），不做写入前预删。
 
 **注入与开关**
 
@@ -54,13 +54,13 @@ Owner：backend/package/yuxi/agents/middlewares/agent_memory.py
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
-| agent_memories 表幂等创建，重复升级不重建 | 升级丢条目或阻塞启动 | `storage/postgres/manager.py` | unit：`test_postgres_manager_schema.py` 断言 DDL 语句（CREATE TABLE IF NOT EXISTS、复合唯一索引先于重建、旧索引双名 DROP） | 语句二次执行幂等由 IF NOT EXISTS/ADD COLUMN IF NOT EXISTS 保证 | Inspected |
+| agent_memories 表幂等创建，重复升级不重建 | 升级丢条目或阻塞启动 | `storage/postgres/manager.py` | unit：`test_postgres_manager_schema.py` 断言 DDL 语句（CREATE TABLE IF NOT EXISTS、复合唯一索引先于重建、旧索引双名 DROP）；v9→v10 门控由 `test_storage_migration` 覆盖 | 语句二次执行幂等由 IF NOT EXISTS/ADD COLUMN IF NOT EXISTS 保证 | Inspected |
 | completed Run 终态发布抽取任务且仅 completed 发布 | 失败/中断 Run 误抽取 | `services/run_worker.py` | unit：`test_run_worker_memory_publish.py` 5 用例直测 `_publish_memory_extract`（开关短路、model_spec 三段决议、不抛）；调用点位于既有 completed 分支经 code review 核对 | failed/cancelled 分支不触达 helper | Inspected |
 | 抽取幂等：同 Run 重试不重复写条目 | 重试产生重复记忆 | durable task 模块 | unit：model/repo/handler 三层——同 `(source_run_id, extract_index)` 二次写入被唯一约束拒绝，`fail_add_at` 负向证明第 i 条冲突不影响其余 | 重复插入失败且已提交前序条目存活 | Passed |
 | 容量 50 截断删最旧 | 超限无界增长 | durable task 模块 | unit：插入 51 条断言最旧被删；handler 断言 trim 收到常量 50 | 第 51 条后计数=50 且最旧消失 | Passed |
 | 注入：有条目追加 `<agent_memory>`、无条目不追加空块 | 空块污染提示词 | `agents/middlewares/agent_memory.py` | unit：`test_agent_memory_middleware.py` 9 用例（含空 MEMORY.md 独立注入、查询失败降级返回 None、CancelledError 上抛） | 空列表不出现块标签 | Passed |
 | enable_memory 关闭：不注入两套且不发布抽取 | 开关语义分裂 | memory middleware + run_worker | unit：注入侧 `create_agent_memory_middleware` 返回 None 且零 service 调用；发布侧开关关时 `options.get`/创建/发布全不触达 | 关闭后零注入零发布 | Passed |
-| GET/DELETE 端点所有权：他人条目 404、不可见 agent 404 | 越权读删 | `agent_memory_router.py` + service | HTTP+PostgreSQL integration（`test/integration/routers/test_agent_memory_api.py` 4 用例含独立会话回读，待 compose 环境执行） | 非本人 memory_id → 404 且行仍在 | Not run |
+| GET/DELETE 端点所有权：他人条目 404、不可见 agent 404 | 越权读删 | `agent_memory_router.py` + service | HTTP+PostgreSQL integration（`test/integration/api/test_agent_memory_api.py` 4 用例含独立会话回读，待 compose 环境执行） | 非本人 memory_id → 404 且行仍在 | Not run |
 | agent_slug 身份来自 Run 行不信任外部输入 | 伪造 agent 身份读他人记忆 | `agent_run_manifest_service.py` | unit：`test_agent_slug_context.py`（`configurable_fields` 排除 + update_config 伪造被过滤）+ `test_agent_run_manifest_service.py` 断言 update 值即 `run.agent_slug` | 外部传入被忽略 | Passed |
 | 前端面板：列表/空态/删除确认、开关关闭入口消失 | UI 不可用或误导 | `web/src/components/AgentMemoryPanel.vue` + `web/src/views/AgentView.vue` | web unit：`cd web && npm run test:unit`（AgentMemoryPanel 用例源码断言钉住 `:open` 门控表达式与 `v-if` enableMemory，全量 443 pass） | 空列表渲染空态文案；删除门控后断言在正确原因上失败 | Passed |
 | 全量门禁通过（后端 unit、web unit/lint/build、contracts、docs build） | 回归破坏 | 各命令 Owner | `pytest test/unit -m "not slow"` 2694 passed；`npm run test:unit` 443/443；lint:check 0 警告；build 成功；contracts 51 decisions 通过；docs build 成功 | 正向命令 | Passed |
@@ -73,3 +73,5 @@ Owner：backend/package/yuxi/agents/middlewares/agent_memory.py
 - **上下文占用**：注入最新 20 条 × ≤100 字 ≈ 2KB 级，相对既有 system prompt 可忽略。
 - **硬删除不可恢复**：符合隐私语义；误删需重新学习，无软删找回——接受。
 - **抽取任务与 Run 派发竞争**：任务在 finally 后发布、经 queue 异步执行，不占用 Run lease；失败重试不影响派发链路（durable task 既有语义）。
+- **v9 存量库升级**：`BUSINESS_SCHEMA_VERSION` 升到 10，使已记录 business=9 的库在升级时重新进入 `ensure_business_schema`，幂等补建 `agent_memories` 表并补齐索引；未升版本前 v9 库会因缺表导致记忆 API 500 与注入静默降级。
+- **不可见线程的抽取任务**：subagent 子线程、invocation 来源与归档线程对普通用户不可见，`read_memory_messages` 抛 `ValueError` 时 handler 记为 `skipped` 而非 `failed`，避免产生失败任务与异常日志。
