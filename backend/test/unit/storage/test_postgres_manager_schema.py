@@ -83,11 +83,17 @@ def test_agent_run_serialization_does_not_project_removed_redis_cursor():
 
 
 class _RecordingConnection:
-    def __init__(self):
+    def __init__(self, business_version: int | None = None):
         self.statements: list[str] = []
+        self.parameters: list[dict | None] = []
+        self.business_version = business_version
 
     async def execute(self, statement, params=None):
         self.statements.append(str(statement))
+        self.parameters.append(params)
+
+    async def scalar(self, statement, params=None):
+        return self.business_version
 
 
 class _RecordingBegin:
@@ -110,11 +116,11 @@ class _RecordingEngine:
 
 
 @asynccontextmanager
-async def _recording_manager():
+async def _recording_manager(business_version: int | None = None):
     manager = PostgresManager()
     original_initialized = manager._initialized
     original_engine = manager.async_engine
-    connection = _RecordingConnection()
+    connection = _RecordingConnection(business_version)
 
     manager._initialized = True
     manager.async_engine = _RecordingEngine(connection)
@@ -123,6 +129,38 @@ async def _recording_manager():
     finally:
         manager._initialized = original_initialized
         manager.async_engine = original_engine
+
+
+@pytest.mark.asyncio
+async def test_resource_selection_upgrade_from_v9_only_records_version():
+    """v9 起点的业务库已是新协议：只补记版本 10，不得重放 v8 的资源选择转换。"""
+    async with _recording_manager(business_version=9) as (manager, connection):
+        await manager.upgrade_agent_resource_selection()
+
+    assert not any("UPDATE agents" in statement for statement in connection.statements)
+    version_writes = [
+        params
+        for statement, params in zip(connection.statements, connection.parameters)
+        if "yuxi_schema_migrations" in statement and "INSERT INTO" in statement
+    ]
+    assert version_writes == [{"version": BUSINESS_SCHEMA_VERSION}]
+
+
+@pytest.mark.asyncio
+async def test_resource_selection_upgrade_from_v8_still_converts_and_records_version():
+    """v8 起点的业务库仍是旧协议：必须重放转换，并记录版本 10。"""
+    async with _recording_manager(business_version=8) as (manager, connection):
+        await manager.upgrade_agent_resource_selection()
+
+    resource_updates = [statement for statement in connection.statements if "UPDATE agents" in statement]
+    assert len(resource_updates) == 6
+    assert any(params and params.get("replacement") == '"all"' for params in connection.parameters)
+    version_writes = [
+        params
+        for statement, params in zip(connection.statements, connection.parameters)
+        if "yuxi_schema_migrations" in statement and "INSERT INTO" in statement
+    ]
+    assert version_writes == [{"version": BUSINESS_SCHEMA_VERSION}]
 
 
 @pytest.mark.asyncio

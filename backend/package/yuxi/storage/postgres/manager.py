@@ -482,7 +482,12 @@ class PostgresManager(metaclass=SingletonMeta):
             return {str(row.domain): int(row.version) for row in rows}
 
     async def upgrade_agent_resource_selection(self) -> None:
-        """原子迁移旧资源选择并记录版本，重试时保留新协议的空数组。"""
+        """旧协议资源选择转换 + 记录当前业务版本。
+
+        v8 及更早版本把 ``context.*`` 的 ``null`` 与 subagents 的 ``[]`` 解释为"未配置"，
+        故对这些版本重放 v8 转换；v9 起 ``[]`` 已是合法语义（不选择），只补记版本，
+        不得重放转换，否则会静默把用户显式关闭的子智能体改成 "all"。
+        """
         self._check_initialized()
         async with self.async_engine.begin() as conn:
             version = await conn.scalar(
@@ -492,19 +497,20 @@ class PostgresManager(metaclass=SingletonMeta):
                 return
             if version not in (None, 2, 7, 8, 9):
                 raise RuntimeError(f"Unsupported business schema version: {version}")
-            for name in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
-                replacement = '"all"' if name in {"tools", "knowledges", "skills", "subagents"} else "[]"
-                await conn.execute(
-                    text("""
-                        UPDATE agents
-                        SET config_json = jsonb_set(
-                            config_json::jsonb, ARRAY['context', :name], CAST(:replacement AS jsonb)
-                        )
-                        WHERE config_json::jsonb -> 'context' -> :name = 'null'::jsonb
-                           OR (:name = 'subagents' AND config_json::jsonb -> 'context' -> :name = '[]'::jsonb)
-                    """),
-                    {"name": name, "replacement": replacement},
-                )
+            if version in (None, 2, 7, 8):
+                for name in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
+                    replacement = '"all"' if name in {"tools", "knowledges", "skills", "subagents"} else "[]"
+                    await conn.execute(
+                        text("""
+                            UPDATE agents
+                            SET config_json = jsonb_set(
+                                config_json::jsonb, ARRAY['context', :name], CAST(:replacement AS jsonb)
+                            )
+                            WHERE config_json::jsonb -> 'context' -> :name = 'null'::jsonb
+                               OR (:name = 'subagents' AND config_json::jsonb -> 'context' -> :name = '[]'::jsonb)
+                        """),
+                        {"name": name, "replacement": replacement},
+                    )
             await conn.execute(
                 text(f"""
                     INSERT INTO {SCHEMA_VERSION_TABLE} (domain, version, applied_at)

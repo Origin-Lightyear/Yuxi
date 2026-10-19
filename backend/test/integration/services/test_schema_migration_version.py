@@ -598,3 +598,30 @@ async def test_resource_selection_migration_is_atomic_and_does_not_repeat(fail_v
         assert await manager.get_schema_versions() == {"business": BUSINESS_SCHEMA_VERSION}
     finally:
         await _drop_isolated_schema(schema, admin_engine, engine)
+
+
+async def test_v9_resource_selection_upgrade_keeps_explicit_empty_selection() -> None:
+    """v9 起点的库已是新协议：升级只记录版本 10，显式关闭的子智能体保持 []。"""
+    schema, admin_engine, engine, manager = await _create_isolated_manager("v9_resource_selection")
+    try:
+        await manager.create_schema_version_table()
+        await manager.record_schema_version("business", 9)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE agents (id integer PRIMARY KEY, config_json jsonb)"))
+            await conn.execute(
+                text("INSERT INTO agents (id, config_json) VALUES (:id, CAST(:config AS jsonb))"),
+                [
+                    {"id": 1, "config": json.dumps({"context": {"subagents": [], "tools": "all"}})},
+                    {"id": 2, "config": json.dumps({"context": {"subagents": None, "tools": None}})},
+                ],
+            )
+
+        await manager.upgrade_agent_resource_selection()
+
+        async with engine.connect() as conn:
+            rows = dict((await conn.execute(text("SELECT id, config_json FROM agents"))).all())
+        assert rows[1] == {"context": {"subagents": [], "tools": "all"}}
+        assert rows[2] == {"context": {"subagents": None, "tools": None}}
+        assert await manager.get_schema_versions() == {"business": BUSINESS_SCHEMA_VERSION}
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, engine)
