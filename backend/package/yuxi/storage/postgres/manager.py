@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 9
+BUSINESS_SCHEMA_VERSION = 10
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -488,9 +488,9 @@ class PostgresManager(metaclass=SingletonMeta):
             version = await conn.scalar(
                 text(f"SELECT version FROM {SCHEMA_VERSION_TABLE} WHERE domain = 'business' FOR UPDATE")
             )
-            if version == 9:
+            if version == BUSINESS_SCHEMA_VERSION:
                 return
-            if version not in (None, 2, 7, 8):
+            if version not in (None, 2, 7, 8, 9):
                 raise RuntimeError(f"Unsupported business schema version: {version}")
             for name in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
                 replacement = '"all"' if name in {"tools", "knowledges", "skills", "subagents"} else "[]"
@@ -508,9 +508,11 @@ class PostgresManager(metaclass=SingletonMeta):
             await conn.execute(
                 text(f"""
                     INSERT INTO {SCHEMA_VERSION_TABLE} (domain, version, applied_at)
-                    VALUES ('business', 9, CURRENT_TIMESTAMP)
-                    ON CONFLICT (domain) DO UPDATE SET version = 9, applied_at = EXCLUDED.applied_at
-                """)
+                    VALUES ('business', :version, CURRENT_TIMESTAMP)
+                    ON CONFLICT (domain) DO UPDATE
+                    SET version = EXCLUDED.version, applied_at = EXCLUDED.applied_at
+                """),
+                {"version": BUSINESS_SCHEMA_VERSION},
             )
 
     async def record_schema_version(self, domain: str, version: int) -> None:

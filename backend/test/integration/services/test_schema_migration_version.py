@@ -282,7 +282,7 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
             "ix_scheduled_agent_runs_job_created",
             "ix_scheduled_agent_runs_dispatching",
         }.issubset(scheduled_indexes)
-        assert BUSINESS_SCHEMA_VERSION == 9
+        assert BUSINESS_SCHEMA_VERSION == 10
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -556,7 +556,10 @@ async def test_resource_selection_migration_is_atomic_and_does_not_repeat(fail_v
             )
             if fail_version_write:
                 await conn.execute(
-                    text("ALTER TABLE yuxi_schema_migrations ADD CONSTRAINT reject_v9 CHECK (version < 9)")
+                    text(
+                        "ALTER TABLE yuxi_schema_migrations "
+                        f"ADD CONSTRAINT reject_current CHECK (version < {BUSINESS_SCHEMA_VERSION})"
+                    )
                 )
         if fail_version_write:
             from sqlalchemy.exc import IntegrityError
@@ -592,6 +595,6 @@ async def test_resource_selection_migration_is_atomic_and_does_not_repeat(fail_v
             assert await conn.scalar(text("SELECT config_json FROM agents WHERE id = 1")) == {
                 "context": {"subagents": []}
             }
-        assert await manager.get_schema_versions() == {"business": 9}
+        assert await manager.get_schema_versions() == {"business": BUSINESS_SCHEMA_VERSION}
     finally:
         await _drop_isolated_schema(schema, admin_engine, engine)
