@@ -29,6 +29,14 @@ test('面板包含空态文案、删除确认与 enable_memory 门控', () => {
   assert.match(panelSource, /Modal\.confirm/)
   assert.match(panelSource, /enable_memory/)
   assert.match(panelSource, /created_at/)
+  // 门控表达式本身：删除 :open 门控时此断言失败，配置字段读取行无法替代。
+  assert.match(panelSource, /:open="open && enableMemory"/)
+})
+
+test('删除请求飞行中防重入：deletingId 赋值并绑定 disabled', () => {
+  assert.match(panelSource, /:disabled="deletingId !== null"/)
+  assert.match(panelSource, /deletingId\.value = item\.id/)
+  assert.match(panelSource, /deletingId\.value = null/)
 })
 
 test('AgentView 渲染「记忆」入口并挂载 AgentMemoryPanel', () => {
@@ -37,4 +45,6 @@ test('AgentView 渲染「记忆」入口并挂载 AgentMemoryPanel', () => {
   assert.match(viewSource, /Brain/)
   assert.match(viewSource, /enableMemory/)
   assert.match(viewSource, /userConfigApi/)
+  // 入口门控表达式本身：删除 v-if 或去掉 enableMemory 条件时此断言失败。
+  assert.match(viewSource, /v-if="currentAgentOption && enableMemory"/)
 })

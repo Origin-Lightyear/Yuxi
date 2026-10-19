@@ -87,11 +87,14 @@ const confirmDelete = (item) => {
     cancelText: '取消',
     content: item.content,
     onOk: async () => {
+      deletingId.value = item.id
       try {
         await agentMemoryApi.remove(props.agentSlug, item.id)
         memories.value = memories.value.filter((memory) => memory.id !== item.id)
       } catch (error) {
         message.error(error.message || '删除记忆失败')
+      } finally {
+        deletingId.value = null
       }
     }
   })
