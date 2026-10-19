@@ -200,6 +200,27 @@ async def test_handle_inbound_uses_session_chat_id_and_queue_key():
 
 
 @pytest.mark.asyncio
+async def test_handle_inbound_replies_to_platform_chat_id_not_session_key():
+    client = FakeClient()
+    adapter = FakeAdapter()
+    sessions = RecordingSessions()
+    msg = _msg(is_group=True, mentions_bot=True, chat_id="g1", sender_id="u1")
+
+    await handle_inbound(
+        client=client,
+        adapter=adapter,
+        bot=_bot(group_sessions_per_user=True),
+        dedupe=DedupeCache(),
+        sessions=sessions,
+        msg=msg,
+    )
+
+    assert client.calls[0]["chat_id"] == "g1:u1"
+    assert sessions.keys == ["g1:u1"]
+    assert adapter.texts == [("g1", "运行未启动，请稍后重试")]
+
+
+@pytest.mark.asyncio
 async def test_resolve_approval_ignores_non_requester_and_unknown_decision():
     client = FakeClient()
 
@@ -212,6 +233,7 @@ async def test_resolve_approval_ignores_non_requester_and_unknown_decision():
         decision="approve",
         operator_id="u2",
         requester_id="u1",
+        chat_id="c1",
     )
     await resolve_approval(
         client=client,
@@ -222,6 +244,7 @@ async def test_resolve_approval_ignores_non_requester_and_unknown_decision():
         decision="maybe",
         operator_id="u1",
         requester_id="u1",
+        chat_id="c1",
     )
 
     assert client.calls == []
@@ -241,6 +264,7 @@ async def test_resolve_approval_submits_decision_with_thread_and_request_id():
         decision="approve",
         operator_id="u1",
         requester_id="u1",
+        chat_id="c1",
     )
 
     call = client.calls[0]
@@ -251,7 +275,7 @@ async def test_resolve_approval_submits_decision_with_thread_and_request_id():
 
 
 @pytest.mark.asyncio
-async def test_resolve_approval_reports_missing_stream_url():
+async def test_resolve_approval_replies_to_card_chat_id():
     client = FakeClient(submitted={"kind": "command"})
     adapter = FakeAdapter()
 
@@ -264,6 +288,7 @@ async def test_resolve_approval_reports_missing_stream_url():
         decision="approve",
         operator_id="u1",
         requester_id="u1",
+        chat_id="g1",
     )
 
-    assert adapter.texts == [("t1", "运行未启动，请稍后重试")]
+    assert adapter.texts == [("g1", "运行未启动，请稍后重试")]

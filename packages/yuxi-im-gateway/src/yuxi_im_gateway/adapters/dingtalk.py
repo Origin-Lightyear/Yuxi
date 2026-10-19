@@ -53,6 +53,9 @@ class DingTalkAdapter(Adapter):
         # 会话级投递信息：session webhook 兜底地址，单聊还需记住对方 staff id。
         self._webhooks: dict[str, str] = {}
         self._single_users: dict[str, str] = {}
+        # 卡片实例回调需要原始入站消息，按会话缓存最近一条。
+        self._recent_messages: dict[str, ChatbotMessage] = {}
+        self._chatbot_handler: _ChatbotHandler | None = None
 
     async def start(self) -> None:
         """启动 Stream 客户端线程，出站资源建在主 loop 上。"""
@@ -65,7 +68,8 @@ class DingTalkAdapter(Adapter):
             self._bot.credentials["client_id"], self._bot.credentials["client_secret"]
         )
         self._client = dingtalk_stream.DingTalkStreamClient(credential)
-        self._client.register_callback_handler(ChatbotMessage.TOPIC, _ChatbotHandler(self))
+        self._chatbot_handler = _ChatbotHandler(self)
+        self._client.register_callback_handler(ChatbotMessage.TOPIC, self._chatbot_handler)
         self._client.register_callback_handler(Card_Callback_Router_Topic, _CardCallbackHandler(self))
         threading.Thread(target=self._client.start_forever, daemon=True).start()
 
@@ -105,22 +109,26 @@ class DingTalkAdapter(Adapter):
         await self._send(chat_id, {"msgtype": "file", "file": {"media_id": media_id, "file_name": filename}})
 
     async def send_approval_card(self, chat_id: str, *, thread_id: str, run_id: str, requester_id: str) -> None:
-        """发送 actionCard 审批卡片。"""
-        card = approval_card(thread_id, run_id, requester_id)
-        buttons = [
-            {"title": action["label"], "actionURL": "", "value": json.dumps(action["value"], ensure_ascii=False)}
-            for action in card["actions"]
-        ]
-        body = {
-            "msgtype": "actionCard",
-            "actionCard": {
-                "title": card["title"],
-                "text": card["text"],
-                "btnOrientation": "0",
-                "btns": buttons,
-            },
-        }
-        await self._send(chat_id, body)
+        """用 SDK 卡片实例发送审批卡片，使按钮回调落在卡片实例回调 topic。
+
+        卡片实例的按钮参数绑定格式（标准模板是否原样回传 ``value``）无法离线验证，
+        仅在真实钉钉应用上可确认；此处按 SDK ``MarkdownButtonCardInstance`` 的按钮结构
+        把 action value 作为 ``value`` 随列表下发。
+        """
+        incoming = self._recent_messages.get(chat_id)
+        if incoming is None or self._chatbot_handler is None:
+            logger.warning("钉钉会话 %s 无可用入站消息，跳过审批卡片发送", chat_id)
+            return
+        card = approval_card(thread_id, run_id, requester_id, chat_id)
+        buttons = [{"text": action["label"], "value": action["value"]} for action in card["actions"]]
+        await asyncio.to_thread(
+            self._chatbot_handler.reply_markdown_button,
+            incoming,
+            card["text"],
+            buttons,
+            tips="请选择",
+            title=card["title"],
+        )
 
     def _normalize(self, message: ChatbotMessage) -> InboundMessage:
         """把钉钉回调消息归一化为 InboundMessage。"""
@@ -132,25 +140,26 @@ class DingTalkAdapter(Adapter):
             sender_id=str(message.sender_staff_id),
             is_group=is_group,
             mentions_bot=bool(message.is_in_at_list) if is_group else False,
-            text=_strip_at(text, message),
+            text=_strip_at(text, message.at_users, bool(message.is_in_at_list)),
         )
 
     def _remember(self, message: ChatbotMessage) -> None:
-        """记录会话投递信息：session webhook 兜底地址与单聊对方 staff id。"""
+        """记录会话投递信息：session webhook、单聊 staff id 与最近入站消息。"""
         chat_id = str(message.conversation_id)
+        self._recent_messages[chat_id] = message
         webhook = getattr(message, "session_webhook", None)
         if webhook:
             self._webhooks[chat_id] = str(webhook)
         if str(message.conversation_type) == "1" and message.sender_staff_id:
             self._single_users[chat_id] = str(message.sender_staff_id)
 
-    async def _resolve(self, decision, thread_id, run_id, operator_id, requester_id) -> None:
+    async def _resolve(self, decision, thread_id, run_id, operator_id, requester_id, chat_id) -> None:
         """从主 loop 调用编排层处理审批（client/bot 由 main 注入）。"""
         callback = getattr(self, "approval_handler", None)
         if callback is not None:
             await callback(
                 decision=decision, thread_id=thread_id, run_id=run_id,
-                operator_id=operator_id, requester_id=requester_id,
+                operator_id=operator_id, requester_id=requester_id, chat_id=chat_id,
             )
 
     async def _send(self, chat_id: str, body: dict) -> None:
@@ -181,9 +190,23 @@ class DingTalkAdapter(Adapter):
         response.raise_for_status()
 
     async def _post_webhook(self, webhook: str, body: dict) -> None:
-        """把消息体 POST 到会话 session webhook。"""
+        """把消息体 POST 到会话 session webhook，并按响应 errcode 判定成败。
+
+        钉钉 session webhook 过期 / 限流时仍返回 HTTP 200，只靠状态码会把丢包当成功，
+        因此必须解析响应体 errcode。
+        """
         response = await self._http.post(webhook, json=body)
         response.raise_for_status()
+        try:
+            data = response.json()
+        except ValueError:
+            logger.warning("钉钉 session webhook 返回非 JSON 响应：%s", response.text[:200])
+            raise RuntimeError("钉钉 session webhook 返回非 JSON 响应") from None
+        errcode = data.get("errcode") if isinstance(data, dict) else None
+        if errcode:
+            errmsg = data.get("errmsg") if isinstance(data, dict) else ""
+            logger.warning("钉钉 session webhook 发送失败 errcode=%s errmsg=%s", errcode, errmsg)
+            raise RuntimeError(f"钉钉 session webhook 发送失败 errcode={errcode} errmsg={errmsg}")
 
     async def _get_token(self) -> str:
         """获取并缓存企业 access token，过期前 5 分钟刷新。"""
@@ -245,16 +268,30 @@ def _robot_payload(body: dict) -> tuple[str, str]:
     raise ValueError(f"主动发送不支持的消息类型：{msgtype}")
 
 
-def _strip_at(text: str, message: ChatbotMessage) -> str:
-    """去掉钉钉消息前缀中的 @机器人 文本。"""
-    at_bot = None
-    if isinstance(message.at_users, list):
-        for user in message.at_users:
-            if getattr(user, "is_bot", False):
-                at_bot = getattr(user, "dingtalk_id", None)
-    if at_bot:
-        return text.replace(f"@{at_bot}", "").strip()
-    return text.strip()
+def _strip_at(text: str, at_users, is_in_at_list: bool) -> str:
+    """去掉钉钉消息开头的 @机器人 文本；仅在确认 @ 了本机器人时剥离。
+
+    SDK 0.24.3 的 ``AtUser`` 没有 ``is_bot`` 标记，只能退化为按 at_users 里出现的
+    ``dingtalk_id`` / ``staff_id`` 前缀匹配，再兜底剥离一个开头的 ``@<token>``。
+    """
+    text = text.strip()
+    if not is_in_at_list:
+        return text
+    names = [
+        str(value)
+        for user in (at_users or [])
+        for value in (getattr(user, "dingtalk_id", None), getattr(user, "staff_id", None))
+        if value
+    ]
+    for name in names:
+        prefix = f"@{name}"
+        if text.startswith(prefix):
+            return text[len(prefix):].strip()
+    if text.startswith("@"):
+        parts = text.split(None, 1)
+        if len(parts) == 2:
+            return parts[1].strip()
+    return text
 
 
 def _card_value(content) -> dict:
@@ -296,8 +333,8 @@ class _CardCallbackHandler(CallbackHandler):
         message = CardCallbackMessage.from_dict(callback.data)
         adapter = self._adapter
         try:
-            decision, thread_id, run_id, requester_id = parse_card_action(_card_value(message.content))
+            decision, thread_id, run_id, requester_id, chat_id = parse_card_action(_card_value(message.content))
         except (ValueError, TypeError, json.JSONDecodeError):
             return AckMessage.STATUS_OK, "OK"
-        adapter._dispatch(adapter._resolve(decision, thread_id, run_id, message.user_id, requester_id))
+        adapter._dispatch(adapter._resolve(decision, thread_id, run_id, message.user_id, requester_id, chat_id))
         return AckMessage.STATUS_OK, "OK"

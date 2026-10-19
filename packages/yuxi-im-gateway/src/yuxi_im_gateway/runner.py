@@ -48,18 +48,24 @@ async def handle_inbound(
         return
 
     chat_id = session_chat_id(bot, msg)
+    # 会话键可能带发送者后缀（群内按用户隔离），而平台出站必须用原始会话 id。
+    reply_chat_id = msg.chat_id
 
     async def job() -> None:
         try:
-            await _run_and_reply(client=client, adapter=adapter, bot=bot, chat_id=chat_id, msg=msg)
+            await _run_and_reply(
+                client=client, adapter=adapter, bot=bot, chat_id=chat_id, reply_chat_id=reply_chat_id, msg=msg
+            )
         except Exception as exc:  # noqa: BLE001 - 单个会话失败不应中断网关
             logger.warning("处理入站消息失败 bot=%s message=%s: %s", bot.id, msg.message_id, exc)
 
     await sessions.run(chat_id, job)
 
 
-async def _run_and_reply(*, client, adapter, bot: BotConfig, chat_id: str, msg: InboundMessage) -> None:
-    """提交运行、消费事件并把结果或审批卡片发回平台。"""
+async def _run_and_reply(
+    *, client, adapter, bot: BotConfig, chat_id: str, reply_chat_id: str, msg: InboundMessage
+) -> None:
+    """提交运行、消费事件并把结果或审批卡片发回平台会话。"""
     try:
         submitted = await client.submit_message(
             bot=bot,
@@ -72,31 +78,31 @@ async def _run_and_reply(*, client, adapter, bot: BotConfig, chat_id: str, msg: 
         )
     except Exception as exc:  # noqa: BLE001 - 单个会话失败不应中断网关
         logger.warning("提交消息失败 bot=%s: %s", bot.id, exc)
-        await adapter.send_text(chat_id, f"调用失败：{exc}")
+        await adapter.send_text(reply_chat_id, f"调用失败：{exc}")
         return
 
     stream_url = _resolve_stream_url(client, submitted)
     if not stream_url:
-        await adapter.send_text(chat_id, "运行未启动，请稍后重试")
+        await adapter.send_text(reply_chat_id, "运行未启动，请稍后重试")
         return
 
     outcome = await _consume(client, stream_url, bot.api_key, submitted.get("thread_id"))
     if outcome.status == "approval_required":
         await adapter.send_approval_card(
-            chat_id,
+            reply_chat_id,
             thread_id=str(submitted.get("thread_id") or ""),
             run_id=str(submitted.get("run_id") or ""),
             requester_id=msg.sender_id,
         )
         return
     if outcome.status == "error":
-        await adapter.send_text(chat_id, f"运行失败：{outcome.error_message}")
+        await adapter.send_text(reply_chat_id, f"运行失败：{outcome.error_message}")
         return
 
     if outcome.text.strip():
-        await adapter.send_markdown(chat_id, outcome.text)
+        await adapter.send_markdown(reply_chat_id, outcome.text)
     for path in outcome.artifact_paths:
-        await _send_artifact(client, adapter, bot, chat_id, str(submitted.get("thread_id") or ""), path)
+        await _send_artifact(client, adapter, bot, reply_chat_id, str(submitted.get("thread_id") or ""), path)
 
 
 def _resolve_stream_url(client, submitted: dict) -> str | None:
@@ -133,8 +139,9 @@ async def resolve_approval(
     decision: str,
     operator_id: str,
     requester_id: str,
+    chat_id: str,
 ) -> None:
-    """处理卡片审批回调：仅原发送者有效，提交 decision 并回发最终结果。"""
+    """处理卡片审批回调：仅原发送者有效，提交 decision 并把最终结果回发原会话。"""
     try:
         if operator_id != requester_id:
             return
@@ -154,18 +161,18 @@ async def resolve_approval(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("提交审批失败 bot=%s run=%s: %s", bot.id, run_id, exc)
-            await adapter.send_text(thread_id, f"审批提交失败：{exc}")
+            await adapter.send_text(chat_id, f"审批提交失败：{exc}")
             return
 
         run = result.get("run") if isinstance(result.get("run"), dict) else result
         stream_url = run.get("stream_url") if isinstance(run, dict) else None
         if not stream_url:
-            await adapter.send_text(thread_id, "运行未启动，请稍后重试")
+            await adapter.send_text(chat_id, "运行未启动，请稍后重试")
             return
         outcome = await _consume(client, stream_url, bot.api_key, thread_id)
         if outcome.status == "completed" and outcome.text.strip():
-            await adapter.send_markdown(thread_id, outcome.text)
+            await adapter.send_markdown(chat_id, outcome.text)
         elif outcome.status == "error":
-            await adapter.send_text(thread_id, f"运行失败：{outcome.error_message}")
+            await adapter.send_text(chat_id, f"运行失败：{outcome.error_message}")
     except Exception as exc:  # noqa: BLE001 - 单个会话失败不应中断网关
         logger.warning("处理审批回调失败 bot=%s run=%s: %s", bot.id, run_id, exc)

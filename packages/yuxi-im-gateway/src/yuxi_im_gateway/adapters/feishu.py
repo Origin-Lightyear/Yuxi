@@ -106,7 +106,7 @@ class FeishuAdapter(Adapter):
 
     async def send_approval_card(self, chat_id: str, *, thread_id: str, run_id: str, requester_id: str) -> None:
         """发送审批交互卡片。"""
-        card = _feishu_card(approval_card(thread_id, run_id, requester_id))
+        card = _feishu_card(approval_card(thread_id, run_id, requester_id, chat_id))
         await asyncio.to_thread(self._send_message, chat_id, "interactive", json.dumps(card, ensure_ascii=False))
 
     def _normalize(self, data) -> InboundMessage | None:
@@ -146,18 +146,18 @@ class FeishuAdapter(Adapter):
         value = getattr(action, "value", None)
         operator_id = str(getattr(getattr(data.event, "operator", None), "open_id", ""))
         try:
-            decision, thread_id, run_id, requester_id = parse_card_action(value)
+            decision, thread_id, run_id, requester_id, chat_id = parse_card_action(value)
         except (ValueError, json.JSONDecodeError):
             return
-        self._dispatch(self._resolve(decision, thread_id, run_id, operator_id, requester_id))
+        self._dispatch(self._resolve(decision, thread_id, run_id, operator_id, requester_id, chat_id))
 
-    async def _resolve(self, decision, thread_id, run_id, operator_id, requester_id) -> None:
+    async def _resolve(self, decision, thread_id, run_id, operator_id, requester_id, chat_id) -> None:
         """从主 loop 调用编排层处理审批（client/bot 由 main 注入）。"""
         callback = getattr(self, "approval_handler", None)
         if callback is not None:
             await callback(
                 decision=decision, thread_id=thread_id, run_id=run_id,
-                operator_id=operator_id, requester_id=requester_id,
+                operator_id=operator_id, requester_id=requester_id, chat_id=chat_id,
             )
 
     def _send_message(self, chat_id: str, msg_type: str, content: str) -> None:
