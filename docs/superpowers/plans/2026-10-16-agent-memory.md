@@ -8,7 +8,7 @@
 
 **Tech Stack:** SQLAlchemy + asyncpg（幂等 DDL 进 `manager.py`，无 Alembic）、`task_registry`/`task_queue_service` durable task、LangGraph middleware（`append_to_system_message`）、`select_model` 单次 LLM 抽取、Vue 3 `<script setup>` + lucide 图标。
 
-**Spec:** `docs/develop-guides/decisions/proposed/2026-10-16-agent-memory-feature.md`（本计划实现该 spec；实现层裁定见 Global Constraints 第 1 条）。
+**Spec:** `docs/develop-guides/decisions/implemented/2026-10-16-agent-memory-feature.md`（本计划实现该 spec；实现层裁定见 Global Constraints 第 1 条；记录已随实现移入 `implemented/`）。
 
 ## Global Constraints
 

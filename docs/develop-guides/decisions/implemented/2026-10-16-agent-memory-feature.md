@@ -1,6 +1,6 @@
 # 跨会话 (用户×Agent) 记忆条目
 
-状态：proposed
+状态：implemented
 类型：feature
 Owner：backend/package/yuxi/agents/middlewares/agent_memory.py
 
@@ -10,9 +10,7 @@ Owner：backend/package/yuxi/agents/middlewares/agent_memory.py
 
 既有记忆只有 uid 维度的 `MEMORY.md` 文件方案（`memory_service` + `enable_memory` 开关），Agent 无法积累"对这个用户的了解"：换线程、换会话后对用户偏好一无所知，多 Agent 场景无法差异化对待用户。调研确认仓内无 Agent 维度记忆、无结构化记忆表；memory middleware 是既有注入 seam，但 `BaseContext` 缺 agent 身份，Run 链路中 `agent_slug` 只在 Run 行与 worker 局部可见。用户诉求：跨会话用户级记忆、云端持久化、按 (用户, Agent) 粒度、在 agent 上下文可查看与删除。
 
-## 提案
-
-### 实现方案
+## 决策
 
 **与既有用户记忆并存**（`MEMORY.md` 方案原样保留），新增 (用户×Agent) 结构化条目作为第二记忆源注入同一条链路。
 
@@ -50,7 +48,7 @@ Owner：backend/package/yuxi/agents/middlewares/agent_memory.py
 - Agent 工具主动写（`remember` 工具）+ 自动抽取双写：成本与质量不可预期叠加，留后续迭代，本期仅自动抽取。
 - 记忆向量检索/语义去重：条目为 ≤100 字结构化短文本、上限 50 条，最新倒序注入已足够，否决。
 
-## 验收标准
+## 验证
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
@@ -65,7 +63,7 @@ Owner：backend/package/yuxi/agents/middlewares/agent_memory.py
 | 前端面板：列表/空态/删除确认、开关关闭入口消失 | UI 不可用或误导 | `web/src/components/AgentMemoryPanel.vue` + `web/src/views/AgentView.vue` | web unit：`cd web && npm run test:unit`（AgentMemoryPanel 用例源码断言钉住 `:open` 门控表达式与 `v-if` enableMemory，全量 443 pass） | 空列表渲染空态文案；删除门控后断言在正确原因上失败 | Passed |
 | 全量门禁通过（后端 unit、web unit/lint/build、contracts、docs build） | 回归破坏 | 各命令 Owner | `pytest test/unit -m "not slow"` 2699 passed；`npm run test:unit` 443/443；lint:check 0 警告；build 成功；contracts 51 decisions 通过；docs build 成功 | 正向命令 | Passed |
 
-## 风险
+## 后果
 
 - **抽取质量**：条目可能空泛或近重复——上限 50、每条 ≤100 字、用户可删兜底；prompt 调优留迭代。
 - **成本增量**：每次 completed Run 一次额外小 prompt 调用；`enable_memory` 关闭即零成本。
