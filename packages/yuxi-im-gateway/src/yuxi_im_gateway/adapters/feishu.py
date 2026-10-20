@@ -21,6 +21,8 @@ OnInbound = Callable[[InboundMessage], Awaitable[None]]
 class FeishuAdapter(Adapter):
     """单个飞书机器人的长连接适配器。"""
 
+    RESTART_ON_STOP = True
+
     def __init__(self, bot: BotConfig, *, on_inbound: OnInbound) -> None:
         import lark_oapi as lark
 
@@ -28,6 +30,7 @@ class FeishuAdapter(Adapter):
         self._on_inbound = on_inbound
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        self._stopped = False
 
         credentials = bot.credentials
         domain = credentials.get("domain") or "feishu"
@@ -71,11 +74,15 @@ class FeishuAdapter(Adapter):
         self._thread = _run_in_thread(ws_client.start)
 
     async def stop(self) -> None:
-        """仅丢弃线程引用；SDK 无干净关闭接口，守护线程由进程退出兜底。"""
+        """标记停止并丢弃线程引用；SDK 无干净关闭接口，守护线程由进程退出兜底。"""
+        self._stopped = True
         self._thread = None
 
     def _dispatch(self, coro) -> None:
-        """把协程调度回主事件循环，并记录后台任务的未处理异常。"""
+        """把协程调度回主事件循环，并记录后台任务的未处理异常；停止后丢弃迟到回调。"""
+        if self._stopped:
+            coro.close()
+            return
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         future.add_done_callback(self._log_task_error)
 

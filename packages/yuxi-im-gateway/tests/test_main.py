@@ -6,6 +6,7 @@ from yuxi_im_gateway.models import BotConfig, InboundMessage
 class _FakeAdapter:
     """记录生命周期与审批回调的适配器替身。"""
 
+    RESTART_ON_STOP = False
     instances: list["_FakeAdapter"] = []
 
     def __init__(self, bot, *, on_inbound):
@@ -172,3 +173,63 @@ async def test_reconcile_isolates_bot_start_failure(monkeypatch):
     assert 1 not in runner._adapters
     assert 2 in runner._adapters
     assert [(adapter.bot.id, adapter.started) for adapter in _FakeAdapter.instances] == [(2, True)]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_restarts_process_when_leaky_bot_replaced(monkeypatch):
+    """长连接无法原地停止时，配置变更应请求重启进程而不是重建适配器。"""
+
+    class _LeakyAdapter(_FakeAdapter):
+        """模拟 SDK 无法停止后台线程的适配器。"""
+
+        RESTART_ON_STOP = True
+
+    import yuxi_im_gateway.main as mod
+
+    monkeypatch.setattr(mod, "build_adapter", lambda bot, on_inbound: _LeakyAdapter(bot, on_inbound=on_inbound))
+    runner = mod.GatewayRunner(client=None, settings=None)
+
+    await runner.reconcile([_bot(1, "a")])
+    await runner.reconcile([_bot(1, "b")])
+
+    assert runner.restart_requested is True
+    assert runner._stopping.is_set() is True
+    assert _FakeAdapter.instances[0].stopped is True
+    assert len(_FakeAdapter.instances) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_restarts_process_when_leaky_bot_removed(monkeypatch):
+    """删除机器人同样需要重启进程，避免旧连接继续占用消息。"""
+
+    class _LeakyAdapter(_FakeAdapter):
+        """模拟 SDK 无法停止后台线程的适配器。"""
+
+        RESTART_ON_STOP = True
+
+    import yuxi_im_gateway.main as mod
+
+    monkeypatch.setattr(mod, "build_adapter", lambda bot, on_inbound: _LeakyAdapter(bot, on_inbound=on_inbound))
+    runner = mod.GatewayRunner(client=None, settings=None)
+
+    await runner.reconcile([_bot(1, "a")])
+    await runner.reconcile([])
+
+    assert runner.restart_requested is True
+    assert _FakeAdapter.instances[0].stopped is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_running_on_in_place_field_change(monkeypatch):
+    """白名单等非连接字段变化不应触发重启。"""
+    import yuxi_im_gateway.main as mod
+
+    monkeypatch.setattr(mod, "build_adapter", lambda bot, on_inbound: _FakeAdapter(bot, on_inbound=on_inbound))
+    runner = mod.GatewayRunner(client=None, settings=None)
+
+    await runner.reconcile([_bot(1, "a")])
+    updated = BotConfig(1, "feishu", "b", {"app_id": "a", "app_secret": "s"}, "k2", "a")
+    await runner.reconcile([updated])
+
+    assert runner.restart_requested is False
+    assert runner._stopping.is_set() is False

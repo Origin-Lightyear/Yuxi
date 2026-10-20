@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
+import sys
 
 from yuxi_im_gateway.adapters.base import Adapter
 from yuxi_im_gateway.adapters.registry import adapter_fingerprint, build_adapter
@@ -28,14 +30,35 @@ class GatewayRunner:
         self._dedupe = DedupeCache()
         self._sessions = SessionQueue()
         self._stopping = asyncio.Event()
+        # 连接无法原地重建时置位，由进程入口重启自身。
+        self.restart_requested = False
 
     async def reconcile(self, configs: list[BotConfig]) -> None:
-        """按最新配置增删改机器人连接，未变化的保持不动。"""
+        """按最新配置增删改机器人连接，未变化的保持不动。
+
+        平台 SDK 的守护线程无法停止（见 ``Adapter.RESTART_ON_STOP``），因此停止或重建
+        连接时必须重启整个进程：否则旧连接会继续收消息，甚至与钉钉新连接分流导致丢消息。
+        """
         desired = {bot.id: bot for bot in configs}
+        requires_restart = False
         for bot_id in list(self._adapters.keys()):
             bot = desired.get(bot_id)
             if bot is None or adapter_fingerprint(bot) != self._adapters[bot_id][0]:
+                adapter = self._adapters[bot_id][1]
+                if adapter.RESTART_ON_STOP:
+                    requires_restart = True
+                    logger.warning(
+                        "机器人连接配置变更，重启网关以释放旧长连接 id=%s platform=%s",
+                        bot_id,
+                        self._bots[bot_id].platform,
+                    )
                 await self._stop_bot(bot_id)
+
+        if requires_restart:
+            self.restart_requested = True
+            self._stopping.set()
+            return
+
         for bot_id, bot in desired.items():
             if bot_id not in self._adapters:
                 await self._start_bot(bot)
@@ -48,7 +71,7 @@ class GatewayRunner:
             self._attach_approval(adapter, bot)
             await adapter.start()
             self._adapters[bot.id] = (adapter_fingerprint(bot), adapter)
-            logger.info("机器人已启动 id=%s platform=%s", bot.id, bot.platform)
+            logger.info("机器人正在建立长连接 id=%s platform=%s", bot.id, bot.platform)
         except Exception as exc:
             logger.error("机器人启动失败 id=%s: %s", bot.id, exc)
 
@@ -131,6 +154,10 @@ async def _amain() -> None:
         await runner.run()
     finally:
         await client.aclose()
+
+    if runner.restart_requested:
+        logger.info("按最新机器人配置重启网关")
+        os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 def main() -> None:

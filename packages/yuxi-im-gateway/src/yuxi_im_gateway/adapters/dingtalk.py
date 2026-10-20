@@ -38,11 +38,14 @@ _MEDIA_UPLOAD_URL = "https://oapi.dingtalk.com/media/upload"
 class DingTalkAdapter(Adapter):
     """单个钉钉机器人的 Stream Mode 适配器。"""
 
+    RESTART_ON_STOP = True
+
     def __init__(self, bot: BotConfig, *, on_inbound: OnInbound) -> None:
         self._bot = bot
         self._on_inbound = on_inbound
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client: dingtalk_stream.DingTalkStreamClient | None = None
+        self._stopped = False
 
         # 出站走网关主 loop 上的 httpx 客户端；token 缓存到过期时间。
         self._http: httpx.AsyncClient | None = None
@@ -75,13 +78,17 @@ class DingTalkAdapter(Adapter):
 
     async def stop(self) -> None:
         """丢弃 HTTP 客户端与 Stream 引用；dingtalk-stream 无干净关闭接口，守护线程由进程退出兜底。"""
+        self._stopped = True
         if self._http is not None:
             await self._http.aclose()
         self._http = None
         self._client = None
 
     def _dispatch(self, coro) -> None:
-        """把协程调度回主事件循环，并记录后台任务的未处理异常。"""
+        """把协程调度回主事件循环，并记录后台任务的未处理异常；停止后丢弃迟到回调。"""
+        if self._stopped:
+            coro.close()
+            return
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         future.add_done_callback(self._log_task_error)
 

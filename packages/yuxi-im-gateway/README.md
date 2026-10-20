@@ -19,9 +19,18 @@ docker compose --profile gateway up -d gateway
 
 生产环境使用 `docker compose -f docker-compose.prod.yml --profile gateway up -d gateway`。
 
+### 配置热更新与自动重启
+
+白名单、@ 策略、API Key 等字段的变更会在下一轮轮询（默认 30s）内生效，无需重启。
+但**凭证或目标 Agent 变更**，以及**删除 / 停用机器人**，会触发网关进程自动重启：
+飞书、钉钉的 SDK 都没有提供停止长连接的接口，旧守护线程只能在进程退出时释放；
+若不重启，旧连接可能继续占用消息，钉钉侧还会把消息分流到旧连接导致丢失。
+重启期间进行中的回复会中断，等待中的 run 不会自动补发。
+
 ### 启动检查
 
-`docker logs gateway-dev` 中出现 `机器人已启动 id=... platform=...` 表示对应机器人已连接；
+`docker logs gateway-dev` 中出现 `机器人正在建立长连接 id=... platform=...` 表示适配器已启动，
+连接结果以紧随其后的 SDK 日志为准（钉钉为 `endpoint is {...}`，飞书为 lark 的连接日志）；
 尚未配置机器人时只输出配置轮询日志也属正常。若反复出现 `IM_GATEWAY_TOKEN 未配置`，
 说明 token 尚未配置，请补全后再启用 profile。
 

@@ -8,6 +8,9 @@ from abc import ABC, abstractmethod
 class Adapter(ABC):
     """一个机器人对应的平台连接与出站能力。"""
 
+    # 平台 SDK 的守护线程无法停止时置 True：网关只能在重启进程后释放旧连接。
+    RESTART_ON_STOP: bool = False
+
     @abstractmethod
     async def start(self) -> None:
         """建立长连接并开始接收事件。"""
