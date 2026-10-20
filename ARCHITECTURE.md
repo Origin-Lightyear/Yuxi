@@ -10,11 +10,14 @@ Linko AI 是一个面向 RAG、知识图谱和多智能体工作流的知识库�
 
 普通智能体请求先在 PostgreSQL 中保存为请求和消息，再立即派发或进入线程级 FIFO 队列。派发后的 `AgentRun` 通过 Redis/ARQ 交给独立 worker 执行，运行事件写入 Redis Stream，最终状态和业务记录写回 PostgreSQL，前端通过 SSE 消费排队与运行事件。
 
+除前端与外部 API 外，`packages/yuxi-im-gateway` 的可选 IM 网关也通过 `POST /api/agent-invocation/channel/messages` 接入同一条请求与队列主链路；它只在 `gateway` profile 下启动。
+
 核心开发服务包括：
 
 - `web-dev`：Vue 3 / Vite 前端，挂载 `web/src` 并热重载。
 - `api-dev`：FastAPI API 服务，挂载 `backend/server`、`backend/package` 和测试目录并热重载。
 - `worker-dev`：ARQ worker，执行已经派发的 AgentRun，并负责异常恢复扫描。
+- `gateway-dev`：通过 `gateway` profile 可选启动的 IM 网关，常驻进程维持飞书 / 钉钉 WebSocket 长连接，把 IM 消息桥接到 Channel API，并轮询机器人配置实现热更新。
 - `sandbox-provisioner`：为智能体工具执行提供隔离沙盒。
 - `postgres`：业务数据、知识库元数据、请求队列、AgentRun 与 LangGraph checkpoint。
 - `redis`：ARQ 投递、运行事件、取消信号以及跨进程配置和模型缓存。

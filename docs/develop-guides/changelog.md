@@ -6,7 +6,7 @@
 
 ## v0.7.2 (current)
 
-- 新增 IM 机器人配置底座：`im_bot_configs` 表、凭证对称加密、按属主创建 API Key，提供管理员接口 `/api/system/im-bots` 与网关配置拉取 `/api/internal/im-gateway/config`；Channel 入口新增工具审批拒绝 `/reject`；前端设置页新增「IM 机器人」管理。
+- 新增 IM 机器人能力：`im_bot_configs` 表、凭证加密与按属主 API Key，提供管理接口、`/reject` 审批拒绝和前端设置页；新增独立网关服务 `packages/yuxi-im-gateway`，通过 WebSocket 接入飞书 / 钉钉，支持 Markdown / Excel 附件回发、卡片审批与配置热更新，Compose 新增可选 `gateway` 服务及相关环境变量。
 - 优化 SaaS Agent 体验：运行时仅展开当前任务，结束后收起轨迹；员工资料显示部门和姓名，设置隐藏本地角色、基本设置、OCR 与沙盒变量；退出清状态后立即返回登录页，不等待后端注销；NewAPI 同步后刷新缓存，成功空清单清除旧模型，失败保留；展示员工可读的租户知识库和目录，隐藏结构管理，仅 `manage_scope` 员工可管理文档；租户 `departmentId` 单独持久化并用于权限匹配，避免与本地部门主键混用。
 - 移除前端首页与应用布局对 GitHub 仓库 API 的实时统计请求，不再由浏览器访问 `api.github.com`；仓库和文档跳转链接保持不变。
 - 补齐 SaaS 员工知识库访问：列表与详情返回有效读写权限，文档查看、上传、移动和删除按共享范围授权，知识库与目录结构仍仅管理员可维护；跨租户、跨库文档及目标目录统一校验，员工页面隐藏管理入口并修复文件上传 multipart 边界。建档时校验最终 MinIO 源对象的 bucket 与知识库归属（含预处理覆盖路径），文档写入先授权再检查类型，避免跨租户对象越权和名称泄露。

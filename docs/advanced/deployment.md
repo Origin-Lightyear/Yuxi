@@ -39,6 +39,8 @@ SILICONFLOW_API_KEY=
 
 生产 Compose 会在前七项配置缺失或为空时拒绝启动，并提示具体变量名。`JWT_SECRET_KEY` 和 `SANDBOX_PROVISIONER_TOKEN` 均应至少使用 32 字节随机值并持久保存，可分别使用 `openssl rand -hex 32` 生成；两者不能复用。`YUXI_INSTANCE_ID` 应是每套部署稳定且唯一的实例标识。模型 API 密钥按实际使用的供应商配置。
 
+如需启用 IM 机器人（飞书 / 钉钉），还需在 `.env.prod` 中设置 `IM_GATEWAY_TOKEN`：它与 api 服务共享，未配置时内部配置接口返回 404，网关进程会因缺少令牌直接退出。
+
 ### 2. 启动服务
 
 使用生产环境配置文件启动：
@@ -49,6 +51,9 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 # 启动所有服务（包含 GPU OCR）
 docker compose -f docker-compose.prod.yml --profile all up -d --build
+
+# 额外启用 IM 网关（需先设置 IM_GATEWAY_TOKEN）
+docker compose -f docker-compose.prod.yml --profile gateway up -d --build
 ```
 
 ### 3. 验证部署
