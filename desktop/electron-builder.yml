@@ -27,6 +27,8 @@ win:
   executableName: Yuxi
 
 nsis:
+  # 双架构需分别构建；带 ${arch} 后缀避免 x64 / arm64 安装包互相覆盖
+  artifactName: ${productName} Setup ${version}-${arch}.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
