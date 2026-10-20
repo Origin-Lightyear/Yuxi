@@ -15,6 +15,7 @@ RUN set -ex \
 
 COPY packages/yuxi-im-gateway/pyproject.toml /app/pyproject.toml
 COPY packages/yuxi-im-gateway/uv.lock /app/uv.lock
+COPY packages/yuxi-im-gateway/README.md /app/README.md
 COPY packages/yuxi-im-gateway/src /app/src
 
 RUN uv sync --no-cache --no-dev --frozen

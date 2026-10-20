@@ -113,10 +113,6 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env.prod
-    environment:
-      - YUXI_GATEWAY_API_BASE=${YUXI_GATEWAY_API_BASE:-http://api:5050}
-      - IM_GATEWAY_TOKEN=${IM_GATEWAY_TOKEN:-}
-      - IM_GATEWAY_POLL_INTERVAL=${IM_GATEWAY_POLL_INTERVAL:-30}
     command: python -m yuxi_im_gateway
     restart: unless-stopped
     depends_on:
