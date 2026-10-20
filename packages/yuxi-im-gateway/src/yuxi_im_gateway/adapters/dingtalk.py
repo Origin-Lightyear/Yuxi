@@ -195,9 +195,20 @@ class DingTalkAdapter(Adapter):
 
         钉钉 session webhook 过期 / 限流时仍返回 HTTP 200，只靠状态码会把丢包当成功，
         因此必须解析响应体 errcode。
+
+        webhook URL 的查询串带有可向该会话发消息的 session 密钥，httpx 的异常文本会带出
+        完整 URL，因此传输层错误只保留状态码、异常类型与响应片段。
         """
-        response = await self._http.post(webhook, json=body)
-        response.raise_for_status()
+        try:
+            response = await self._http.post(webhook, json=body)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            response = exc.response
+            status = response.status_code if response is not None else None
+            excerpt = response.text[:200] if response is not None else ""
+            raise RuntimeError(
+                f"钉钉 session webhook 请求失败 status={status} error={type(exc).__name__} body={excerpt}"
+            ) from None
         try:
             data = response.json()
         except ValueError:

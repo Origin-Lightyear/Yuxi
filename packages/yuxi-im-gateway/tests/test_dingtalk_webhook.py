@@ -23,9 +23,10 @@ async def test_post_webhook_raises_on_nonzero_errcode_with_http_200():
         return_value=httpx.Response(200, json={"errcode": 310000, "errmsg": "webhook expired"})
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as excinfo:
         await adapter._post_webhook(_WEBHOOK, {"msgtype": "text", "text": {"content": "hi"}})
 
+    assert "310000" in str(excinfo.value)
     await adapter.stop()
 
 
@@ -46,9 +47,27 @@ async def test_post_webhook_treats_non_json_2xx_as_failure():
     adapter = _adapter()
     respx.post(_WEBHOOK).mock(return_value=httpx.Response(200, text="<html>gateway</html>"))
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as excinfo:
         await adapter._post_webhook(_WEBHOOK, {"msgtype": "text", "text": {"content": "hi"}})
 
+    assert "非 JSON" in str(excinfo.value)
+    await adapter.stop()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_post_webhook_http_error_does_not_leak_session_secret():
+    adapter = _adapter()
+    secret_url = f"{_WEBHOOK}?session=WEBHOOK_SECRET"
+    respx.post(secret_url).mock(return_value=httpx.Response(500, text="upstream error"))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await adapter._post_webhook(secret_url, {"msgtype": "text", "text": {"content": "hi"}})
+
+    message = str(excinfo.value)
+    assert "500" in message
+    assert "WEBHOOK_SECRET" not in message
+    assert _WEBHOOK not in message
     await adapter.stop()
 
 
