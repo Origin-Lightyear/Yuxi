@@ -102,9 +102,13 @@ async def receive_channel_message(
                 include_messages=False,
             )
             return {"kind": "command", "command": "state", "thread_id": thread_id, "state": state}
-        if command.name == "approve":
-            _require_no_args(command.name, command.args)
-            return await _approve_latest_run(
+        try:
+            decision = decision_type_for_command(command.name, command.args)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if decision is not None:
+            return await _resolve_latest_run(
+                decision=decision,
                 agent_slug=agent_slug,
                 thread_id=thread_id,
                 request_id=request_id,
@@ -155,8 +159,9 @@ async def receive_channel_message(
     return result
 
 
-async def _approve_latest_run(
+async def _resolve_latest_run(
     *,
+    decision: str,
     agent_slug: str,
     thread_id: str,
     request_id: str,
@@ -166,7 +171,7 @@ async def _approve_latest_run(
     current_user: User,
     db: AsyncSession,
 ) -> dict:
-    """审批当前等待中的工具调用，并优先复用同 request_id 的恢复 run。"""
+    """审批（批准或拒绝）当前等待中的工具调用，并优先复用同 request_id 的恢复 run。"""
     run_repo = AgentRunRepository(db)
     existing_run = await run_repo.get_run_by_request_id(request_id)
     latest_run = await run_repo.get_latest_chat_or_resume_run(
@@ -206,14 +211,27 @@ async def _approve_latest_run(
         meta={"request_id": request_id, "source": "channel", "channel": channel},
         current_uid=str(current_user.uid),
         db=db,
-        resume={"decisions": [{"type": "approve"}]},
+        resume={"decisions": [{"type": decision}]},
         created_by_run_id=parent_run_id,
         source="channel",
         channel=channel,
         external_id=external_id,
         origin_metadata=origin_metadata,
     )
-    return {"kind": "command", "command": "approve", "thread_id": thread_id, "run": result}
+    return {"kind": "command", "command": decision, "thread_id": thread_id, "run": result}
+
+
+_DECISION_COMMANDS = {"approve": "approve", "reject": "reject"}
+
+
+def decision_type_for_command(name: str, args: tuple[str, ...]) -> str | None:
+    """将审批类 slash command 映射为 decision 类型；非审批命令返回 None。"""
+    decision = _DECISION_COMMANDS.get(name)
+    if decision is None:
+        return None
+    if args:
+        raise ValueError(f"/{name} 不接受参数")
+    return decision
 
 
 def _resolve_thread_id(

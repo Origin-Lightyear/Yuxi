@@ -75,6 +75,15 @@
           </div>
           <div
             class="sider-item"
+            :class="{ activesec: activeTab === 'imBots' }"
+            @click="activeTab = 'imBots'"
+            v-if="userStore.isAdmin && !userStore.saasMode"
+          >
+            <Bot class="icon" :size="18" />
+            <span>IM 机器人</span>
+          </div>
+          <div
+            class="sider-item"
             :class="{ activesec: activeTab === 'agentEnv' }"
             @click="activeTab = 'agentEnv'"
             v-if="userStore.isLoggedIn && !userStore.saasMode"
@@ -176,6 +185,14 @@
         >
           部门管理
         </div>
+        <div
+          class="nav-item"
+          :class="{ active: activeTab === 'imBots' }"
+          @click="activeTab = 'imBots'"
+          v-if="userStore.isAdmin && !userStore.saasMode"
+        >
+          IM 机器人
+        </div>
       </div>
 
       <!-- 内容区域 -->
@@ -208,6 +225,10 @@
           <div v-show="activeTab === 'department'" v-if="userStore.isSuperAdmin && !userStore.saasMode">
             <DepartmentManagementComponent />
           </div>
+
+          <div v-show="activeTab === 'imBots'" v-if="userStore.isAdmin && !userStore.saasMode">
+            <ImBotManagementComponent />
+          </div>
         </div>
       </div>
     </div>
@@ -219,6 +240,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import {
   CircleUser,
+  Bot,
   ExternalLink,
   Settings,
   Key,
@@ -236,6 +258,7 @@ import OCRSettingsSection from '@/components/OCRSettingsSection.vue'
 import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
 import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
+import ImBotManagementComponent from '@/components/ImBotManagementComponent.vue'
 
 const props = defineProps({
   visible: {
@@ -266,7 +289,7 @@ const availableTabs = computed(() => {
   const tabs = []
   if (userStore.isLoggedIn) tabs.push('account', 'apiKeys')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('agentEnv')
-  if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user')
+  if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user', 'imBots')
   if (userStore.isSuperAdmin && !userStore.saasMode) tabs.push('department')
   return tabs
 })
