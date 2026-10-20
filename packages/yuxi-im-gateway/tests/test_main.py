@@ -128,11 +128,13 @@ async def test_attach_approval_forwards_all_keywords(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reconcile_applies_live_field_change_to_inbound(monkeypatch):
+    """配置热更新后，入站消息应使用最新的机器人配置。"""
     import yuxi_im_gateway.main as mod
 
     seen: list[dict] = []
 
     async def fake_handle_inbound(**kwargs):
+        """记录入站处理参数供断言使用。"""
         seen.append(kwargs)
 
     monkeypatch.setattr(mod, "build_adapter", lambda bot, on_inbound: _FakeAdapter(bot, on_inbound=on_inbound))

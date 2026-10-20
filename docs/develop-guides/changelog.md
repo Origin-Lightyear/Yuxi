@@ -6,6 +6,7 @@
 
 ## v0.7.2 (current)
 
+- 新增 IM 机器人能力：后台管理飞书 / 钉钉机器人配置（凭证加密、按属主创建 API Key），新增独立网关服务 `packages/yuxi-im-gateway`，通过 WebSocket 长连接接入，支持 Markdown 正文与 Excel 附件回发、交互卡片工具审批、配置热更新；Compose 新增可选 `gateway` 服务及 `IM_GATEWAY_TOKEN`、`IM_GATEWAY_POLL_INTERVAL` 等环境变量。
 - 新增 IM 机器人配置底座：`im_bot_configs` 表、凭证对称加密、按属主创建 API Key，提供管理员接口 `/api/system/im-bots` 与网关配置拉取 `/api/internal/im-gateway/config`；Channel 入口新增工具审批拒绝 `/reject`；前端设置页新增「IM 机器人」管理。
 - 优化 SaaS Agent 体验：运行时仅展开当前任务，结束后收起轨迹；员工资料显示部门和姓名，设置隐藏本地角色、基本设置、OCR 与沙盒变量；退出清状态后立即返回登录页，不等待后端注销；NewAPI 同步后刷新缓存，成功空清单清除旧模型，失败保留；展示员工可读的租户知识库和目录，隐藏结构管理，仅 `manage_scope` 员工可管理文档；租户 `departmentId` 单独持久化并用于权限匹配，避免与本地部门主键混用。
 - 移除前端首页与应用布局对 GitHub 仓库 API 的实时统计请求，不再由浏览器访问 `api.github.com`；仓库和文档跳转链接保持不变。

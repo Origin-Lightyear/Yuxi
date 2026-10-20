@@ -98,6 +98,31 @@ services:
       sandbox-provisioner:
         condition: service_healthy
 
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
+    image: yuxi-gateway:${YUXI_VERSION:-0.7.1}
+    container_name: gateway-prod
+    profiles:
+      - gateway
+    working_dir: /app
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env.prod
+    environment:
+      - YUXI_GATEWAY_API_BASE=${YUXI_GATEWAY_API_BASE:-http://api:5050}
+      - IM_GATEWAY_TOKEN=${IM_GATEWAY_TOKEN:-}
+      - IM_GATEWAY_POLL_INTERVAL=${IM_GATEWAY_POLL_INTERVAL:-30}
+    command: python -m yuxi_im_gateway
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
   sandbox-provisioner:
     build:
       context: ./docker/sandbox_provisioner
