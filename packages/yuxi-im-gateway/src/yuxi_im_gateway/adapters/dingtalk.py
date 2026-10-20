@@ -118,6 +118,7 @@ class DingTalkAdapter(Adapter):
         incoming = self._recent_messages.get(chat_id)
         if incoming is None or self._chatbot_handler is None:
             logger.warning("钉钉会话 %s 无可用入站消息，跳过审批卡片发送", chat_id)
+            await self.send_text(chat_id, "审批卡片发送失败，请直接回复 /approve 或 /reject 进行审批")
             return
         card = approval_card(thread_id, run_id, requester_id, chat_id)
         buttons = [{"text": action["label"], "value": action["value"]} for action in card["actions"]]
@@ -231,14 +232,23 @@ class DingTalkAdapter(Adapter):
             return self._token
 
     async def _upload_media(self, filename: str, content: bytes) -> str:
-        """上传文件到钉钉临时素材库并返回 media_id。"""
+        """上传文件到钉钉临时素材库并返回 media_id。
+
+        access_token 位于查询串，httpx 的状态错误会带出完整 URL，因此这里只把状态码与
+        响应片段包装成 RuntimeError，避免调用方记录异常时泄露企业 token。
+        """
         token = await self._get_token()
-        response = await self._http.post(
-            _MEDIA_UPLOAD_URL,
-            params={"access_token": token, "type": "file"},
-            files={"media": (filename, content)},
-        )
-        response.raise_for_status()
+        try:
+            response = await self._http.post(
+                _MEDIA_UPLOAD_URL,
+                params={"access_token": token, "type": "file"},
+                files={"media": (filename, content)},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            body = getattr(getattr(exc, "response", None), "text", "") or ""
+            raise RuntimeError(f"上传钉钉素材失败 status={status} body={body[:200]}") from None
         data = response.json()
         if data.get("errcode"):
             raise RuntimeError(f"上传钉钉素材失败 errcode={data.get('errcode')} errmsg={data.get('errmsg')}")

@@ -152,3 +152,23 @@ async def test_reconcile_applies_live_field_change_to_inbound(monkeypatch):
     assert len(_FakeAdapter.instances) == 1
     assert seen[0]["bot"].api_key == "k"
     assert seen[1]["bot"].api_key == "k2"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_isolates_bot_start_failure(monkeypatch):
+    """一个机器人启动失败不应阻止其它机器人启动，也不应留下半初始化的适配器。"""
+    import yuxi_im_gateway.main as mod
+
+    def build(bot, on_inbound):
+        if bot.id == 1:
+            raise RuntimeError("bad bot")
+        return _FakeAdapter(bot, on_inbound=on_inbound)
+
+    monkeypatch.setattr(mod, "build_adapter", build)
+    runner = mod.GatewayRunner(client=None, settings=None)
+
+    await runner.reconcile([_bot(1, "a"), _bot(2, "b")])
+
+    assert 1 not in runner._adapters
+    assert 2 in runner._adapters
+    assert [(adapter.bot.id, adapter.started) for adapter in _FakeAdapter.instances] == [(2, True)]

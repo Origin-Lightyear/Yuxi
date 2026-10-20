@@ -54,3 +54,24 @@ def test_error_event_surfaces_message():
     outcome = reduce_run_events(events, thread_id="t1")
     assert outcome.status == "error"
     assert outcome.error_message == "boom"
+
+
+def test_events_from_other_threads_are_dropped():
+    events = [
+        _ev("messages", {"items": [{"stream_event": {"type": "message_delta", "content": "main"}}]}),
+        {
+            "event": "messages",
+            "data": json.dumps(
+                {
+                    "thread_id": "sub",
+                    "payload": {"items": [{"stream_event": {"type": "message_delta", "content": "ignored"}}]},
+                }
+            ),
+        },
+        _ev("end", {"status": "completed"}),
+    ]
+
+    outcome = reduce_run_events(events, thread_id="t1")
+
+    assert outcome.status == "completed"
+    assert outcome.text == "main"

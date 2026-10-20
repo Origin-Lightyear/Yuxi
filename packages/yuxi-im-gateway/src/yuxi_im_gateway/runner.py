@@ -81,7 +81,7 @@ async def _run_and_reply(
         await adapter.send_text(reply_chat_id, f"调用失败：{exc}")
         return
 
-    stream_url = _resolve_stream_url(client, submitted)
+    stream_url = _resolve_stream_url(submitted)
     if not stream_url:
         await adapter.send_text(reply_chat_id, "运行未启动，请稍后重试")
         return
@@ -99,13 +99,10 @@ async def _run_and_reply(
         await adapter.send_text(reply_chat_id, f"运行失败：{outcome.error_message}")
         return
 
-    if outcome.text.strip():
-        await adapter.send_markdown(reply_chat_id, outcome.text)
-    for path in outcome.artifact_paths:
-        await _send_artifact(client, adapter, bot, reply_chat_id, str(submitted.get("thread_id") or ""), path)
+    await _deliver(client, adapter, bot, reply_chat_id, str(submitted.get("thread_id") or ""), outcome)
 
 
-def _resolve_stream_url(client, submitted: dict) -> str | None:
+def _resolve_stream_url(submitted: dict) -> str | None:
     """从提交响应解析实际可订阅的 run stream_url。"""
     return submitted.get("stream_url")
 
@@ -116,6 +113,14 @@ async def _consume(client, stream_url: str, api_key: str, thread_id: str | None)
     async for batch in client.stream_run(stream_url, api_key):
         collected.extend(batch)
     return reduce_run_events(collected, thread_id=thread_id)
+
+
+async def _deliver(client, adapter, bot: BotConfig, chat_id: str, thread_id: str, outcome) -> None:
+    """发送运行正文与全部交付物；单个交付物失败不阻断其余交付物。"""
+    if outcome.text.strip():
+        await adapter.send_markdown(chat_id, outcome.text)
+    for path in outcome.artifact_paths:
+        await _send_artifact(client, adapter, bot, chat_id, thread_id, path)
 
 
 async def _send_artifact(client, adapter, bot: BotConfig, chat_id: str, thread_id: str, path: str) -> None:
@@ -170,9 +175,9 @@ async def resolve_approval(
             await adapter.send_text(chat_id, "运行未启动，请稍后重试")
             return
         outcome = await _consume(client, stream_url, bot.api_key, thread_id)
-        if outcome.status == "completed" and outcome.text.strip():
-            await adapter.send_markdown(chat_id, outcome.text)
-        elif outcome.status == "error":
+        if outcome.status == "error":
             await adapter.send_text(chat_id, f"运行失败：{outcome.error_message}")
+        elif outcome.status == "completed":
+            await _deliver(client, adapter, bot, chat_id, thread_id, outcome)
     except Exception as exc:  # noqa: BLE001 - 单个会话失败不应中断网关
         logger.warning("处理审批回调失败 bot=%s run=%s: %s", bot.id, run_id, exc)

@@ -50,3 +50,19 @@ async def test_post_webhook_treats_non_json_2xx_as_failure():
         await adapter._post_webhook(_WEBHOOK, {"msgtype": "text", "text": {"content": "hi"}})
 
     await adapter.stop()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_upload_media_failure_does_not_leak_access_token():
+    adapter = _adapter()
+    adapter._token = "SECRET_TOKEN"
+    adapter._token_expire = float("inf")
+    respx.post("https://oapi.dingtalk.com/media/upload").mock(return_value=httpx.Response(500, text="boom"))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await adapter._upload_media("a.xlsx", b"data")
+
+    assert "SECRET_TOKEN" not in str(excinfo.value)
+    assert "500" in str(excinfo.value)
+    await adapter.stop()

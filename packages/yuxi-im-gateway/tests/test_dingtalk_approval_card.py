@@ -50,7 +50,14 @@ async def test_send_approval_card_skips_without_cached_inbound_message():
     adapter = _adapter()
     handler = FakeChatbotHandler()
     adapter._chatbot_handler = handler
+    texts: list[tuple[str, str]] = []
+
+    async def fake_send_text(chat_id: str, text: str) -> None:
+        texts.append((chat_id, text))
+
+    adapter.send_text = fake_send_text
 
     await adapter.send_approval_card("c1", thread_id="t1", run_id="r1", requester_id="u1")
 
     assert handler.calls == []
+    assert texts == [("c1", "审批卡片发送失败，请直接回复 /approve 或 /reject 进行审批")]

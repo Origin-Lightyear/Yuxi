@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 
@@ -15,8 +16,10 @@ from yuxi_im_gateway.runner import (
 class FakeClient:
     """记录提交参数并按预置结果返回的客户端替身。"""
 
-    def __init__(self, submitted: dict | None = None) -> None:
+    def __init__(self, submitted: dict | None = None, events: list[dict] | None = None, fail_paths=()) -> None:
         self.submitted = submitted if submitted is not None else {"thread_id": "t1", "run_id": "r1"}
+        self.events = events or []
+        self.fail_paths = set(fail_paths)
         self.calls: list[dict] = []
 
     async def submit_message(self, **kwargs) -> dict:
@@ -24,10 +27,12 @@ class FakeClient:
         return self.submitted
 
     async def stream_run(self, stream_url: str, api_key: str):
-        if False:
-            yield []
+        if self.events:
+            yield self.events
 
     async def download_artifact(self, thread_id: str, path: str, api_key: str) -> bytes:
+        if path in self.fail_paths:
+            raise RuntimeError("下载失败")
         return b"artifact"
 
 
@@ -88,6 +93,11 @@ def _msg(**overrides) -> InboundMessage:
     )
     values.update(overrides)
     return InboundMessage(**values)
+
+
+def _sse(event: str, payload: dict, thread_id: str = "t1") -> dict:
+    """构造一条带 thread_id 的 SSE 事件，供运行结果归并使用。"""
+    return {"event": event, "data": json.dumps({"thread_id": thread_id, "payload": payload})}
 
 
 def test_approval_request_id_is_deterministic():
@@ -292,3 +302,77 @@ async def test_resolve_approval_replies_to_card_chat_id():
     )
 
     assert adapter.texts == [("g1", "运行未启动，请稍后重试")]
+
+
+@pytest.mark.asyncio
+async def test_handle_inbound_delivers_markdown_and_all_artifacts():
+    events = [
+        _sse("messages", {"items": [{"stream_event": {"type": "message_delta", "content": "hello"}}]}),
+        _sse("custom", {"agent_state": {"artifacts": ["/out/a.xlsx", "/out/b.xlsx"]}}),
+        _sse("end", {"status": "completed"}),
+    ]
+    client = FakeClient(submitted={"thread_id": "t1", "run_id": "r1", "stream_url": "u1"}, events=events)
+    adapter = FakeAdapter()
+
+    await handle_inbound(
+        client=client,
+        adapter=adapter,
+        bot=_bot(),
+        dedupe=DedupeCache(),
+        sessions=RecordingSessions(),
+        msg=_msg(),
+    )
+
+    assert adapter.markdowns == [("c1", "hello")]
+    assert adapter.files == [("c1", "a.xlsx", b"artifact"), ("c1", "b.xlsx", b"artifact")]
+
+
+@pytest.mark.asyncio
+async def test_artifact_failure_does_not_block_remaining_artifacts():
+    events = [
+        _sse("custom", {"agent_state": {"artifacts": ["/out/a.xlsx", "/out/b.xlsx"]}}),
+        _sse("end", {"status": "completed"}),
+    ]
+    client = FakeClient(
+        submitted={"thread_id": "t1", "run_id": "r1", "stream_url": "u1"},
+        events=events,
+        fail_paths={"/out/a.xlsx"},
+    )
+    adapter = FakeAdapter()
+
+    await handle_inbound(
+        client=client,
+        adapter=adapter,
+        bot=_bot(),
+        dedupe=DedupeCache(),
+        sessions=RecordingSessions(),
+        msg=_msg(),
+    )
+
+    assert adapter.files == [("c1", "b.xlsx", b"artifact")]
+    assert adapter.texts == [("c1", "交付物 /out/a.xlsx 发送失败")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_approval_delivers_artifact_when_text_is_empty():
+    events = [
+        _sse("custom", {"agent_state": {"artifacts": ["/out/report.xlsx"]}}),
+        _sse("end", {"status": "completed"}),
+    ]
+    client = FakeClient(submitted={"thread_id": "t1", "run_id": "r2", "stream_url": "u2"}, events=events)
+    adapter = FakeAdapter()
+
+    await resolve_approval(
+        client=client,
+        adapter=adapter,
+        bot=_bot(),
+        thread_id="t1",
+        run_id="r1",
+        decision="approve",
+        operator_id="u1",
+        requester_id="u1",
+        chat_id="g1",
+    )
+
+    assert adapter.markdowns == []
+    assert adapter.files == [("g1", "report.xlsx", b"artifact")]
