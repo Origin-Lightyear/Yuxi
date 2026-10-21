@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 from collections.abc import Awaitable, Callable
+from uuid import uuid4
 
 import httpx
 import dingtalk_stream
@@ -33,6 +34,8 @@ _ACCESS_TOKEN_URL = f"{_OPENAPI_BASE}/v1.0/oauth2/accessToken"
 _SINGLE_SEND_URL = f"{_OPENAPI_BASE}/v1.0/robot/oToMessages/batchSend"
 _GROUP_SEND_URL = f"{_OPENAPI_BASE}/v1.0/robot/groupMessages/send"
 _MEDIA_UPLOAD_URL = "https://oapi.dingtalk.com/media/upload"
+_CARD_DELIVER_URL = f"{_OPENAPI_BASE}/v1.0/card/instances/createAndDeliver"
+_APPROVAL_FALLBACK_TEXT = "审批请求：请回复 /approve 或 /reject 进行审批"
 
 
 class DingTalkAdapter(Adapter):
@@ -59,6 +62,8 @@ class DingTalkAdapter(Adapter):
         # 卡片实例回调需要原始入站消息，按会话缓存最近一条。
         self._recent_messages: dict[str, ChatbotMessage] = {}
         self._chatbot_handler: _ChatbotHandler | None = None
+        # 卡片实例 ID -> 审批上下文；卡片模板按钮只回传 decision，其余上下文靠实例 ID 找回。
+        self._approval_cards: dict[str, tuple[str, str, str, str]] = {}
 
     async def start(self) -> None:
         """启动 Stream 客户端线程，出站资源建在主 loop 上。"""
@@ -116,27 +121,58 @@ class DingTalkAdapter(Adapter):
         await self._send(chat_id, {"msgtype": "file", "file": {"media_id": media_id, "file_name": filename}})
 
     async def send_approval_card(self, chat_id: str, *, thread_id: str, run_id: str, requester_id: str) -> None:
-        """用 SDK 卡片实例发送审批卡片，使按钮回调落在卡片实例回调 topic。
+        """用卡片平台模板发送可点击的审批卡片，未配置模板时退回文本指令。
 
-        卡片实例的按钮参数绑定格式（标准模板是否原样回传 ``value``）无法离线验证，
-        仅在真实钉钉应用上可确认；此处按 SDK ``MarkdownButtonCardInstance`` 的按钮结构
-        把 action value 作为 ``value`` 随列表下发。
+        模板里的按钮必须配置为「回传请求」，回传参数只需 ``decision=approve|reject``；
+        其余上下文（线程、run、发送者）用卡片实例 ID 在本地关联，回调时按实例 ID 找回。
         """
-        incoming = self._recent_messages.get(chat_id)
-        if incoming is None or self._chatbot_handler is None:
-            logger.warning("钉钉会话 %s 无可用入站消息，跳过审批卡片发送", chat_id)
-            await self.send_text(chat_id, "审批卡片发送失败，请直接回复 /approve 或 /reject 进行审批")
+        template_id = str(self._bot.credentials.get("approval_card_template_id") or "").strip()
+        if not template_id or chat_id not in self._recent_messages:
+            await self._send_approval_fallback(chat_id, "该会话没有可用的入站消息或未配置审批卡片模板")
             return
+
         card = approval_card(thread_id, run_id, requester_id, chat_id)
-        buttons = [{"text": action["label"], "value": action["value"]} for action in card["actions"]]
-        await asyncio.to_thread(
-            self._chatbot_handler.reply_markdown_button,
-            incoming,
-            card["text"],
-            buttons,
-            tips="请选择",
-            title=card["title"],
+        card_data = {"markdown": f"**{card['title']}**\n\n{card['text']}", "title": card["title"]}
+        try:
+            card_instance_id = await self._deliver_card(chat_id, template_id, card_data)
+        except Exception as exc:  # noqa: BLE001
+            await self._send_approval_fallback(chat_id, f"审批卡片投递失败：{exc}")
+            return
+        self._approval_cards[card_instance_id] = (thread_id, run_id, requester_id, chat_id)
+
+    async def _deliver_card(self, chat_id: str, template_id: str, card_data: dict) -> str:
+        """投放卡片模板实例，返回卡片实例 ID（即回调里的 outTrackId）。
+
+        SDK 的 ``CardReplier`` 在投递失败时只打日志仍返回实例 ID，无法区分成功与失败，
+        因此这里直接调用卡片实例接口，让失败以异常形式暴露。
+        """
+        conversation = self._recent_messages[chat_id]
+        card_instance_id = uuid4().hex
+        body = {
+            "cardTemplateId": template_id,
+            "outTrackId": card_instance_id,
+            "cardData": {"cardParamMap": card_data},
+            "callbackType": "STREAM",
+            "imGroupOpenSpaceModel": {"supportForward": True},
+            "imRobotOpenSpaceModel": {"supportForward": True},
+        }
+        if str(conversation.conversation_type) == "2":
+            body["openSpaceId"] = f"dtv1.card//IM_GROUP.{conversation.conversation_id}"
+            body["imGroupOpenDeliverModel"] = {"robotCode": self._bot.credentials["client_id"]}
+        else:
+            body["openSpaceId"] = f"dtv1.card//IM_ROBOT.{conversation.sender_staff_id}"
+            body["imRobotOpenDeliverModel"] = {"spaceType": "IM_ROBOT"}
+        token = await self._get_token()
+        response = await self._http.post(
+            _CARD_DELIVER_URL, headers={"x-acs-dingtalk-access-token": token}, json=body
         )
+        response.raise_for_status()
+        return card_instance_id
+
+    async def _send_approval_fallback(self, chat_id: str, reason: str) -> None:
+        """审批卡片不可用时退回文本指令。"""
+        logger.warning("钉钉会话 %s 无法发送审批卡片：%s", chat_id, reason)
+        await self.send_text(chat_id, _APPROVAL_FALLBACK_TEXT)
 
     def _normalize(self, message: ChatbotMessage) -> InboundMessage:
         """把钉钉回调消息归一化为 InboundMessage。"""
@@ -357,12 +393,23 @@ class _CardCallbackHandler(CallbackHandler):
         self._adapter = adapter
 
     async def process(self, callback: dingtalk_stream.CallbackMessage):
-        """解析卡片回调 value 并把审批调度回主 loop。"""
+        """按卡片实例 ID 找回审批上下文并把决定调度回主 loop。"""
         message = CardCallbackMessage.from_dict(callback.data)
         adapter = self._adapter
-        try:
-            decision, thread_id, run_id, requester_id, chat_id = parse_card_action(_card_value(message.content))
-        except (ValueError, TypeError, json.JSONDecodeError):
+        params = _card_value(message.content)
+        context = adapter._approval_cards.pop(str(message.card_instance_id or ""), None)
+        if context is None:
+            # 兼容按钮直接回传完整上下文的旧格式；模板按钮只回传 decision，实例 ID 未知时无从找回上下文。
+            try:
+                decision, thread_id, run_id, requester_id, chat_id = parse_card_action(params)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                return AckMessage.STATUS_OK, "OK"
+            if not thread_id or not run_id:
+                return AckMessage.STATUS_OK, "OK"
+        else:
+            decision = str(params.get("decision") or "")
+            thread_id, run_id, requester_id, chat_id = context
+        if decision not in {"approve", "reject"}:
             return AckMessage.STATUS_OK, "OK"
         adapter._dispatch(adapter._resolve(decision, thread_id, run_id, message.user_id, requester_id, chat_id))
         return AckMessage.STATUS_OK, "OK"
