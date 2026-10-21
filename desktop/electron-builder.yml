@@ -8,6 +8,10 @@ files:
   - main.js
   - preload.js
   - package.json
+  - url_policy.js
+  - window_state.js
+  # 运行时托盘/Dock 图标：resolveAppIcon 按 __dirname/build/icon.png 读取，不入白名单则打包态恒缺失
+  - build/icon.png
 
 mac:
   target:

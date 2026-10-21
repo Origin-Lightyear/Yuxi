@@ -4,6 +4,7 @@ import { handleChatError } from '@/utils/errorHandler'
 import { isSteerableMainChatRun } from '@/utils/agentRun'
 import { compareRunSeq, normalizeRunSeq, resolveRunResumeAfterSeq } from '@/utils/runStreamResume'
 import { hasPendingInterruptPayload } from '@/utils/toolApproval'
+import { notifyRunTerminal } from '@/utils/desktopNotify'
 
 const RUN_INTERRUPTED_STATUS = 'interrupted'
 const RUN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
@@ -406,6 +407,7 @@ export function useAgentRunStream({
             terminalStatus === RUN_INTERRUPTED_STATUS ||
             RUN_TERMINAL_STATUSES.has(terminalStatus)
           ) {
+            notifyRunTerminal({ threadId, status: terminalStatus })
             finalizeRunStream(threadId, runId, touchedThreadIds, { status: terminalStatus })
           } else {
             touchedThreadIds.forEach((id) => streamSmoother?.flushThread(id))
