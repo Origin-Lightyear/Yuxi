@@ -1,4 +1,4 @@
-"""飞书适配器：基于 lark-oapi WebSocket 长连接收发消息与卡片。"""
+"""飞书适配器：基于 lark-oapi WebSocket 长连接收发消息。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import threading
 from collections.abc import Awaitable, Callable
 
 from yuxi_im_gateway.adapters.base import Adapter
-from yuxi_im_gateway.adapters.cards import approval_card, parse_card_action
 from yuxi_im_gateway.models import BotConfig, InboundMessage
 
 logger = logging.getLogger(__name__)
@@ -56,13 +55,9 @@ class FeishuAdapter(Adapter):
             if message is not None:
                 self._dispatch(self._on_inbound(message))
 
-        def on_card(data) -> None:
-            self._handle_card(data)
-
         handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(on_message)
-            .register_p2_card_action_trigger(on_card)
             .build()
         )
         ws_client = lark.ws.Client(
@@ -88,7 +83,7 @@ class FeishuAdapter(Adapter):
 
     @staticmethod
     def _log_task_error(future) -> None:
-        """记录后台任务异常，避免审批 / 回复失败被静默丢弃。"""
+        """记录后台任务异常，避免回复失败被静默丢弃。"""
         exc = future.exception()
         if exc is not None:
             logger.warning("飞书回调处理失败: %s", exc)
@@ -110,11 +105,6 @@ class FeishuAdapter(Adapter):
         """上传并发送文件附件。"""
         file_key = await asyncio.to_thread(self._upload_file, filename, content)
         await asyncio.to_thread(self._send_message, chat_id, "file", json.dumps({"file_key": file_key}))
-
-    async def send_approval_card(self, chat_id: str, *, thread_id: str, run_id: str, requester_id: str) -> None:
-        """发送审批交互卡片。"""
-        card = _feishu_card(approval_card(thread_id, run_id, requester_id, chat_id))
-        await asyncio.to_thread(self._send_message, chat_id, "interactive", json.dumps(card, ensure_ascii=False))
 
     def _normalize(self, data) -> InboundMessage | None:
         """把飞书消息事件归一化为 InboundMessage；非文本消息回复提示并忽略。
@@ -146,26 +136,6 @@ class FeishuAdapter(Adapter):
             mentions_bot=mentions_bot,
             text=text.strip(),
         )
-
-    def _handle_card(self, data) -> None:
-        """处理卡片回调：解析 value 并把审批调度回主 loop。"""
-        action = getattr(getattr(data, "event", None), "action", None)
-        value = getattr(action, "value", None)
-        operator_id = str(getattr(getattr(data.event, "operator", None), "open_id", ""))
-        try:
-            decision, thread_id, run_id, requester_id, chat_id = parse_card_action(value)
-        except (ValueError, json.JSONDecodeError):
-            return
-        self._dispatch(self._resolve(decision, thread_id, run_id, operator_id, requester_id, chat_id))
-
-    async def _resolve(self, decision, thread_id, run_id, operator_id, requester_id, chat_id) -> None:
-        """从主 loop 调用编排层处理审批（client/bot 由 main 注入）。"""
-        callback = getattr(self, "approval_handler", None)
-        if callback is not None:
-            await callback(
-                decision=decision, thread_id=thread_id, run_id=run_id,
-                operator_id=operator_id, requester_id=requester_id, chat_id=chat_id,
-            )
 
     def _send_message(self, chat_id: str, msg_type: str, content: str) -> None:
         """用 lark OpenAPI 主动发送消息（同步调用，由 to_thread 承载）。"""
@@ -213,27 +183,3 @@ def _run_in_thread(target) -> threading.Thread:
     thread = threading.Thread(target=target, daemon=True)
     thread.start()
     return thread
-
-
-def _feishu_card(card: dict) -> dict:
-    """把平台无关卡片转换为飞书 interactive schema 2.0。"""
-    buttons = [
-        {
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": action["label"]},
-            "type": "primary" if action["decision"] == "approve" else "danger",
-            "behaviors": [{"type": "callback", "value": action["value"]}],
-        }
-        for action in card["actions"]
-    ]
-    return {
-        "schema": "2.0",
-        "config": {"update_multi": True},
-        "header": {"title": {"tag": "plain_text", "content": card["title"]}},
-        "body": {
-            "elements": [
-                {"tag": "markdown", "content": card["text"]},
-                {"tag": "action", "actions": buttons},
-            ]
-        },
-    }

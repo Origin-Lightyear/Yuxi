@@ -54,8 +54,9 @@ async def test_submit_message_uses_bot_api_key():
     assert result["run_id"] == "r1"
     auth = route.calls.last.request.headers["Authorization"]
     assert auth == "Bearer yxkey_z"
-    body = route.calls.last.request.content
-    assert json.loads(body)["channel"] == "feishu"
+    body = json.loads(route.calls.last.request.content)
+    assert body["channel"] == "feishu"
+    assert body["tool_approval_mode"] == "always_trust"
 
 
 @pytest.mark.asyncio

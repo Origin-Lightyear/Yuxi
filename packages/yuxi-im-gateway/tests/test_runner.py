@@ -5,12 +5,7 @@ import pytest
 
 from yuxi_im_gateway.dedupe import DedupeCache
 from yuxi_im_gateway.models import BotConfig, InboundMessage
-from yuxi_im_gateway.runner import (
-    SessionQueue,
-    approval_request_id,
-    handle_inbound,
-    resolve_approval,
-)
+from yuxi_im_gateway.runner import SessionQueue, handle_inbound
 
 
 class FakeClient:
@@ -42,7 +37,6 @@ class FakeAdapter:
     def __init__(self) -> None:
         self.texts: list[tuple[str, str]] = []
         self.markdowns: list[tuple[str, str]] = []
-        self.cards: list[dict] = []
         self.files: list[tuple[str, str, bytes]] = []
 
     async def send_text(self, chat_id: str, text: str) -> None:
@@ -50,9 +44,6 @@ class FakeAdapter:
 
     async def send_markdown(self, chat_id: str, text: str) -> None:
         self.markdowns.append((chat_id, text))
-
-    async def send_approval_card(self, chat_id: str, **kwargs) -> None:
-        self.cards.append({"chat_id": chat_id, **kwargs})
 
     async def send_file(self, chat_id: str, filename: str, content: bytes) -> None:
         self.files.append((chat_id, filename, content))
@@ -98,11 +89,6 @@ def _msg(**overrides) -> InboundMessage:
 def _sse(event: str, payload: dict, thread_id: str = "t1") -> dict:
     """构造一条带 thread_id 的 SSE 事件，供运行结果归并使用。"""
     return {"event": event, "data": json.dumps({"thread_id": thread_id, "payload": payload})}
-
-
-def test_approval_request_id_is_deterministic():
-    assert approval_request_id("approve", "run-1") == approval_request_id("approve", "run-1")
-    assert approval_request_id("approve", "run-1") != approval_request_id("reject", "run-1")
 
 
 @pytest.mark.asyncio
@@ -231,80 +217,6 @@ async def test_handle_inbound_replies_to_platform_chat_id_not_session_key():
 
 
 @pytest.mark.asyncio
-async def test_resolve_approval_ignores_non_requester_and_unknown_decision():
-    client = FakeClient()
-
-    await resolve_approval(
-        client=client,
-        adapter=FakeAdapter(),
-        bot=_bot(),
-        thread_id="t1",
-        run_id="r1",
-        decision="approve",
-        operator_id="u2",
-        requester_id="u1",
-        chat_id="c1",
-    )
-    await resolve_approval(
-        client=client,
-        adapter=FakeAdapter(),
-        bot=_bot(),
-        thread_id="t1",
-        run_id="r1",
-        decision="maybe",
-        operator_id="u1",
-        requester_id="u1",
-        chat_id="c1",
-    )
-
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_resolve_approval_submits_decision_with_thread_and_request_id():
-    client = FakeClient(submitted={"thread_id": "t1", "run_id": "r2"})
-    adapter = FakeAdapter()
-
-    await resolve_approval(
-        client=client,
-        adapter=adapter,
-        bot=_bot(),
-        thread_id="t1",
-        run_id="r1",
-        decision="approve",
-        operator_id="u1",
-        requester_id="u1",
-        chat_id="c1",
-    )
-
-    call = client.calls[0]
-    assert call["text"] == "/approve"
-    assert call["thread_id"] == "t1"
-    assert call["chat_id"] == ""
-    assert call["request_id"] == approval_request_id("approve", "r1")
-
-
-@pytest.mark.asyncio
-async def test_resolve_approval_replies_to_card_chat_id():
-    client = FakeClient(submitted={"kind": "command"})
-    adapter = FakeAdapter()
-
-    await resolve_approval(
-        client=client,
-        adapter=adapter,
-        bot=_bot(),
-        thread_id="t1",
-        run_id="r1",
-        decision="approve",
-        operator_id="u1",
-        requester_id="u1",
-        chat_id="g1",
-    )
-
-    assert adapter.texts == [("g1", "运行未启动，请稍后重试")]
-
-
-@pytest.mark.asyncio
 async def test_handle_inbound_delivers_markdown_and_all_artifacts():
     events = [
         _sse("messages", {"items": [{"stream_event": {"type": "message_delta", "content": "hello"}}]}),
@@ -354,25 +266,21 @@ async def test_artifact_failure_does_not_block_remaining_artifacts():
 
 
 @pytest.mark.asyncio
-async def test_resolve_approval_delivers_artifact_when_text_is_empty():
+async def test_handle_inbound_reports_approval_as_unsupported():
     events = [
-        _sse("custom", {"agent_state": {"artifacts": ["/out/report.xlsx"]}}),
-        _sse("end", {"status": "completed"}),
+        _sse("end", {"status": "interrupted", "chunk": {"status": "human_approval_required"}}),
     ]
-    client = FakeClient(submitted={"thread_id": "t1", "run_id": "r2", "stream_url": "u2"}, events=events)
+    client = FakeClient(submitted={"thread_id": "t1", "run_id": "r1", "stream_url": "u1"}, events=events)
     adapter = FakeAdapter()
 
-    await resolve_approval(
+    await handle_inbound(
         client=client,
         adapter=adapter,
         bot=_bot(),
-        thread_id="t1",
-        run_id="r1",
-        decision="approve",
-        operator_id="u1",
-        requester_id="u1",
-        chat_id="g1",
+        dedupe=DedupeCache(),
+        sessions=RecordingSessions(),
+        msg=_msg(),
     )
 
+    assert adapter.texts == [("c1", "运行需要工具审批，IM 会话不支持审批，请改用平台内对话")]
     assert adapter.markdowns == []
-    assert adapter.files == [("g1", "report.xlsx", b"artifact")]

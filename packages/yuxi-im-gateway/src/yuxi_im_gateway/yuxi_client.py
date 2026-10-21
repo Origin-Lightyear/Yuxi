@@ -54,6 +54,8 @@ class YuxiClient:
             "request_id": request_id,
             "agent_slug": bot.agent_slug,
             "message": {"type": "text", "text": text},
+            # IM 会话没有审批交互，直接信任工具调用，避免运行卡在等待审批。
+            "tool_approval_mode": "always_trust",
         }
         response = await self._client.post(
             "/api/agent-invocation/channel/messages",

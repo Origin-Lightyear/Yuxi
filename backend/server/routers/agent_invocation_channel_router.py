@@ -46,6 +46,9 @@ class ChannelMessageRequest(BaseModel):
     agent_slug: str = Field(..., description="目标 Agent slug")
     message: ChannelTextMessage
     queue_policy: Literal["enqueue", "reject", "steer"] = "steer"
+    tool_approval_mode: Literal["default", "always_trust"] | None = Field(
+        None, description="工具审批模式；Channel 无审批交互时传 always_trust"
+    )
 
 
 @agent_invocation_channel_router.post("/messages")
@@ -147,6 +150,7 @@ async def receive_channel_message(
                 metadata=origin_metadata,
             ),
             request_metadata={"message_type": "text"},
+            tool_approval_mode=payload.tool_approval_mode,
             queue_policy=payload.queue_policy,
             create_conversation=True,
             conversation_title=f"{channel} Channel Run",

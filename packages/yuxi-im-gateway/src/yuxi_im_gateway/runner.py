@@ -1,4 +1,4 @@
-"""入站处理与运行编排：去重、白名单、提交、消费、出站、审批。"""
+"""入站处理与运行编排：去重、白名单、提交、消费、出站。"""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from yuxi_im_gateway.models import BotConfig, InboundMessage
 
 logger = logging.getLogger(__name__)
 
+# IM 会话不提供审批交互，运行仍需审批时只能明确告知用户改走平台内对话。
+_APPROVAL_UNSUPPORTED_TEXT = "运行需要工具审批，IM 会话不支持审批，请改用平台内对话"
+
 
 class SessionQueue:
     """保证同一会话键上的任务串行执行，不同会话键并行。"""
@@ -25,11 +28,6 @@ class SessionQueue:
         """在 key 对应的锁内执行工厂返回的协程。"""
         async with self._locks[key]:
             await factory()
-
-
-def approval_request_id(decision: str, run_id: str) -> str:
-    """按 decision 与父 run_id 生成确定性 request_id，用于幂等去重。"""
-    return f"{decision}:{run_id}"
 
 
 async def handle_inbound(
@@ -65,7 +63,7 @@ async def handle_inbound(
 async def _run_and_reply(
     *, client, adapter, bot: BotConfig, chat_id: str, reply_chat_id: str, msg: InboundMessage
 ) -> None:
-    """提交运行、消费事件并把结果或审批卡片发回平台会话。"""
+    """提交运行、消费事件并把结果发回平台会话。"""
     try:
         submitted = await client.submit_message(
             bot=bot,
@@ -88,12 +86,7 @@ async def _run_and_reply(
 
     outcome = await _consume(client, stream_url, bot.api_key, submitted.get("thread_id"))
     if outcome.status == "approval_required":
-        await adapter.send_approval_card(
-            reply_chat_id,
-            thread_id=str(submitted.get("thread_id") or ""),
-            run_id=str(submitted.get("run_id") or ""),
-            requester_id=msg.sender_id,
-        )
+        await adapter.send_text(reply_chat_id, _APPROVAL_UNSUPPORTED_TEXT)
         return
     if outcome.status == "error":
         await adapter.send_text(reply_chat_id, f"运行失败：{outcome.error_message}")
@@ -132,52 +125,3 @@ async def _send_artifact(client, adapter, bot: BotConfig, chat_id: str, thread_i
     except Exception as exc:  # noqa: BLE001
         logger.warning("发送交付物失败 bot=%s path=%s: %s", bot.id, path, exc)
         await adapter.send_text(chat_id, f"交付物 {path} 发送失败")
-
-
-async def resolve_approval(
-    *,
-    client,
-    adapter,
-    bot: BotConfig,
-    thread_id: str,
-    run_id: str,
-    decision: str,
-    operator_id: str,
-    requester_id: str,
-    chat_id: str,
-) -> None:
-    """处理卡片审批回调：仅原发送者有效，提交 decision 并把最终结果回发原会话。"""
-    try:
-        if operator_id != requester_id:
-            return
-        if decision not in {"approve", "reject"}:
-            return
-
-        request_id = approval_request_id(decision, run_id)
-        try:
-            result = await client.submit_message(
-                bot=bot,
-                thread_id=thread_id,
-                chat_id="",
-                sender_id=operator_id,
-                message_id=request_id,
-                text=f"/{decision}",
-                request_id=request_id,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("提交审批失败 bot=%s run=%s: %s", bot.id, run_id, exc)
-            await adapter.send_text(chat_id, f"审批提交失败：{exc}")
-            return
-
-        run = result.get("run") if isinstance(result.get("run"), dict) else result
-        stream_url = run.get("stream_url") if isinstance(run, dict) else None
-        if not stream_url:
-            await adapter.send_text(chat_id, "运行未启动，请稍后重试")
-            return
-        outcome = await _consume(client, stream_url, bot.api_key, thread_id)
-        if outcome.status == "error":
-            await adapter.send_text(chat_id, f"运行失败：{outcome.error_message}")
-        elif outcome.status == "completed":
-            await _deliver(client, adapter, bot, chat_id, thread_id, outcome)
-    except Exception as exc:  # noqa: BLE001 - 单个会话失败不应中断网关
-        logger.warning("处理审批回调失败 bot=%s run=%s: %s", bot.id, run_id, exc)

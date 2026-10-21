@@ -13,7 +13,7 @@ from yuxi_im_gateway.adapters.registry import adapter_fingerprint, build_adapter
 from yuxi_im_gateway.config import GatewaySettings
 from yuxi_im_gateway.dedupe import DedupeCache
 from yuxi_im_gateway.models import BotConfig, InboundMessage
-from yuxi_im_gateway.runner import SessionQueue, handle_inbound, resolve_approval
+from yuxi_im_gateway.runner import SessionQueue, handle_inbound
 from yuxi_im_gateway.yuxi_client import YuxiClient
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,6 @@ class GatewayRunner:
         """启动单个机器人适配器，失败只记录日志。"""
         try:
             adapter = build_adapter(bot, on_inbound=lambda msg, b=bot: self._on_inbound(b, msg))
-            self._attach_approval(adapter, bot)
             await adapter.start()
             self._adapters[bot.id] = (adapter_fingerprint(bot), adapter)
             logger.info("机器人正在建立长连接 id=%s platform=%s", bot.id, bot.platform)
@@ -84,24 +83,6 @@ class GatewayRunner:
             await entry[1].stop()
         except Exception as exc:
             logger.warning("机器人停止失败 id=%s: %s", bot_id, exc)
-
-    def _attach_approval(self, adapter: Adapter, bot: BotConfig) -> None:
-        """给适配器注入审批回调，把卡片操作转交编排层。"""
-
-        async def on_approval(*, decision, thread_id, run_id, operator_id, requester_id, chat_id):
-            await resolve_approval(
-                client=self._client,
-                adapter=adapter,
-                bot=bot,
-                thread_id=thread_id,
-                run_id=run_id,
-                decision=decision,
-                operator_id=operator_id,
-                requester_id=requester_id,
-                chat_id=chat_id,
-            )
-
-        adapter.approval_handler = on_approval
 
     async def _on_inbound(self, bot: BotConfig, msg: InboundMessage) -> None:
         """入站消息入口，交给编排层；适配器已被配置轮询移除时直接丢弃。"""

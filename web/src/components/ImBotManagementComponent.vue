@@ -187,14 +187,6 @@
               size="large"
             />
           </a-form-item>
-          <a-form-item label="审批卡片模板 ID" class="form-item">
-            <a-input
-              v-model:value="state.form.credentials.approval_card_template_id"
-              placeholder="选填，钉钉卡片平台模板 ID"
-              size="large"
-            />
-            <div class="help-text">留空时工具审批改用文本指令 /approve 或 /reject</div>
-          </a-form-item>
         </template>
 
         <div v-if="state.editMode" class="credential-hint">留空表示不修改凭证</div>
@@ -325,9 +317,9 @@ const collectCredentials = (form) => {
     if (!app_id && !app_secret && !domain) return null
     return { app_id, app_secret, domain }
   }
-  const { client_id, client_secret, approval_card_template_id } = credentials
-  if (!client_id && !client_secret && !approval_card_template_id) return null
-  return { client_id, client_secret, approval_card_template_id }
+  const { client_id, client_secret } = credentials
+  if (!client_id && !client_secret) return null
+  return { client_id, client_secret }
 }
 
 /** 校验表单，返回错误提示文案，通过时返回 null */
@@ -339,11 +331,6 @@ const validateForm = () => {
     const requiredFields =
       state.form.platform === 'feishu' ? ['app_id', 'app_secret'] : ['client_id', 'client_secret']
     if (requiredFields.some((field) => !state.form.credentials[field])) return '请填写必填凭证'
-  } else if (
-    state.form.credentials.approval_card_template_id &&
-    (!state.form.credentials.client_id || !state.form.credentials.client_secret)
-  ) {
-    return '修改审批卡片模板需同时重新填写 Client ID 与 Client Secret'
   }
   return null
 }

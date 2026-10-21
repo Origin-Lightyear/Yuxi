@@ -8,21 +8,16 @@ import logging
 import threading
 import time
 from collections.abc import Awaitable, Callable
-from uuid import uuid4
 
 import httpx
 import dingtalk_stream
 from dingtalk_stream import (
     AckMessage,
-    CallbackHandler,
-    CardCallbackMessage,
-    Card_Callback_Router_Topic,
     ChatbotHandler,
     ChatbotMessage,
 )
 
 from yuxi_im_gateway.adapters.base import Adapter
-from yuxi_im_gateway.adapters.cards import approval_card, parse_card_action
 from yuxi_im_gateway.models import BotConfig, InboundMessage
 
 logger = logging.getLogger(__name__)
@@ -34,8 +29,6 @@ _ACCESS_TOKEN_URL = f"{_OPENAPI_BASE}/v1.0/oauth2/accessToken"
 _SINGLE_SEND_URL = f"{_OPENAPI_BASE}/v1.0/robot/oToMessages/batchSend"
 _GROUP_SEND_URL = f"{_OPENAPI_BASE}/v1.0/robot/groupMessages/send"
 _MEDIA_UPLOAD_URL = "https://oapi.dingtalk.com/media/upload"
-_CARD_DELIVER_URL = f"{_OPENAPI_BASE}/v1.0/card/instances/createAndDeliver"
-_APPROVAL_FALLBACK_TEXT = "审批请求：请回复 /approve 或 /reject 进行审批"
 
 
 class DingTalkAdapter(Adapter):
@@ -59,11 +52,7 @@ class DingTalkAdapter(Adapter):
         # 会话级投递信息：session webhook 兜底地址，单聊还需记住对方 staff id。
         self._webhooks: dict[str, str] = {}
         self._single_users: dict[str, str] = {}
-        # 卡片实例回调需要原始入站消息，按会话缓存最近一条。
-        self._recent_messages: dict[str, ChatbotMessage] = {}
         self._chatbot_handler: _ChatbotHandler | None = None
-        # 卡片实例 ID -> 审批上下文；卡片模板按钮只回传 decision，其余上下文靠实例 ID 找回。
-        self._approval_cards: dict[str, tuple[str, str, str, str]] = {}
 
     async def start(self) -> None:
         """启动 Stream 客户端线程，出站资源建在主 loop 上。"""
@@ -78,7 +67,6 @@ class DingTalkAdapter(Adapter):
         self._client = dingtalk_stream.DingTalkStreamClient(credential)
         self._chatbot_handler = _ChatbotHandler(self)
         self._client.register_callback_handler(ChatbotMessage.TOPIC, self._chatbot_handler)
-        self._client.register_callback_handler(Card_Callback_Router_Topic, _CardCallbackHandler(self))
         threading.Thread(target=self._client.start_forever, daemon=True).start()
 
     async def stop(self) -> None:
@@ -99,7 +87,7 @@ class DingTalkAdapter(Adapter):
 
     @staticmethod
     def _log_task_error(future) -> None:
-        """记录后台任务异常，避免审批 / 回复失败被静默丢弃。"""
+        """记录后台任务异常，避免回复失败被静默丢弃。"""
         exc = future.exception()
         if exc is not None:
             logger.warning("钉钉回调处理失败: %s", exc)
@@ -120,60 +108,6 @@ class DingTalkAdapter(Adapter):
         media_id = await self._upload_media(filename, content)
         await self._send(chat_id, {"msgtype": "file", "file": {"media_id": media_id, "file_name": filename}})
 
-    async def send_approval_card(self, chat_id: str, *, thread_id: str, run_id: str, requester_id: str) -> None:
-        """用卡片平台模板发送可点击的审批卡片，未配置模板时退回文本指令。
-
-        模板里的按钮必须配置为「回传请求」，回传参数只需 ``decision=approve|reject``；
-        其余上下文（线程、run、发送者）用卡片实例 ID 在本地关联，回调时按实例 ID 找回。
-        """
-        template_id = str(self._bot.credentials.get("approval_card_template_id") or "").strip()
-        if not template_id or chat_id not in self._recent_messages:
-            await self._send_approval_fallback(chat_id, "该会话没有可用的入站消息或未配置审批卡片模板")
-            return
-
-        card = approval_card(thread_id, run_id, requester_id, chat_id)
-        card_data = {"markdown": f"**{card['title']}**\n\n{card['text']}", "title": card["title"]}
-        try:
-            card_instance_id = await self._deliver_card(chat_id, template_id, card_data)
-        except Exception as exc:  # noqa: BLE001
-            await self._send_approval_fallback(chat_id, f"审批卡片投递失败：{exc}")
-            return
-        self._approval_cards[card_instance_id] = (thread_id, run_id, requester_id, chat_id)
-
-    async def _deliver_card(self, chat_id: str, template_id: str, card_data: dict) -> str:
-        """投放卡片模板实例，返回卡片实例 ID（即回调里的 outTrackId）。
-
-        SDK 的 ``CardReplier`` 在投递失败时只打日志仍返回实例 ID，无法区分成功与失败，
-        因此这里直接调用卡片实例接口，让失败以异常形式暴露。
-        """
-        conversation = self._recent_messages[chat_id]
-        card_instance_id = uuid4().hex
-        body = {
-            "cardTemplateId": template_id,
-            "outTrackId": card_instance_id,
-            "cardData": {"cardParamMap": card_data},
-            "callbackType": "STREAM",
-            "imGroupOpenSpaceModel": {"supportForward": True},
-            "imRobotOpenSpaceModel": {"supportForward": True},
-        }
-        if str(conversation.conversation_type) == "2":
-            body["openSpaceId"] = f"dtv1.card//IM_GROUP.{conversation.conversation_id}"
-            body["imGroupOpenDeliverModel"] = {"robotCode": self._bot.credentials["client_id"]}
-        else:
-            body["openSpaceId"] = f"dtv1.card//IM_ROBOT.{conversation.sender_staff_id}"
-            body["imRobotOpenDeliverModel"] = {"spaceType": "IM_ROBOT"}
-        token = await self._get_token()
-        response = await self._http.post(
-            _CARD_DELIVER_URL, headers={"x-acs-dingtalk-access-token": token}, json=body
-        )
-        response.raise_for_status()
-        return card_instance_id
-
-    async def _send_approval_fallback(self, chat_id: str, reason: str) -> None:
-        """审批卡片不可用时退回文本指令。"""
-        logger.warning("钉钉会话 %s 无法发送审批卡片：%s", chat_id, reason)
-        await self.send_text(chat_id, _APPROVAL_FALLBACK_TEXT)
-
     def _normalize(self, message: ChatbotMessage) -> InboundMessage:
         """把钉钉回调消息归一化为 InboundMessage。"""
         is_group = bool(message.conversation_type == "2")
@@ -188,23 +122,13 @@ class DingTalkAdapter(Adapter):
         )
 
     def _remember(self, message: ChatbotMessage) -> None:
-        """记录会话投递信息：session webhook、单聊 staff id 与最近入站消息。"""
+        """记录会话投递信息：session webhook 与单聊 staff id。"""
         chat_id = str(message.conversation_id)
-        self._recent_messages[chat_id] = message
         webhook = getattr(message, "session_webhook", None)
         if webhook:
             self._webhooks[chat_id] = str(webhook)
         if str(message.conversation_type) == "1" and message.sender_staff_id:
             self._single_users[chat_id] = str(message.sender_staff_id)
-
-    async def _resolve(self, decision, thread_id, run_id, operator_id, requester_id, chat_id) -> None:
-        """从主 loop 调用编排层处理审批（client/bot 由 main 注入）。"""
-        callback = getattr(self, "approval_handler", None)
-        if callback is not None:
-            await callback(
-                decision=decision, thread_id=thread_id, run_id=run_id,
-                operator_id=operator_id, requester_id=requester_id, chat_id=chat_id,
-            )
 
     async def _send(self, chat_id: str, body: dict) -> None:
         """通过 robotCode 主动发送，失败回退该会话的 session webhook。"""
@@ -358,15 +282,6 @@ def _strip_at(text: str, at_users, is_in_at_list: bool) -> str:
     return text
 
 
-def _card_value(content) -> dict:
-    """从卡片回调 content 中提取按钮携带的 value。"""
-    if isinstance(content, dict) and isinstance(content.get("cardPrivateData"), dict):
-        params = content["cardPrivateData"].get("params")
-        if isinstance(params, dict):
-            return params
-    return content if isinstance(content, dict) else {}
-
-
 class _ChatbotHandler(ChatbotHandler):
     """把 dingtalk-stream 入站消息桥接到 asyncio 主循环。"""
 
@@ -385,31 +300,19 @@ class _ChatbotHandler(ChatbotHandler):
         return AckMessage.STATUS_OK, "OK"
 
 
-class _CardCallbackHandler(CallbackHandler):
-    """把钉钉卡片按钮回调桥接到 asyncio 主循环。"""
+class _ChatbotHandler(ChatbotHandler):
+    """把 dingtalk-stream 入站消息桥接到 asyncio 主循环。"""
 
     def __init__(self, adapter: DingTalkAdapter) -> None:
         super().__init__()
         self._adapter = adapter
 
     async def process(self, callback: dingtalk_stream.CallbackMessage):
-        """按卡片实例 ID 找回审批上下文并把决定调度回主 loop。"""
-        message = CardCallbackMessage.from_dict(callback.data)
+        """处理入站消息并返回 ACK。"""
+        message = ChatbotMessage.from_dict(callback.data)
         adapter = self._adapter
-        params = _card_value(message.content)
-        context = adapter._approval_cards.pop(str(message.card_instance_id or ""), None)
-        if context is None:
-            # 兼容按钮直接回传完整上下文的旧格式；模板按钮只回传 decision，实例 ID 未知时无从找回上下文。
-            try:
-                decision, thread_id, run_id, requester_id, chat_id = parse_card_action(params)
-            except (ValueError, TypeError, json.JSONDecodeError):
-                return AckMessage.STATUS_OK, "OK"
-            if not thread_id or not run_id:
-                return AckMessage.STATUS_OK, "OK"
-        else:
-            decision = str(params.get("decision") or "")
-            thread_id, run_id, requester_id, chat_id = context
-        if decision not in {"approve", "reject"}:
-            return AckMessage.STATUS_OK, "OK"
-        adapter._dispatch(adapter._resolve(decision, thread_id, run_id, message.user_id, requester_id, chat_id))
+        adapter._remember(message)
+        inbound = adapter._normalize(message)
+        if inbound.text:
+            adapter._dispatch(adapter._on_inbound(inbound))
         return AckMessage.STATUS_OK, "OK"

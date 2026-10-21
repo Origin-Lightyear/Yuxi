@@ -89,45 +89,6 @@ async def test_reconcile_stops_removed_bot(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_attach_approval_forwards_all_keywords(monkeypatch):
-    import yuxi_im_gateway.main as mod
-
-    calls: list[dict] = []
-
-    async def fake_resolve_approval(**kwargs):
-        calls.append(kwargs)
-
-    monkeypatch.setattr(mod, "resolve_approval", fake_resolve_approval)
-    bot = _bot(1, "a")
-    adapter = _FakeAdapter(bot, on_inbound=lambda msg: None)
-    runner = mod.GatewayRunner(client=None, settings=None)
-
-    runner._attach_approval(adapter, bot)
-    await adapter.approval_handler(
-        decision="approve",
-        thread_id="t1",
-        run_id="r1",
-        operator_id="u1",
-        requester_id="u2",
-        chat_id="c1",
-    )
-
-    assert calls == [
-        {
-            "client": None,
-            "adapter": adapter,
-            "bot": bot,
-            "thread_id": "t1",
-            "run_id": "r1",
-            "decision": "approve",
-            "operator_id": "u1",
-            "requester_id": "u2",
-            "chat_id": "c1",
-        }
-    ]
-
-
-@pytest.mark.asyncio
 async def test_reconcile_applies_live_field_change_to_inbound(monkeypatch):
     """配置热更新后，入站消息应使用最新的机器人配置。"""
     import yuxi_im_gateway.main as mod
