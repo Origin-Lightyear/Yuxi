@@ -18,6 +18,13 @@ const CONFIG_FILE = 'config.json';
 // 顶部给系统按钮（macOS 红绿灯 / Windows 窗口控件）留出的高度，与前端页面留白保持一致
 const TITLEBAR_HEIGHT = 36;
 
+// 全屏时系统按钮消失，把留白和拖动区一并收掉，避免留下约 36px 的死区
+const FULLSCREEN_OVERRIDE_CSS = `
+body { padding-top: 0 !important; }
+.app-layout { height: 100vh !important; }
+#yuxi-titlebar-drag { display: none; }
+`;
+
 let mainWindow = null;
 let backendUrl = null;
 
@@ -214,8 +221,22 @@ function createWindow(url) {
     }
   });
 
-  // 每次页面加载完成都补一次外观（含站内导航），注入本身是幂等的
-  mainWindow.webContents.on('did-finish-load', () => installPageChrome(mainWindow.webContents));
+  // DOM 就绪即注入，早于首帧渲染，避免内容下移跳动
+  mainWindow.webContents.on('dom-ready', () => installPageChrome(mainWindow.webContents));
+
+  // 全屏时系统按钮和拖动区都不再需要，注入覆盖样式把留白收掉；退出全屏再移除
+  let fullscreenCssKey = null;
+
+  mainWindow.on('enter-full-screen', async () => {
+    fullscreenCssKey = await mainWindow.webContents.insertCSS(FULLSCREEN_OVERRIDE_CSS);
+  });
+
+  mainWindow.on('leave-full-screen', async () => {
+    if (!fullscreenCssKey) return;
+    const key = fullscreenCssKey;
+    fullscreenCssKey = null;
+    await mainWindow.webContents.removeInsertedCSS(key);
+  });
 
   // 默认打开 /agent 聊天页；未登录由前端路由守卫自动跳转登录页，登录后跳回 /agent
   mainWindow.loadURL(`${url}/agent`);
@@ -229,7 +250,7 @@ function createWindow(url) {
  * 给远程页面补上无边框窗口所需的顶部留白与拖动条。
  *
  * 远程页面自己不知道窗口无边框，这里给它留出标题栏高度并补一个可拖动区；
- * `did-finish-load` 每次导航都会触发，CSS 重复插入无害，拖动条靠 id 判重。
+ * 在 dom-ready 注入以早于首帧，重复注入无害，拖动条靠 id 判重。
  */
 function installPageChrome(webContents) {
   const css = `
@@ -237,10 +258,12 @@ body {
   height: 100vh;
   padding-top: ${TITLEBAR_HEIGHT}px;
   box-sizing: border-box;
-  overflow: hidden;
+  overflow-y: auto;
 }
 .app-layout { height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important; }
-.login-view { min-height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important; }
+.login-view, .oidc-callback-view, .cli-auth-view {
+  min-height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important;
+}
 `;
 
   const script = `

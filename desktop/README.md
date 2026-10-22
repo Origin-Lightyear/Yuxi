@@ -27,6 +27,8 @@ YUXI_BACKEND_URL=http://127.0.0.1:5173 npm start
 
 **Windows 验证**：无边框窗口用透明 `titleBarOverlay` 承载系统按钮，需在 Windows 实机确认按钮区域无黑条。
 
+**顶部 36px 为窗口拖动区**：网页组件不要在该区域放置可点击控件。
+
 ## 打包
 
 ```bash
