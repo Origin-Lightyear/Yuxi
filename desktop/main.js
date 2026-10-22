@@ -8,13 +8,15 @@
  * 服务地址优先级：环境变量 YUXI_BACKEND_URL > 用户上次保存的地址 > 默认 http://10.69.188.181:5173
  * 连接失败时弹窗提供地址输入，用户可修改并重试（保存到 userData/config.json）。
  */
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
 
 const DEFAULT_URL = 'http://10.69.188.181:5173';
 const CONFIG_FILE = 'config.json';
+// 顶部给系统按钮（macOS 红绿灯 / Windows 窗口控件）留出的高度，与前端页面留白保持一致
+const TITLEBAR_HEIGHT = 36;
 
 let mainWindow = null;
 let backendUrl = null;
@@ -141,10 +143,48 @@ function askUrl(current) {
 }
 
 // ---------------------------------------------------------------------------
+// 应用菜单
+// ---------------------------------------------------------------------------
+
+/**
+ * 设置应用菜单。
+ *
+ * macOS 必须保留「应用 / 编辑 / 窗口」三组 role 菜单，否则 Cmd+Q、Cmd+W、Cmd+C/V
+ * 等系统快捷键会失效；其余平台清空默认菜单（File/View/Help 对桌面壳没有意义）。
+ */
+function applyAppMenu() {
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }])
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 窗口
 // ---------------------------------------------------------------------------
 
 function createWindow(url) {
+  // 无边框外观：macOS 隐藏标题栏但保留红绿灯并内嵌到页面左上角；
+  // 其他平台隐藏标题栏，用 titleBarOverlay 把系统窗口控件浮在页面右上角
+  const titleBarOptions =
+    process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset',
+          trafficLightPosition: { x: 14, y: (TITLEBAR_HEIGHT - 14) / 2 },
+        }
+      : {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: {
+            color: '#00000000',
+            symbolColor: '#5f6a6a',
+            height: TITLEBAR_HEIGHT,
+          },
+        };
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -152,6 +192,9 @@ function createWindow(url) {
     minHeight: 600,
     title: '大力水手',
     icon: resolveAppIcon(),
+    // 与侧栏底色一致，减少启动白闪
+    backgroundColor: '#fcfefe',
+    ...titleBarOptions,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -200,6 +243,7 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     backendUrl = resolveBackendUrl();
+    applyAppMenu();
 
     // dev 模式（npm start）下 Electron 自带默认图标，运行时替换为品牌 Logo
     const appIcon = resolveAppIcon();
