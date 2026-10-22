@@ -239,7 +239,7 @@ body {
   box-sizing: border-box;
   overflow: hidden;
 }
-.app-layout { height: 100% !important; }
+.app-layout { height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important; }
 .login-view { min-height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important; }
 `;
 
