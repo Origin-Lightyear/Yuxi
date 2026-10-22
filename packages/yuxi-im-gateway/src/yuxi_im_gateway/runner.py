@@ -7,6 +7,8 @@ import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 
+import httpx
+
 from yuxi_im_gateway.dedupe import DedupeCache
 from yuxi_im_gateway.events import reduce_run_events
 from yuxi_im_gateway.filters import is_allowed, session_chat_id, should_handle
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # IM 会话不提供审批交互，运行仍需审批时只能明确告知用户改走平台内对话。
 _APPROVAL_UNSUPPORTED_TEXT = "运行需要工具审批，IM 会话不支持审批，请改用平台内对话"
+_BUSY_THREAD_TEXT = "上一条消息还在执行中，请等它结束后再发。"
 
 
 class SessionQueue:
@@ -41,8 +44,19 @@ async def handle_inbound(
 ) -> None:
     """处理一条归一化入站消息：过滤 → 去重 → 提交 → 消费 → 出站。"""
     if not should_handle(bot, msg) or not is_allowed(bot, msg.sender_id):
+        logger.info(
+            "跳过入站消息 bot=%s message=%s group=%s mentioned=%s",
+            bot.id,
+            msg.message_id,
+            msg.is_group,
+            msg.mentions_bot,
+        )
         return
     if dedupe.seen(f"{bot.id}:{msg.message_id}"):
+        return
+    if not msg.text.strip():
+        logger.info("入站消息无正文 bot=%s message=%s group=%s", bot.id, msg.message_id, msg.is_group)
+        await adapter.send_text(msg.chat_id, "请直接描述你要查询的问题，例如「查一下大力水手 11 月的应收账款」。")
         return
 
     chat_id = session_chat_id(bot, msg)
@@ -76,7 +90,7 @@ async def _run_and_reply(
         )
     except Exception as exc:  # noqa: BLE001 - 单个会话失败不应中断网关
         logger.warning("提交消息失败 bot=%s: %s", bot.id, exc)
-        await adapter.send_text(reply_chat_id, f"调用失败：{exc}")
+        await adapter.send_text(reply_chat_id, _submit_error_text(exc))
         return
 
     stream_url = _resolve_stream_url(submitted)
@@ -93,6 +107,19 @@ async def _run_and_reply(
         return
 
     await _deliver(client, adapter, bot, reply_chat_id, str(submitted.get("thread_id") or ""), outcome)
+
+
+def _submit_error_text(exc: Exception) -> str:
+    """把提交阶段的 HTTP 错误转成用户可读提示，避免把 httpx 异常原文发到会话。"""
+    response = getattr(exc, "response", None)
+    if isinstance(response, httpx.Response) and response.status_code == 409:
+        try:
+            detail = response.json().get("detail")
+        except ValueError:
+            detail = None
+        if isinstance(detail, dict) and detail.get("code") == "run_active":
+            return _BUSY_THREAD_TEXT
+    return f"调用失败：{exc}"
 
 
 def _resolve_stream_url(submitted: dict) -> str | None:

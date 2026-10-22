@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 
 from yuxi_im_gateway.dedupe import DedupeCache
@@ -153,6 +154,24 @@ async def test_handle_inbound_skips_filtered_messages():
 
 
 @pytest.mark.asyncio
+async def test_handle_inbound_prompts_when_mention_has_no_text():
+    client = FakeClient()
+    adapter = FakeAdapter()
+
+    await handle_inbound(
+        client=client,
+        adapter=adapter,
+        bot=_bot(require_mention=True),
+        dedupe=DedupeCache(),
+        sessions=SessionQueue(),
+        msg=_msg(is_group=True, mentions_bot=True, text=""),
+    )
+
+    assert client.calls == []
+    assert adapter.texts and "请直接描述" in adapter.texts[0][1]
+
+
+@pytest.mark.asyncio
 async def test_handle_inbound_dedupes_by_bot_and_message_id():
     dedupe = DedupeCache()
     sessions = SessionQueue()
@@ -284,3 +303,36 @@ async def test_handle_inbound_reports_approval_as_unsupported():
 
     assert adapter.texts == [("c1", "运行需要工具审批，IM 会话不支持审批，请改用平台内对话")]
     assert adapter.markdowns == []
+
+
+class ConflictClient(FakeClient):
+    """提交时返回 409 的客户端替身，用于验证忙碌会话的提示文案。"""
+
+    def __init__(self, code: str) -> None:
+        super().__init__()
+        self.code = code
+
+    async def submit_message(self, **kwargs) -> dict:
+        request = httpx.Request("POST", "http://api/api/agent-invocation/channel/messages")
+        response = httpx.Response(
+            409,
+            json={"detail": {"code": self.code, "message": "线程已有正在执行的运行"}},
+            request=request,
+        )
+        raise httpx.HTTPStatusError("Client error '409 Conflict'", request=request, response=response)
+
+
+@pytest.mark.asyncio
+async def test_handle_inbound_reports_busy_thread_without_leaking_http_error():
+    adapter = FakeAdapter()
+
+    await handle_inbound(
+        client=ConflictClient("run_active"),
+        adapter=adapter,
+        bot=_bot(),
+        dedupe=DedupeCache(),
+        sessions=RecordingSessions(),
+        msg=_msg(),
+    )
+
+    assert adapter.texts == [("c1", "上一条消息还在执行中，请等它结束后再发。")]

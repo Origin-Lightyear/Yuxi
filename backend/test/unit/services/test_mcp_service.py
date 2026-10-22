@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import httpx
@@ -285,6 +286,37 @@ async def test_get_mcp_tools_turns_connect_errors_into_tool_errors(monkeypatch):
     assert result.status == "error"
     assert "demo" in result.content
     assert "连接失败" in result.content or "网络" in result.content
+
+    mcp_service.clear_mcp_cache()
+
+
+async def test_get_mcp_tools_turns_slow_calls_into_tool_errors(monkeypatch):
+    """MCP 工具长时间不返回时应变成工具错误消息，避免拖死整轮 Run。"""
+    mcp_service.clear_mcp_cache()
+    monkeypatch.setattr(mcp_service, "MCP_TOOL_TIMEOUT_SECONDS", 0.05)
+
+    config = {"transport": "streamable_http", "url": "http://mcp.example/mcp", "disabled_tools": []}
+
+    async def fake_get_enabled_mcp_server_config(server_name: str, db=None):
+        del db
+        return config
+
+    async def slow() -> str:
+        await asyncio.sleep(60)
+        return "never"
+
+    async def fake_get_mcp_client(server_configs):
+        tool = StructuredTool.from_function(coroutine=slow, name="k3_query_report", description="金蝶报表查询")
+        return _FakeClient([tool])
+
+    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+
+    tools = await mcp_service.get_mcp_tools("demo")
+    result = await tools[0].arun({}, tool_call_id="call_1")
+
+    assert result.status == "error"
+    assert "超时" in result.content
 
     mcp_service.clear_mcp_cache()
 

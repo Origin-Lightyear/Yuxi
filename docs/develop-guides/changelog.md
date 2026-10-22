@@ -15,7 +15,7 @@
 - 新增 SaaS Agent 数据双写与定时任务：SaaS 登录迁移到 Tenant 服务新内部路径 `/api/v1/agent/inner/auth`，按员工编码复用本地账号并同步手机号、姓名与部门；MCP Runtime 从租户 endpoints 接口同步，使用 `AgentSession` 为每次 HTTP 请求申请一次性六 Header；Yuxi JWT 有效期与 AgentSession 对齐，Session 缺失时统一返回 401 并触发重新登录，避免模型误判为数据源未配置；`tenant_id/employee_id` 持久化到 `user_config`（可 `AGENT_DATA_SYNC=false` 关闭）；SaaS 模式下本地线程与消息按 fail-soft 镜像到 Tenant，并记录整轮 `consumedScore`；新增五段式 Cron 调度与任务接口透传。
 - 修复内置 `mysql-reporter` 的数据源路由：企业业务查询调用 SaaS MCP `linko_ent`，会话失效时提示重新登录，不再误导用户配置沙盒 `MYSQL_*`；独立外部 MySQL 仍使用只读脚本。
 - 新增内置 `linko-enterprise` 技能统一 Linko 企业数据入口：读正文判断系统，依云/水趣直调 `linko_ent`，金蝶先读 `references/kingdee-k3cloud.md` 再走 `k3_*`；判不准时在正文列出选项询问（禁用 `ask_user_question`，IM 不支持该中断），禁止推测字段含义或裁剪返回，依赖 `finance-mcp`。
-- 修复 MCP 服务不可达时整轮 Run 失败：MCP 工具把 `httpx` 传输异常转为 `ToolException`，由 `handle_tool_error` 返回工具错误消息，模型可提示用户数据源暂不可用并继续对话。
+- 修复 MCP 服务不可达或假死时整轮 Run 失败：MCP 工具把 `httpx` 传输异常转为 `ToolException`，并按 `YUXI_MCP_TOOL_TIMEOUT_SECONDS`（默认 120 秒）放弃超时调用，由 `handle_tool_error` 返回工具错误消息，模型可提示数据源暂不可用并继续回答。
 - 新增 Run 空闲看门狗：Worker 消费流事件超过 `YUXI_RUN_IDLE_TIMEOUT_SECONDS`（默认 300 秒）无进展即判定卡死，按 `run_timeout` 结束并提示「运行超时」，避免 Run 永远停在 running。
 - 修复 API/Worker 单文件挂载 `.env` 在编辑器原子保存后失效的问题：Compose 统一通过 `env_file` 注入环境变量，避免热重载时 ARQ 子进程因 `/app/.env` 短暂不存在而退出、已派发 Run 长期停留在 pending。
 

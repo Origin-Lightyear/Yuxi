@@ -295,24 +295,17 @@ class _ChatbotHandler(ChatbotHandler):
         adapter = self._adapter
         adapter._remember(message)
         inbound = adapter._normalize(message)
-        if inbound.text:
+        logger.info(
+            "钉钉入站消息 chat=%s group=%s mentioned=%s sender=%s text_len=%d",
+            inbound.chat_id,
+            inbound.is_group,
+            inbound.mentions_bot,
+            inbound.sender_id,
+            len(inbound.text),
+        )
+        # 群里只 @ 机器人不带正文时也要进入处理，由网关回一条引导提示
+        if inbound.text or inbound.mentions_bot:
             adapter._dispatch(adapter._on_inbound(inbound))
         return AckMessage.STATUS_OK, "OK"
 
 
-class _ChatbotHandler(ChatbotHandler):
-    """把 dingtalk-stream 入站消息桥接到 asyncio 主循环。"""
-
-    def __init__(self, adapter: DingTalkAdapter) -> None:
-        super().__init__()
-        self._adapter = adapter
-
-    async def process(self, callback: dingtalk_stream.CallbackMessage):
-        """处理入站消息并返回 ACK。"""
-        message = ChatbotMessage.from_dict(callback.data)
-        adapter = self._adapter
-        adapter._remember(message)
-        inbound = adapter._normalize(message)
-        if inbound.text:
-            adapter._dispatch(adapter._on_inbound(inbound))
-        return AckMessage.STATUS_OK, "OK"

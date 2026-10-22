@@ -11,6 +11,7 @@ import asyncio
 import functools
 import hashlib
 import json
+import os
 import re
 from collections.abc import Callable
 from typing import Any, cast
@@ -27,6 +28,9 @@ from yuxi.utils import logger
 from .saas_credentials import create_saas_mcp_auth
 
 SAAS_MCP_SERVER_SLUG = "saas-mcp"
+
+# 单次 MCP 工具调用的最长等待时间，避免上游假死拖住整轮 Run
+MCP_TOOL_TIMEOUT_SECONDS = float(os.getenv("YUXI_MCP_TOOL_TIMEOUT_SECONDS", "120"))
 
 # =============================================================================
 # === Global Cache & State ===
@@ -163,6 +167,12 @@ def to_camel_case(s: str) -> str:
     return s
 
 
+def _consume_task_exception(task: asyncio.Task) -> None:
+    """取走被放弃任务的异常，避免 asyncio 输出 never retrieved 告警。"""
+    if not task.cancelled():
+        task.exception()
+
+
 def _guard_mcp_tool_coroutine(coroutine: Callable[..., Any] | None, server_slug: str):
     """把 MCP 建连/传输异常转成 ToolException，交给 handle_tool_error 变成工具错误消息。
 
@@ -174,8 +184,20 @@ def _guard_mcp_tool_coroutine(coroutine: Callable[..., Any] | None, server_slug:
 
     @functools.wraps(coroutine)
     async def guarded(*args: Any, **kwargs: Any) -> Any:
+        # 用独立 Task 等待，超时后放弃该调用：直接取消会触发 MCP 客户端 TaskGroup 抛 ExceptionGroup
+        task = asyncio.create_task(coroutine(*args, **kwargs))
         try:
-            return await coroutine(*args, **kwargs)
+            done, _ = await asyncio.wait({task}, timeout=MCP_TOOL_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        if not done:
+            task.cancel()
+            task.add_done_callback(_consume_task_exception)
+            raise ToolException(f"MCP 服务 '{server_slug}' 响应超时（超过 {int(MCP_TOOL_TIMEOUT_SECONDS)} 秒）")
+
+        try:
+            return task.result()
         except ToolException:
             raise
         except httpx.HTTPError as exc:
