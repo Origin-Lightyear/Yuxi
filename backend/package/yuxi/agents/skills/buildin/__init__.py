@@ -64,4 +64,10 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
         version="2026.09.20",
         mcp_dependencies=("saas-mcp", "mcp-server-chart"),
     ),
+    BuiltinSkillSpec(
+        slug="linko-enterprise",
+        source_dir=_SKILLS_ROOT / "linko-enterprise",
+        version="2026.10.22",
+        mcp_dependencies=("finance-mcp",),
+    ),
 ]

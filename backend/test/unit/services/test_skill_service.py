@@ -527,6 +527,22 @@ def test_mysql_reporter_builtin_skill_spec_replaces_reporter_and_deep_reporter()
         assert script_path.read_text(encoding="utf-8").startswith("# /// script")
 
 
+def test_linko_enterprise_builtin_skill_spec():
+    specs = {spec["slug"]: spec for spec in svc.list_builtin_skill_specs()}
+
+    assert "linko-enterprise" in specs
+    linko_enterprise = specs["linko-enterprise"]
+    assert linko_enterprise["name"] == "linko_enterprise_skill"
+    assert linko_enterprise["tool_dependencies"] == []
+    assert linko_enterprise["mcp_dependencies"] == ["finance-mcp"]
+    assert (linko_enterprise["source_dir"] / "SKILL.md").exists()
+    skill_content = (linko_enterprise["source_dir"] / "SKILL.md").read_text(encoding="utf-8")
+    assert "linko_ent" in skill_content
+    assert "金蝶云星空" in skill_content
+    manual_content = (linko_enterprise["source_dir"] / "references" / "kingdee-k3cloud.md").read_text(encoding="utf-8")
+    assert "k3_query_data" in manual_content
+
+
 def test_is_valid_skill_slug():
     # Test valid slugs
     assert svc.is_valid_skill_slug("demo-skill") is True
