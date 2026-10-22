@@ -214,12 +214,53 @@ function createWindow(url) {
     }
   });
 
+  // 每次页面加载完成都补一次外观（含站内导航），注入本身是幂等的
+  mainWindow.webContents.on('did-finish-load', () => installPageChrome(mainWindow.webContents));
+
   // 默认打开 /agent 聊天页；未登录由前端路由守卫自动跳转登录页，登录后跳回 /agent
   mainWindow.loadURL(`${url}/agent`);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+/**
+ * 给远程页面补上无边框窗口所需的顶部留白与拖动条。
+ *
+ * 远程页面自己不知道窗口无边框，这里给它留出标题栏高度并补一个可拖动区；
+ * `did-finish-load` 每次导航都会触发，CSS 重复插入无害，拖动条靠 id 判重。
+ */
+function installPageChrome(webContents) {
+  const css = `
+body {
+  height: 100vh;
+  padding-top: ${TITLEBAR_HEIGHT}px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.app-layout { height: 100% !important; }
+.login-view { min-height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important; }
+`;
+
+  const script = `
+(() => {
+  const id = 'yuxi-titlebar-drag';
+  if (document.getElementById(id)) return;
+
+  const bar = document.createElement('div');
+  bar.id = id;
+  bar.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0', 'height:${TITLEBAR_HEIGHT}px',
+    'z-index:2147483647', 'background:transparent',
+    '-webkit-app-region:drag', 'pointer-events:auto',
+  ].join(';');
+  document.body.appendChild(bar);
+})();
+`;
+
+  webContents.insertCSS(css);
+  webContents.executeJavaScript(script);
 }
 
 // ---------------------------------------------------------------------------

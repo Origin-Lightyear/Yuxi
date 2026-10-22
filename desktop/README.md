@@ -25,6 +25,8 @@ npm start            # 启动（默认连 http://10.69.188.181:5173，无需额�
 YUXI_BACKEND_URL=http://127.0.0.1:5173 npm start
 ```
 
+**Windows 验证**：无边框窗口用透明 `titleBarOverlay` 承载系统按钮，需在 Windows 实机确认按钮区域无黑条。
+
 ## 打包
 
 ```bash
