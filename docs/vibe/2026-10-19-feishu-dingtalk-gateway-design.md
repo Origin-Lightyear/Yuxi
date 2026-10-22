@@ -135,14 +135,17 @@ Thread 映射由后端 `hash_id(uid:channel:account_id:chat_id)` 决定，gatewa
 
 ## 验收标准
 
-- [ ] 飞书单聊文本问答收发正常，markdown 正确渲染。
-- [ ] 钉钉单聊文本问答收发正常。
-- [ ] 群聊仅在被 @ 时响应，群内用户会话相互隔离。
-- [ ] Agent 交付物中的 Excel 作为附件发送成功。
-- [ ] Agent 触发工具审批时发送交互卡片，批准与拒绝均生效。
-- [ ] 后台可增删改查机器人配置并启停，保存时按归属用户自动创建 API Key。
-- [ ] 长连接断开后可自动重连，多机器人互不影响。
-- [ ] `allowed_users` 非空时白名单外用户无法调用；留空时允许所有人。
+- [ ] 飞书单聊文本问答收发正常，markdown 正确渲染（未配置飞书应用，未联调）。
+- [ ] 钉钉单聊文本问答收发正常（channel 入口等价链路已验证，真机渲染待确认）。
+- [x] 群聊仅在被 @ 时响应，群内用户会话相互隔离（`tests/test_filters.py`、`tests/test_runner.py`）。
+- [ ] Agent 交付物中的 Excel 作为附件发送成功（产物下载与 `present_artifacts` 已验证，真机投递待确认）。
+- [x] Agent 触发工具审批时发送交互卡片，批准与拒绝均生效（已改为不做审批交互，见变更记录 2026-10-21）。
+- [x] 后台可增删改查机器人配置并启停，保存时按归属用户自动创建 API Key。
+- [x] 长连接断开后可自动重连，多机器人互不影响（测试覆盖，真机断线待观察）。
+- [x] `allowed_users` 非空时白名单外用户无法调用；留空时允许所有人（`tests/test_filters.py`、`tests/test_runner.py`）。
+
+验收记录（2026-10-22）：用机器人 API Key 直接调用 Channel 入口，跑通「读技能正文 → 查金蝶账套/凭证 → 汇总回答 → `present_artifacts` 产出 xlsx」全链路，
+产物按网关同款接口下载成功（15,001 字节，zip 头正常）；期间修掉两个链路上的问题：MCP 建连失败击穿整轮 Run、Run 长时间无事件后永远停在 running。
 
 ## 测试计划
 
@@ -152,17 +155,17 @@ Thread 映射由后端 `hash_id(uid:channel:account_id:chat_id)` 决定，gatewa
 
 ## Checklist
 
-- [ ] 新增 `im_bot_config` 数据模型、repository 与 service。
-- [ ] 新增后台 CRUD、归属用户 API Key 自动创建与内部配置拉取接口。
-- [ ] 新增前端「IM 机器人」配置页面。
-- [ ] 补齐 Channel 入口的审批拒绝通道。
-- [ ] 实现 gateway 服务与飞书 adapter。
-- [ ] 实现钉钉 adapter。
-- [ ] 实现正文 markdown 回发与附件投递。
-- [ ] 实现交互卡片审批闭环。
-- [ ] 接入 docker-compose，配置依赖与环境变量。
-- [ ] 更新 changelog 与相关文档。
-- [ ] 在 Docker 环境完成单元 / 集成测试与手工联调。
+- [x] 新增 `im_bot_config` 数据模型、repository 与 service。
+- [x] 新增后台 CRUD、归属用户 API Key 自动创建与内部配置拉取接口。
+- [x] 新增前端「IM 机器人」配置页面。
+- [x] 补齐 Channel 入口的审批拒绝通道。
+- [x] 实现 gateway 服务与飞书 adapter。
+- [x] 实现钉钉 adapter。
+- [x] 实现正文 markdown 回发与附件投递。
+- [x] 实现交互卡片审批闭环（2026-10-21 改为不做审批交互）。
+- [x] 接入 docker-compose，配置依赖与环境变量。
+- [x] 更新 changelog 与相关文档。
+- [ ] 在 Docker 环境完成单元 / 集成测试与手工联调（网关 57 个测试、后端相关单测已通过，真机联调待确认）。
 
 ## 变更记录
 
