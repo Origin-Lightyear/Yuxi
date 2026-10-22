@@ -36,6 +36,7 @@ from yuxi.utils.thread_utils import extract_thread_id
 LOADING_FLUSH_INTERVAL_MS = 100
 LOADING_FLUSH_MAX_CHARS = 512
 RUN_CANCEL_POLL_SECONDS = 0.2
+RUN_IDLE_TIMEOUT_SECONDS = int(os.getenv("YUXI_RUN_IDLE_TIMEOUT_SECONDS", "300"))
 SUPPORTED_RUN_TYPES = {"chat", "resume", "subagent"}
 
 
@@ -45,6 +46,10 @@ class RetryableRunError(Exception):
 
 class NonRetryableRunError(Exception):
     """Error type that should not trigger ARQ retry."""
+
+
+class RunIdleTimeout(NonRetryableRunError):
+    """长时间没有收到任何流事件，判定 Run 卡死。"""
 
 
 @dataclass(frozen=True)
@@ -286,11 +291,25 @@ async def _finish_run(
     return transition
 
 
-async def _consume_stream_with_cancel(agen, run_ctx: RunContext):
+async def _consume_stream_with_cancel(agen, run_ctx: RunContext, *, idle_timeout_seconds: float | None = None):
+    """消费 Agent 流，同时响应取消信号，并在长时间无事件时判定 Run 卡死。"""
+    if idle_timeout_seconds is None:
+        idle_timeout_seconds = RUN_IDLE_TIMEOUT_SECONDS
+
     while True:
         next_task = asyncio.create_task(agen.__anext__())
         cancel_task = asyncio.create_task(run_ctx.wait_cancelled())
-        done, _ = await asyncio.wait({next_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED)
+        done, _ = await asyncio.wait(
+            {next_task, cancel_task},
+            timeout=idle_timeout_seconds,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if not done:
+            next_task.cancel()
+            cancel_task.cancel()
+            await asyncio.gather(next_task, cancel_task, return_exceptions=True)
+            raise RunIdleTimeout(f"运行超时：{int(idle_timeout_seconds)} 秒内没有收到任何进展，请稍后重试")
 
         if cancel_task in done:
             next_task.cancel()
@@ -600,9 +619,10 @@ async def process_agent_run(ctx, run_id: str):
             raise RetryableRunError(str(e)) from e
 
         logger.error(f"Run failed {run_id}: {e}")
+        error_type = "run_timeout" if isinstance(e, RunIdleTimeout) else "worker_error"
         error_chunk = {
             "status": "error",
-            "error_type": "worker_error",
+            "error_type": error_type,
             "error_message": str(e),
             "request_id": request_id,
             "retryable": False,
@@ -618,7 +638,7 @@ async def process_agent_run(ctx, run_id: str):
             "failed",
             thread_id=thread_id,
             chunk=error_chunk,
-            error_type="worker_error",
+            error_type=error_type,
             error_message=str(e),
         )
         return

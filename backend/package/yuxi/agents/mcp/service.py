@@ -8,6 +8,7 @@ Responsibilities:
 """
 
 import asyncio
+import functools
 import hashlib
 import json
 import re
@@ -15,6 +16,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import httpx
+from langchain_core.tools import ToolException
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -161,6 +163,27 @@ def to_camel_case(s: str) -> str:
     return s
 
 
+def _guard_mcp_tool_coroutine(coroutine: Callable[..., Any] | None, server_slug: str):
+    """把 MCP 建连/传输异常转成 ToolException，交给 handle_tool_error 变成工具错误消息。
+
+    MCP 工具每次调用都由 httpx 建连，服务不可达或超时会抛 httpx.HTTPError；
+    langchain 的 handle_tool_error 只处理 ToolException，未转换时该异常会击穿整轮 Run。
+    """
+    if coroutine is None:
+        return None
+
+    @functools.wraps(coroutine)
+    async def guarded(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await coroutine(*args, **kwargs)
+        except ToolException:
+            raise
+        except httpx.HTTPError as exc:
+            raise ToolException(f"MCP 服务 '{server_slug}' 不可用（连接失败或超时）：{exc}") from exc
+
+    return guarded
+
+
 async def _load_enabled_mcp_server_configs(
     *,
     names: list[str] | None = None,
@@ -272,6 +295,9 @@ async def get_mcp_tools(
                 tool.metadata["id"] = unique_id
                 # 开启错误处理，防止工具调用抛出 ToolException 时击穿服务
                 tool.handle_tool_error = True
+                guarded_coroutine = _guard_mcp_tool_coroutine(getattr(tool, "coroutine", None), server_slug)
+                if guarded_coroutine is not None:
+                    tool.coroutine = guarded_coroutine
                 all_processed_tools.append(tool)
 
             if cache:
