@@ -156,7 +156,7 @@ async def _async_value(value):
     return value
 
 
-def test_asr_host_opts_registered_with_env_fallback():
+def test_asr_host_opts_registered_with_env_fallback(monkeypatch):
     """语音识别服务地址配置项已注册，声明 ASR_API_URI 回退，未配置时解析为空串。"""
     from yuxi.config.options import OPTION_DEFINITIONS, asr_host_opts
 
@@ -164,4 +164,6 @@ def test_asr_host_opts_registered_with_env_fallback():
     field = asr_host_opts.params["fields"][0]
     assert field["key"] == "server_url"
     assert field["environment"] == "ASR_API_URI"
+
+    monkeypatch.delenv("ASR_API_URI", raising=False)
     assert asr_host_opts.resolve({})["server_url"] == ""
