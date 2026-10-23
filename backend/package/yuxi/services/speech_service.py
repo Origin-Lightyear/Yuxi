@@ -98,10 +98,14 @@ async def transcribe_speech(
     return text
 
 
-async def check_speech_health(db: AsyncSession | None = None) -> bool:
+async def check_speech_health(
+    db: AsyncSession | None = None,
+    *,
+    server_url: str | None = None,
+) -> bool:
     """探测 ASR 服务健康状态；任何异常都视为不可用。"""
     try:
-        resolved_url = await _resolve_server_url(None, db)
+        resolved_url = await _resolve_server_url(server_url, db)
         if not resolved_url:
             return False
         async with build_asr_client(resolved_url) as client:

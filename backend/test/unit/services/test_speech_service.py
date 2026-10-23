@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from yuxi.services import speech_service
-from yuxi.services.speech_service import SpeechError, strip_rich_tags, transcribe_speech
+from yuxi.services.speech_service import SpeechError, check_speech_health, strip_rich_tags, transcribe_speech
 
 
 def test_strip_rich_tags_removes_sensevoice_tags():
@@ -70,3 +70,29 @@ async def test_transcribe_speech_maps_empty_result(monkeypatch):
     with pytest.raises(SpeechError) as exc:
         await transcribe_speech(b"\x00" * 128, server_url="http://asr:8100")
     assert exc.value.reason == "empty"
+
+
+@pytest.mark.asyncio
+async def test_check_speech_health_returns_true_on_200(monkeypatch):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    monkeypatch.setattr(
+        speech_service,
+        "build_asr_client",
+        lambda url: httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=url),
+    )
+    assert await check_speech_health(server_url="http://asr:8100") is True
+
+
+@pytest.mark.asyncio
+async def test_check_speech_health_swallows_timeout(monkeypatch):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("slow")
+
+    monkeypatch.setattr(
+        speech_service,
+        "build_asr_client",
+        lambda url: httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=url),
+    )
+    assert await check_speech_health(server_url="http://asr:8100") is False
