@@ -13,8 +13,8 @@ from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger("asr")
 
-# 构建期已把 SenseVoiceSmall 固化到这个目录；直接加载本地目录，运行期不访问 ModelScope。
-MODEL_DIR = "/opt/modelscope/models/iic--SenseVoiceSmall/snapshots/master"
+# 构建期把 SenseVoiceSmall 复制到固定目录；运行期只读这里，不依赖 ModelScope 缓存布局。
+MODEL_DIR = "/opt/model"
 MODEL = None
 # FunASR 推理非线程安全，串行执行避免并发请求互相干扰。
 _INFERENCE_LOCK = threading.Lock()
