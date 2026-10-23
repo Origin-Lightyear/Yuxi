@@ -33,7 +33,7 @@ desktop 侧（`main.js` 及纯函数模块；`preload.js` 仅新增恢复主窗�
 - **关闭到托盘**：`close` → `preventDefault + hide`（托盘缺席——图标缺失或创建失败——时放行真实关闭，不假装隐藏）；`before-quit` 置 `isQuitting` 才真退出；托盘菜单 = 显示主窗口 / 切换服务地址 / 开机自启（checkbox）/ 退出。首次最小化到托盘弹一次告知性 toast（config 记一次性标志）。
 - **后台保活**：启动时追加 `disable-renderer-backgrounding`、`disable-backgrounding-occluded-windows`，保证隐藏窗口内定时任务轮询仍按 30s 执行——这是「托盘常驻 + 定时任务通知」成立的前提。
 - **开机自启**：托盘 checkbox 驱动 `app.setLoginItemSettings`，系统登录项为事实源；`app.isPackaged === false`（开发直跑）时禁用。
-- **原生菜单**：`Menu.setApplicationMenu`（中文文案）含编辑 roles（撤销/重做/剪切/复制/粘贴/全选及快捷键）、查看（重载）、应用（退出），mac 补最小 app 菜单；`webContents.on('context-menu')` 在可编辑区弹编辑菜单。
+- **原生菜单**：`Menu.setApplicationMenu`（中文文案）含编辑 roles（撤销/重做/剪切/复制/粘贴/全选及快捷键）、查看（重载）、应用（退出），mac 补最小 app 菜单；`webContents.on('context-menu')` 在可编辑区弹编辑菜单。（本条的菜单决策已由 [桌面窗口无边框](2026-10-23-desktop-frameless-window.md) 取代，所列菜单组成只描述 v1 发布时的形态。）
 - **切换服务地址**：托盘菜单复用既有 `askUrl` 与连接弹窗逻辑，成功后保存配置并重新加载页面。
 - **openExternal 白名单**：抽纯函数模块（`http/https/mailto` 放行，其余拒绝并记日志），两个既有调用点（`will-navigate`、`setWindowOpenHandler`）统一走它；拖到窗口非附件区的文件不再外开。
 - **will-download**：显式 `setSavePath` 到系统下载目录，重名自动编号，不弹保存对话框。

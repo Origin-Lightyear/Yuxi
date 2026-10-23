@@ -8,7 +8,7 @@
  * 服务地址优先级：环境变量 YUXI_BACKEND_URL > 用户上次保存的地址 > 默认 http://10.69.188.181:5173
  * 连接失败时弹窗提供地址输入，用户可修改并重试（保存到 userData/config.json）。
  */
-const { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, session, shell, Tray } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, screen, session, shell, Tray } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -23,13 +23,8 @@ const DEFAULT_URL = 'http://10.69.188.181:5173';
 const CONFIG_FILE = 'config.json';
 // 顶部给系统按钮（macOS 红绿灯 / Windows 窗口控件）留出的高度，窗口与页面留白共用同一常量
 const TITLEBAR_HEIGHT = 36;
-
-// 全屏下系统按钮消失，留白和拖动区一并收掉，避免页面顶部残留一条死区
-const FULLSCREEN_OVERRIDE_CSS = `
-body { padding-top: 0 !important; }
-.app-layout { height: 100vh !important; }
-#yuxi-titlebar-drag { display: none; }
-`;
+// 拖动条元素 id：注入脚本按它判重，全屏规则按它隐藏同一条带，改名单点即可
+const DRAG_STRIP_ID = 'yuxi-titlebar-drag';
 
 let mainWindow = null;
 let backendUrl = null;
@@ -272,7 +267,7 @@ function createWindow(url) {
     title: '大力水手',
     icon: resolveAppIcon(),
     // 与页面侧栏底色一致，减少无边框窗口启动时的白闪
-    backgroundColor: '#fcfefe',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#030303' : '#fcfefe',
     ...titleBarOptions,
     webPreferences: {
       nodeIntegration: false,
@@ -312,22 +307,13 @@ function createWindow(url) {
 
   const { webContents } = mainWindow;
 
-  // 每次导航（含托盘切换服务地址）都重新注入顶部留白与拖动条；注入幂等，早于首帧避免内容下移跳动
+  // 每次导航（含托盘切换服务地址）在 DOMContentLoaded 重新注入留白、拖动条与全屏状态；
+  // 注入幂等，且不阻塞窗口显示
   webContents.on('dom-ready', () => installPageChrome(webContents));
 
-  // 全屏时系统按钮消失，注入覆盖样式收掉留白与拖动区；退出全屏按记录的 key 移除
-  let fullscreenCssKey = null;
-
-  mainWindow.on('enter-full-screen', async () => {
-    fullscreenCssKey = await webContents.insertCSS(FULLSCREEN_OVERRIDE_CSS);
-  });
-
-  mainWindow.on('leave-full-screen', async () => {
-    if (!fullscreenCssKey) return;
-    const key = fullscreenCssKey;
-    fullscreenCssKey = null;
-    await webContents.removeInsertedCSS(key);
-  });
+  // 全屏切换只切 body 类：样式恒在，快速进出全屏或全屏中导航都不会残留失效覆盖
+  mainWindow.on('enter-full-screen', () => syncFullscreenClass(webContents));
+  mainWindow.on('leave-full-screen', () => syncFullscreenClass(webContents));
 
   // 默认打开 /agent 聊天页；未登录由前端路由守卫自动跳转登录页，登录后跳回 /agent
   mainWindow.loadURL(`${url}/agent`);
@@ -351,10 +337,11 @@ function createWindow(url) {
 }
 
 /**
- * 给远程页面补上无边框窗口所需的顶部留白与拖动条。
+ * 给远程页面补上无边框窗口所需的顶部留白、拖动条与全屏样式。
  *
- * 远程页面不知道窗口无边框，这里替它留出标题栏高度，并叠一个透明拖动区；
- * 在 dom-ready 注入以早于首帧，脚本靠 id 判重，重复导航注入不会叠加元素。
+ * 远程页面不知道窗口无边框，这里替它留出标题栏高度，并叠一个透明拖动区。
+ * 基础规则与全屏规则同在一张样式表内，全屏规则由 `body.yuxi-fullscreen` 限定，
+ * 因此每次 DOMContentLoaded 重新注入后，全屏状态由 syncFullscreenClass 一并恢复。
  */
 function installPageChrome(webContents) {
   // 留白用 padding 而非 margin，避免 body 背景色与页面顶部之间露出窗口底色
@@ -369,11 +356,21 @@ body {
 .login-view, .oidc-callback-view, .cli-auth-view {
   min-height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important;
 }
+
+/* 全屏下系统按钮消失，留白、拖动区与独立视图高度一并按整屏计算 */
+body.yuxi-fullscreen { padding-top: 0 !important; }
+body.yuxi-fullscreen .app-layout { height: 100vh !important; }
+body.yuxi-fullscreen .login-view,
+body.yuxi-fullscreen .oidc-callback-view,
+body.yuxi-fullscreen .cli-auth-view {
+  min-height: 100vh !important;
+}
+body.yuxi-fullscreen #${DRAG_STRIP_ID} { display: none !important; }
 `;
 
   const script = `
 (() => {
-  const id = 'yuxi-titlebar-drag';
+  const id = '${DRAG_STRIP_ID}';
   if (document.getElementById(id)) return;
 
   const bar = document.createElement('div');
@@ -386,8 +383,25 @@ body {
 })();
 `;
 
-  webContents.insertCSS(css);
-  webContents.executeJavaScript(script);
+  webContents.insertCSS(css).catch(warnPageChromeFailure);
+  webContents.executeJavaScript(script).catch(warnPageChromeFailure);
+  syncFullscreenClass(webContents);
+}
+
+/**
+ * 按窗口当前全屏状态切换页面上的 `yuxi-fullscreen` 类。
+ *
+ * 全屏样式常驻样式表，这里只改类名：快速进出全屏、全屏中切换服务地址都不会留下失效覆盖。
+ */
+function syncFullscreenClass(webContents) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const script = `document.body.classList.toggle('yuxi-fullscreen', ${mainWindow.isFullScreen()});`;
+  webContents.executeJavaScript(script).catch(warnPageChromeFailure);
+}
+
+// 导航过程中注入可能失败（页面被替换、窗口关闭），失败要可见而不是变成未处理的 rejection
+function warnPageChromeFailure(err) {
+  console.warn('[yuxi] 页面样式注入失败:', err);
 }
 
 // ---------------------------------------------------------------------------
