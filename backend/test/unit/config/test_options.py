@@ -154,3 +154,13 @@ async def test_first_implicit_option_read_initializes_cache_version(monkeypatch)
 
 async def _async_value(value):
     return value
+
+
+def test_asr_host_opts_registered_with_env_fallback():
+    """语音识别服务地址配置项已注册，并声明 ASR_API_URI 环境变量回退。"""
+    from yuxi.config.options import OPTION_DEFINITIONS, asr_host_opts
+
+    assert "asr_host_opts" in OPTION_DEFINITIONS
+    field = asr_host_opts.params["fields"][0]
+    assert field["key"] == "server_url"
+    assert field["environment"] == "ASR_API_URI"

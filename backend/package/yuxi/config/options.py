@@ -206,6 +206,24 @@ paddleocr_api_opts = Option(
     },
 )
 
+asr_host_opts = Option(
+    key="asr_host_opts",
+    name="语音识别服务",
+    description="配置自托管 FunASR 语音识别服务地址，供输入框语音录入使用。",
+    params={
+        "fields": [
+            {
+                "key": "server_url",
+                "label": "服务地址",
+                "type": "url",
+                "environment": "ASR_API_URI",
+                "placeholder": "http://asr:8100",
+                "help": "留空时读取 ASR_API_URI；两者都为空时语音输入不可用。",
+            }
+        ]
+    },
+)
+
 remote_skill_source_policy = Option(
     key="remote_skill_source_policy",
     name="远程 Skill 来源",
@@ -230,6 +248,7 @@ OPTION_DEFINITIONS = {
         mineru_official_api_opts,
         pp_structure_v3_ocr_host_opts,
         paddleocr_api_opts,
+        asr_host_opts,
         remote_skill_source_policy,
         system_options,
     )
