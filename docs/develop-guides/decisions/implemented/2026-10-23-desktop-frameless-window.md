@@ -36,5 +36,5 @@ Owner：desktop/main.js
 
 - `cd desktop && node --check main.js` 通过；`cd desktop && node --test` 7/7 通过（`url_policy.test.js`、`window_state.test.js`，本次未改动）。
 - 实机（macOS，1280×820，连接部署实例）：登录页顶部留白 36px，`body` 背景随主题切换（深色 `rgb(3,3,3)`，无白条），拖动条存在且 `-webkit-app-region: drag`；插入桩元素测得 `.app-layout` 实际高度 784px（= 视口 − 36）。
-- `yuxi-fullscreen` 全屏规则与 `enter-full-screen` / `leave-full-screen` 的类名切换为 Not run：本次只静态核对选择器与事件接线，未实机进出全屏。
+- 实机手动切换 `body.yuxi-fullscreen`：顶部 padding 归 0、拖动条 `display: none`、登录视图高度 820px（整屏）；移除类后恢复 36px 留白与拖动条。`enter-full-screen` / `leave-full-screen` 的事件触发路径（系统全屏动画）为 Not run。
 - Windows 透明 `titleBarOverlay` 的系统按钮外观与深色主题适配为 Not run，需 Windows 实机确认。
