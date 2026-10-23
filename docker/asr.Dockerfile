@@ -18,6 +18,10 @@ RUN python -c "from funasr import AutoModel; AutoModel(model='iic/SenseVoiceSmal
 
 COPY docker/asr/app.py .
 
+# 模型许可全文与署名随镜像分发（许可 §2.2），不依赖运行中的应用。
+COPY docker/asr/MODEL_LICENSE.txt /opt/licenses/SenseVoiceSmall/MODEL_LICENSE.txt
+COPY docker/asr/NOTICE.txt /opt/licenses/SenseVoiceSmall/NOTICE.txt
+
 ENV HF_HUB_OFFLINE=1
 
 EXPOSE 8100
