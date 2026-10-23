@@ -56,7 +56,7 @@ async def handle_inbound(
         return
     if not msg.text.strip():
         logger.info("入站消息无正文 bot=%s message=%s group=%s", bot.id, msg.message_id, msg.is_group)
-        await adapter.send_text(msg.chat_id, "请直接描述你要查询的问题，例如「查一下大力水手 11 月的应收账款」。")
+        await adapter.send_text(msg.chat_id, "目前只支持文字提问，请直接描述你要查询的问题，例如「查一下大力水手 11 月的应收账款」。")
         return
 
     chat_id = session_chat_id(bot, msg)

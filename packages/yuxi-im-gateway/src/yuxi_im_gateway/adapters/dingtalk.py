@@ -112,6 +112,8 @@ class DingTalkAdapter(Adapter):
         """把钉钉回调消息归一化为 InboundMessage。"""
         is_group = bool(message.conversation_type == "2")
         text = str((message.text and message.text.content) or "").strip()
+        if not text and message.message_type == "richText":
+            text = "\n".join(message.get_text_list() or []).strip()
         return InboundMessage(
             message_id=str(message.message_id),
             chat_id=str(message.conversation_id),
@@ -296,16 +298,16 @@ class _ChatbotHandler(ChatbotHandler):
         adapter._remember(message)
         inbound = adapter._normalize(message)
         logger.info(
-            "钉钉入站消息 chat=%s group=%s mentioned=%s sender=%s text_len=%d",
+            "钉钉入站消息 chat=%s type=%s group=%s mentioned=%s sender=%s text_len=%d",
             inbound.chat_id,
+            message.message_type,
             inbound.is_group,
             inbound.mentions_bot,
             inbound.sender_id,
             len(inbound.text),
         )
-        # 群里只 @ 机器人不带正文时也要进入处理，由网关回一条引导提示
-        if inbound.text or inbound.mentions_bot:
-            adapter._dispatch(adapter._on_inbound(inbound))
+        # 正文为空（图片、语音等）也要进入处理，由网关回一条文字引导；群内是否响应交给过滤器判断
+        adapter._dispatch(adapter._on_inbound(inbound))
         return AckMessage.STATUS_OK, "OK"
 
 
