@@ -43,7 +43,7 @@
 - 新增 SaaS Agent 数据双写与定时任务：SaaS 登录迁移到 Tenant 服务新内部路径 `/api/v1/agent/inner/auth`，按员工编码复用本地账号并同步手机号、姓名与部门；MCP Runtime 从租户 endpoints 接口同步，使用 `AgentSession` 为每次 HTTP 请求申请一次性六 Header；Yuxi JWT 有效期与 AgentSession 对齐，Session 缺失时统一返回 401 并触发重新登录，避免模型误判为数据源未配置；`tenant_id/employee_id` 持久化到 `user_config`（可 `AGENT_DATA_SYNC=false` 关闭）；SaaS 模式下本地线程、对话回复与恢复入口的用户消息按 fail-soft 镜像到 Tenant，并记录整轮 `consumedScore`；新增五段式 Cron 调度与任务接口透传。
 - 修复内置 `mysql-reporter` 的数据源路由：企业业务查询调用 SaaS MCP `linko_ent`，会话失效时提示重新登录，不再误导用户配置沙盒 `MYSQL_*`；独立外部 MySQL 仍使用只读脚本。
 - 修复 API/Worker 单文件挂载 `.env` 在编辑器原子保存后失效的问题：Compose 统一通过 `env_file` 注入环境变量，避免热重载时 ARQ 子进程因 `/app/.env` 短暂不存在而退出、已派发 Run 长期停留在 pending。
-- 桌面客户端改为无边框窗口，内容铺满并去掉 Windows/Linux 的应用菜单栏；顶部 36px 留作系统按钮与窗口拖动区，全屏时自动收起，托盘、窗口状态与通知行为不变。
+- 桌面客户端改为无边框窗口，内容铺满并去掉 Windows/Linux 的应用菜单栏；顶部 36px 留作系统按钮与窗口拖动区，全屏时自动收起，托盘、窗口状态与通知行为不变；Windows 安装包文件名补架构后缀，避免 x64 / arm64 互相覆盖。
 ### 运行与维护
 
 - 通用后台 Task 使用 PostgreSQL 持久执行意图与 ARQ worker，按 owner、heartbeat 和 lease 执行与收敛失联任务；知识库执行器和 Milvus 同步调用移出共享事件循环。

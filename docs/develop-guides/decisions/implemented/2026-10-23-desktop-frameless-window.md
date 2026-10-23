@@ -34,4 +34,7 @@ Owner：desktop/main.js
 
 ## 验证
 
-`cd desktop && node --check main.js` 通过；`cd desktop && node --test` 7/7 通过（`url_policy.test.js`、`window_state.test.js`，本次未改动）。窗口拖动、红绿灯位置、全屏留白收起与恢复的 GUI 行为未在当前环境执行；Windows 安装版的透明 overlay 与深色主题为 Not run，需实机补验。
+- `cd desktop && node --check main.js` 通过；`cd desktop && node --test` 7/7 通过（`url_policy.test.js`、`window_state.test.js`，本次未改动）。
+- 实机（macOS，1280×820，连接部署实例）：登录页顶部留白 36px，`body` 背景随主题切换（深色 `rgb(3,3,3)`，无白条），拖动条存在且 `-webkit-app-region: drag`；插入桩元素测得 `.app-layout` 实际高度 784px（= 视口 − 36）。
+- 手工注入 `FULLSCREEN_OVERRIDE_CSS` 后 `body` padding 归 0、拖动条 `display: none`，样式符合预期；`enter-full-screen` / `leave-full-screen` 的事件接线未实机触发。
+- Windows 透明 `titleBarOverlay` 的系统按钮外观与深色主题适配为 Not run，需 Windows 实机确认。
