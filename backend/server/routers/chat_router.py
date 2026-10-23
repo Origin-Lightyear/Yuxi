@@ -2,7 +2,7 @@ import traceback
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, UploadFile, File
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +35,7 @@ from yuxi.services.artifact_service import (
 )
 from yuxi.services.feedback_service import get_message_feedback_view, submit_message_feedback_view
 from yuxi.services.context_compression_service import compress_thread_context as compress_context
+from yuxi.services.speech_service import SpeechError, transcribe_speech
 from yuxi.utils.logging_config import logger
 from yuxi.utils.image_processor import process_uploaded_image
 
@@ -582,3 +583,54 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
     except Exception as e:
         logger.error(f"图片上传处理失败: {str(e)}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"图片处理失败: {str(e)}")
+
+
+# =============================================================================
+# > === 语音转写分组 ===
+# =============================================================================
+
+SPEECH_MAX_AUDIO_BYTES = 5 * 1024 * 1024
+_WAV_INSPECT_BYTES = 12
+_SPEECH_ERROR_STATUS = {"unavailable": 503, "timeout": 504, "empty": 422}
+
+
+class SpeechTranscribeResponse(BaseModel):
+    """语音转写结果。"""
+
+    text: str
+
+
+@chat.post("/speech/transcribe", response_model=SpeechTranscribeResponse)
+async def transcribe_speech_audio(
+    request: Request,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """把请求体中的 WAV 音频转写为文本（需要登录）。"""
+    audio = await _read_wav_body(request)
+
+    try:
+        text = await transcribe_speech(audio, db=db)
+    except SpeechError as exc:
+        raise HTTPException(status_code=_SPEECH_ERROR_STATUS[exc.reason], detail="语音转写失败") from exc
+
+    return SpeechTranscribeResponse(text=text)
+
+
+async def _read_wav_body(request: Request) -> bytes:
+    """按块读取 WAV 请求体，超限立即拒绝，只校验 RIFF/WAVE 标识。"""
+    content_type = request.headers.get("content-type", "")
+    if not content_type.startswith("audio/wav"):
+        raise HTTPException(status_code=400, detail="只支持 audio/wav 音频")
+
+    # 边读边判上限：超限的块不并入缓冲，进程内音频峰值不超过上限。
+    audio = bytearray()
+    async for chunk in request.stream():
+        if len(audio) + len(chunk) > SPEECH_MAX_AUDIO_BYTES:
+            raise HTTPException(status_code=413, detail="音频超过 5 MB 上限")
+        audio.extend(chunk)
+
+    if len(audio) < _WAV_INSPECT_BYTES or bytes(audio[:4]) != b"RIFF" or bytes(audio[8:12]) != b"WAVE":
+        raise HTTPException(status_code=400, detail="音频不是合法的 WAV 文件")
+
+    return bytes(audio)

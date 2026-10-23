@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 
 import aiofiles
@@ -399,3 +400,38 @@ async def get_ocr_health(
     from yuxi.services.ocr_service import check_all_ocr_health
 
     return {"health": await check_all_ocr_health(db)}
+
+
+# =============================================================================
+# === 语音能力探测分组 ===
+# =============================================================================
+
+
+SPEECH_HEALTH_CACHE_SECONDS = 30
+_speech_health_cache: tuple[float, bool] | None = None
+
+
+@system.get("/speech/health")
+async def get_speech_health(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """探测语音转写能力是否可用，探测结果缓存 30 秒。"""
+
+    return {"available": await _cached_speech_health(db)}
+
+
+async def _cached_speech_health(db: AsyncSession) -> bool:
+    """复用 30 秒内的探测结果，避免每次能力查询都触达 ASR 服务。"""
+    global _speech_health_cache
+
+    from yuxi.services.speech_service import check_speech_health
+
+    now = time.monotonic()
+    if _speech_health_cache is not None and now - _speech_health_cache[0] < SPEECH_HEALTH_CACHE_SECONDS:
+        return _speech_health_cache[1]
+
+    # check_speech_health 自身保证不抛异常，此处不再重复兜底。
+    available = await check_speech_health(db)
+    _speech_health_cache = (now, available)
+    return available
