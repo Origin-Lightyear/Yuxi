@@ -541,6 +541,24 @@ services:
       - app-network
     restart: unless-stopped
 
+  # 语音输入（可选能力）：仅在 --profile voice 下启动。
+  asr:
+    build:
+      context: .
+      dockerfile: docker/asr.Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-asr:${YUXI_VERSION:-0.7.3}
+    profiles:
+      - voice
+    ports:
+      - "127.0.0.1:${YUXI_ASR_PORT:-8100}:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 20s
+      start_period: 120s
+    networks:
+      - app-network
+    restart: unless-stopped
+
 networks:
   app-network:
     driver: bridge
