@@ -216,6 +216,7 @@ asr_host_opts = Option(
                 "key": "server_url",
                 "label": "服务地址",
                 "type": "url",
+                "default": "",
                 "environment": "ASR_API_URI",
                 "placeholder": "http://asr:8100",
                 "help": "留空时读取 ASR_API_URI；两者都为空时语音输入不可用。",
