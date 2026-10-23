@@ -1,5 +1,7 @@
+import io
 import traceback
 import uuid
+import wave
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, UploadFile, File
@@ -586,10 +588,11 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
 
 
 # =============================================================================
-# > === 语音转写分组 ===
+# === 语音转写分组 ===
 # =============================================================================
 
 SPEECH_MAX_AUDIO_BYTES = 5 * 1024 * 1024
+SPEECH_MAX_DURATION_SECONDS = 60
 _WAV_INSPECT_BYTES = 12
 _SPEECH_ERROR_STATUS = {"unavailable": 503, "timeout": 504, "empty": 422}
 
@@ -608,6 +611,7 @@ async def transcribe_speech_audio(
 ):
     """把请求体中的 WAV 音频转写为文本（需要登录）。"""
     audio = await _read_wav_body(request)
+    _validate_wav_duration(audio)
 
     try:
         text = await transcribe_speech(audio, db=db)
@@ -634,3 +638,18 @@ async def _read_wav_body(request: Request) -> bytes:
         raise HTTPException(status_code=400, detail="音频不是合法的 WAV 文件")
 
     return bytes(audio)
+
+
+def _validate_wav_duration(audio: bytes) -> None:
+    """校验 WAV 时长不超过 60 秒；无法解析的头部按请求不合法处理。"""
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as wav:
+            frame_rate = wav.getframerate()
+            frames = wav.getnframes()
+    except (wave.Error, EOFError):
+        raise HTTPException(status_code=400, detail="音频不是合法的 WAV 文件") from None
+
+    if frame_rate <= 0:
+        raise HTTPException(status_code=400, detail="音频不是合法的 WAV 文件")
+    if frames / frame_rate > SPEECH_MAX_DURATION_SECONDS:
+        raise HTTPException(status_code=400, detail="音频超过 60 秒上限")
