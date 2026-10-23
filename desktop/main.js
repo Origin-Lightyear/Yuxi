@@ -21,6 +21,15 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 const DEFAULT_URL = 'http://10.69.188.181:5173';
 const CONFIG_FILE = 'config.json';
+// 顶部给系统按钮（macOS 红绿灯 / Windows 窗口控件）留出的高度，窗口与页面留白共用同一常量
+const TITLEBAR_HEIGHT = 36;
+
+// 全屏下系统按钮消失，留白和拖动区一并收掉，避免页面顶部残留一条死区
+const FULLSCREEN_OVERRIDE_CSS = `
+body { padding-top: 0 !important; }
+.app-layout { height: 100vh !important; }
+#yuxi-titlebar-drag { display: none; }
+`;
 
 let mainWindow = null;
 let backendUrl = null;
@@ -239,12 +248,32 @@ function createWindow(url) {
     ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height }
     : { width: 1280, height: 820 };
 
+  // 无边框外观：macOS 隐藏标题栏但把红绿灯内嵌到页面左上角留白内；
+  // 其他平台隐藏标题栏，用透明 titleBarOverlay 把系统窗口控件浮在页面右上角
+  const titleBarOptions =
+    process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset',
+          trafficLightPosition: { x: 14, y: (TITLEBAR_HEIGHT - 14) / 2 },
+        }
+      : {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: {
+            color: '#00000000',
+            symbolColor: '#5f6a6a',
+            height: TITLEBAR_HEIGHT,
+          },
+        };
+
   mainWindow = new BrowserWindow({
     ...initialBounds,
     minWidth: 900,
     minHeight: 600,
     title: '大力水手',
     icon: resolveAppIcon(),
+    // 与页面侧栏底色一致，减少无边框窗口启动时的白闪
+    backgroundColor: '#fcfefe',
+    ...titleBarOptions,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -281,6 +310,25 @@ function createWindow(url) {
     Menu.buildFromTemplate(editSubmenuTemplate()).popup({ window: mainWindow });
   });
 
+  const { webContents } = mainWindow;
+
+  // 每次导航（含托盘切换服务地址）都重新注入顶部留白与拖动条；注入幂等，早于首帧避免内容下移跳动
+  webContents.on('dom-ready', () => installPageChrome(webContents));
+
+  // 全屏时系统按钮消失，注入覆盖样式收掉留白与拖动区；退出全屏按记录的 key 移除
+  let fullscreenCssKey = null;
+
+  mainWindow.on('enter-full-screen', async () => {
+    fullscreenCssKey = await webContents.insertCSS(FULLSCREEN_OVERRIDE_CSS);
+  });
+
+  mainWindow.on('leave-full-screen', async () => {
+    if (!fullscreenCssKey) return;
+    const key = fullscreenCssKey;
+    fullscreenCssKey = null;
+    await webContents.removeInsertedCSS(key);
+  });
+
   // 默认打开 /agent 聊天页；未登录由前端路由守卫自动跳转登录页，登录后跳回 /agent
   mainWindow.loadURL(`${url}/agent`);
 
@@ -300,6 +348,46 @@ function createWindow(url) {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+/**
+ * 给远程页面补上无边框窗口所需的顶部留白与拖动条。
+ *
+ * 远程页面不知道窗口无边框，这里替它留出标题栏高度，并叠一个透明拖动区；
+ * 在 dom-ready 注入以早于首帧，脚本靠 id 判重，重复导航注入不会叠加元素。
+ */
+function installPageChrome(webContents) {
+  // 留白用 padding 而非 margin，避免 body 背景色与页面顶部之间露出窗口底色
+  const css = `
+body {
+  height: 100vh;
+  padding-top: ${TITLEBAR_HEIGHT}px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+.app-layout { height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important; }
+.login-view, .oidc-callback-view, .cli-auth-view {
+  min-height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important;
+}
+`;
+
+  const script = `
+(() => {
+  const id = 'yuxi-titlebar-drag';
+  if (document.getElementById(id)) return;
+
+  const bar = document.createElement('div');
+  bar.id = id;
+  bar.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0', 'height:${TITLEBAR_HEIGHT}px',
+    'z-index:2147483647', 'background:transparent', '-webkit-app-region:drag',
+  ].join(';');
+  document.body.appendChild(bar);
+})();
+`;
+
+  webContents.insertCSS(css);
+  webContents.executeJavaScript(script);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,27 +429,16 @@ function editSubmenuTemplate() {
   ];
 }
 
-function buildMenu() {
-  const template = [];
-  if (process.platform === 'darwin') {
-    template.push({
-      label: '大力水手',
-      submenu: [
-        { role: 'about', label: '关于' },
-        { type: 'separator' },
-        { role: 'hide', label: '隐藏' },
-        { type: 'separator' },
-        { role: 'quit', label: '退出' },
-      ],
-    });
+function applyAppMenu() {
+  // 窗口无边框后不需要完整菜单栏：macOS 保留应用菜单与编辑菜单，保证 Cmd+Q / Cmd+C/V
+  // 等系统快捷键可用；其他平台清空默认菜单，编辑能力由页面与右键菜单承担
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null);
+    return;
   }
-  template.push(
-    { label: '编辑', submenu: editSubmenuTemplate() },
-    { label: '查看', submenu: [{ role: 'reload', label: '重新加载' }] },
-    // role quit 走 app.quit() -> before-quit 置 isQuitting，close 处理器不会拦截，真正退出
-    { label: '应用', submenu: [{ role: 'quit', label: '退出' }] }
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([{ role: 'appMenu' }, { label: '编辑', submenu: editSubmenuTemplate() }])
   );
-  return Menu.buildFromTemplate(template);
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +532,7 @@ if (!gotLock) {
       tray.on('click', showMainWindow);
     }
 
-    Menu.setApplicationMenu(buildMenu());
+    applyAppMenu();
 
     // 下载显式落系统下载目录：默认文件名 + 重名自动编号，不依赖 Electron 默认且不覆盖已有文件
     session.defaultSession.on('will-download', (_event, item) => {
