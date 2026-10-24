@@ -35,7 +35,7 @@
               <span>复制 ID</span>
             </a-button>
             <a-button
-              v-if="canManageDatabase"
+              v-if="canManageStructure"
               type="text"
               aria-label="配置知识库"
               title="配置知识库"
@@ -55,7 +55,7 @@
             <div class="file-info-title">
               <div class="file-info-title-row">
                 <div
-                  v-if="canManageDatabase"
+                  v-if="canManageStructure"
                   ref="uploadActionMenuRef"
                   class="file-action-dropdown"
                 >
@@ -101,7 +101,7 @@
             </div>
             <div class="file-panel-status">
               <button
-                v-if="canManageDatabase && pendingParseCount > 0"
+                v-if="canManageStructure && pendingParseCount > 0"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-warning file-stat-summary"
                 :disabled="store.state.chunkLoading"
@@ -114,7 +114,7 @@
                 </div>
               </button>
               <button
-                v-if="canManageDatabase && pendingIndexCount > 0"
+                v-if="canManageStructure && pendingIndexCount > 0"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-warning file-stat-summary"
                 :disabled="store.state.chunkLoading"
@@ -154,7 +154,7 @@
                 </div>
               </div>
               <button
-                v-if="canManageDatabase"
+                v-if="canManageStructure"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary file-stat-repair"
                 :disabled="statsRepairing"
@@ -171,7 +171,7 @@
                 </div>
               </button>
               <button
-                v-if="canManageDatabase"
+                v-if="canManageStructure"
                 type="button"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary file-stat-repair"
                 :disabled="statsRepairing"

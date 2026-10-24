@@ -182,7 +182,7 @@ async def _startup(app: FastAPI) -> None:
     ░██      ░█████░██ ░██    ░██ ░██  v{get_version()}
 
     """)
-    logger.info("Yuxi backend startup complete")
+    logger.info("Linko AI backend startup complete")
 
 
 async def _shutdown_component(name: str, operation: Callable[[], object]) -> None:

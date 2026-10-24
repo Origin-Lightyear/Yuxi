@@ -1,6 +1,6 @@
 # 参与贡献
 
-感谢你关注 Yuxi。欢迎提交 Issue、修复 Bug、补充测试、改进文档或贡献新功能。
+感谢你关注 Linko AI。欢迎提交 Issue、修复 Bug、补充测试、改进文档或贡献新功能。
 
 ## 开始前
 
@@ -13,7 +13,7 @@
 
 ## 开发环境
 
-Yuxi 使用 Docker Compose 管理开发环境：
+Linko AI 使用 Docker Compose 管理开发环境：
 
 ```bash
 docker compose up -d

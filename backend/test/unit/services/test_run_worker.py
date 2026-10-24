@@ -1754,3 +1754,53 @@ async def test_cancel_during_manifest_preparation_settles_without_waiting_for_le
     await run_worker.process_agent_run({"job_try": 1}, run.id)
     finish.assert_awaited_once()
     assert finish.call_args.kwargs["run_id"] == run.id
+
+
+class _StalledAsyncIter:
+    """永不产出数据的流，用于验证空闲看门狗。"""
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await asyncio.sleep(3600)
+
+    async def aclose(self):
+        """执行链关闭时无需释放资源。"""
+
+
+@pytest.mark.asyncio
+async def test_consume_stream_with_cancel_raises_on_idle_timeout():
+    run_ctx = run_worker.RunContext(run_id="run-1", worker_id="worker-1:attempt-1")
+
+    with pytest.raises(run_worker.RunIdleTimeout):
+        async for _ in run_worker._consume_stream_with_cancel(_StalledAsyncIter(), run_ctx, idle_timeout_seconds=0.05):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_process_agent_run_marks_run_timeout_when_stream_stalls(monkeypatch: pytest.MonkeyPatch):
+    run_obj = _build_run()
+    _patch_common(monkeypatch, run_obj)
+
+    terminal_calls: list[tuple[str, str | None]] = []
+    events: list[dict] = []
+
+    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
+        del run_id, kwargs
+        events.append({"event_type": event_type, "payload": payload})
+
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
+        del run_id, error_message, kwargs
+        terminal_calls.append((status, error_type))
+        return run_worker.TerminalTransition(status=status, changed=True)
+
+    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
+    monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kwargs: _StalledAsyncIter())
+    monkeypatch.setattr(run_worker, "RUN_IDLE_TIMEOUT_SECONDS", 0.05)
+
+    await run_worker.process_agent_run({"job_try": 1}, "run-1")
+
+    assert terminal_calls == [("failed", "run_timeout")]
+    assert any(item["event_type"] == "error" for item in events)

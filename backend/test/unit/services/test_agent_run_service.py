@@ -1945,8 +1945,37 @@ async def test_resolve_agent_run_model_spec_uses_configured_model_without_loadin
 
 
 @pytest.mark.asyncio
-async def test_resolve_agent_run_model_spec_validates_configured_model(monkeypatch: pytest.MonkeyPatch):
+async def test_resolve_agent_run_model_spec_falls_back_to_first_available_chat_model(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Agent 配置的模型下线后回退到首个可用聊天模型，避免对话框卡在失效模型上。"""
+
     monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", lambda _spec: None)
+    monkeypatch.setattr(
+        agent_run_service.model_cache,
+        "get_all_specs",
+        lambda _type: [SimpleNamespace(spec="available:first-model")],
+    )
+
+    async def fake_get(_self, _db):
+        return {"default_model": "retired:system-model"}
+
+    monkeypatch.setattr(type(agent_run_service.system_options), "get", fake_get)
+
+    assert await agent_run_service.resolve_agent_run_model_spec(None, "retired:agent-model") == "available:first-model"
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_run_model_spec_rejects_when_no_chat_model_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", lambda _spec: None)
+    monkeypatch.setattr(agent_run_service.model_cache, "get_all_specs", lambda _type: [])
+
+    async def fake_get(_self, _db):
+        return {"default_model": "retired:system-model"}
+
+    monkeypatch.setattr(type(agent_run_service.system_options), "get", fake_get)
 
     with pytest.raises(agent_run_service.HTTPException) as exc:
         await agent_run_service.resolve_agent_run_model_spec(None, "missing:model")
@@ -2028,7 +2057,6 @@ def _patch_agent_run_creation(
     monkeypatch.setattr(agent_run_service, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", _CreateRunRepo)
     monkeypatch.setattr(agent_run_service, "get_arq_pool", fake_get_arq_pool)
-
     async def get_system_options(_option, _db=None):
         return {"default_model": "system-default:model"}
 
@@ -2037,6 +2065,12 @@ def _patch_agent_run_creation(
         agent_run_service.model_cache,
         "get_model_info",
         lambda _spec: SimpleNamespace(model_type="chat"),
+    )
+    # 本组测试聚焦本地 run 创建；关闭 Agent 数据双写，避免依赖容器 SaaS 配置
+    monkeypatch.setattr(
+        type(agent_run_service.agent_data_sync.app_config),
+        "is_agent_data_sync_enabled",
+        property(lambda self: False),
     )
     return db
 

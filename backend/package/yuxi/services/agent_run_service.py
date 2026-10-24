@@ -98,28 +98,44 @@ async def resolve_agent_run_model_spec(
     db: AsyncSession | None = None,
 ) -> str:
     """按请求、Agent 配置、系统默认的顺序解析并校验聊天模型。"""
-    model_spec = next(
-        (
-            candidate.strip()
-            for candidate in (requested_model, configured_model)
-            if isinstance(candidate, str) and candidate.strip()
-        ),
-        None,
-    )
-    if model_spec is None:
-        model_spec = str((await system_options.get(db))["default_model"]).strip()
+    explicit_model = requested_model.strip() if isinstance(requested_model, str) and requested_model.strip() else None
+    if explicit_model is not None:
+        if _is_chat_model(explicit_model):
+            return explicit_model
+        raise _chat_model_not_found(explicit_model)
 
+    configured = configured_model.strip() if isinstance(configured_model, str) else ""
+    if configured and _is_chat_model(configured):
+        return configured
+
+    # Agent 配置可能因模型清单变更而失效，依次回退到系统默认模型与首个可用聊天模型
+    default_model = str((await system_options.get(db))["default_model"]).strip()
+    if default_model and _is_chat_model(default_model):
+        return default_model
+
+    available_models = model_cache.get_all_specs("chat")
+    if available_models:
+        logger.warning(f"Agent 配置与系统默认模型均不可用，回退到首个可用聊天模型: {available_models[0].spec}")
+        return available_models[0].spec
+
+    raise _chat_model_not_found(default_model)
+
+
+def _is_chat_model(model_spec: str) -> bool:
+    """判断模型在当前模型清单中可用且为聊天模型。"""
     info = model_cache.get_model_info(model_spec)
-    if not info or info.model_type != "chat":
-        # dict detail 带 code/message 属于用户可见业务错误契约，前端按形态透传 message；message 不得包含敏感信息。
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "chat_model_not_found",
-                "message": f"未找到可用聊天模型: '{model_spec}'",
-            },
-        )
-    return model_spec
+    return bool(info) and info.model_type == "chat"
+
+
+def _chat_model_not_found(model_spec: str) -> HTTPException:
+    # dict detail 带 code/message 属于用户可见业务错误契约，前端按形态透传 message；message 不得包含敏感信息。
+    return HTTPException(
+        status_code=422,
+        detail={
+            "code": "chat_model_not_found",
+            "message": f"未找到可用聊天模型: '{model_spec}'",
+        },
+    )
 
 
 def resolve_agent_run_tool_approval_mode(requested_mode: str | None, configured_mode: str | None) -> str:

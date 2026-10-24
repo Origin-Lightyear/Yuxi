@@ -39,13 +39,16 @@ class ChannelMessageRequest(BaseModel):
     channel: str = Field("cli", max_length=32, description="通道名称")
     account_id: str = Field("default", description="通道账号标识")
     chat_id: str | None = Field(None, description="通道侧会话标识")
-    thread_id: str | None = Field(None, description="可选 Yuxi Thread ID")
+    thread_id: str | None = Field(None, description="可选 Linko AI Thread ID")
     sender_id: str | None = Field(None, description="通道侧发送者标识")
     message_id: str | None = Field(None, max_length=128, description="通道侧消息 ID")
     request_id: str | None = Field(None, description="请求幂等 ID")
     agent_slug: str = Field(..., description="目标 Agent slug")
     message: ChannelTextMessage
     queue_policy: Literal["enqueue", "reject", "steer"] = "steer"
+    tool_approval_mode: Literal["default", "always_trust"] | None = Field(
+        None, description="工具审批模式；Channel 无审批交互时传 always_trust"
+    )
 
 
 @agent_invocation_channel_router.post("/messages")
@@ -102,9 +105,13 @@ async def receive_channel_message(
                 include_messages=False,
             )
             return {"kind": "command", "command": "state", "thread_id": thread_id, "state": state}
-        if command.name == "approve":
-            _require_no_args(command.name, command.args)
-            return await _approve_latest_run(
+        try:
+            decision = decision_type_for_command(command.name, command.args)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if decision is not None:
+            return await _resolve_latest_run(
+                decision=decision,
                 agent_slug=agent_slug,
                 thread_id=thread_id,
                 request_id=request_id,
@@ -143,6 +150,7 @@ async def receive_channel_message(
                 metadata=origin_metadata,
             ),
             request_metadata={"message_type": "text"},
+            tool_approval_mode=payload.tool_approval_mode,
             queue_policy=payload.queue_policy,
             create_conversation=True,
             conversation_title=f"{channel} Channel Run",
@@ -155,8 +163,9 @@ async def receive_channel_message(
     return result
 
 
-async def _approve_latest_run(
+async def _resolve_latest_run(
     *,
+    decision: str,
     agent_slug: str,
     thread_id: str,
     request_id: str,
@@ -166,7 +175,7 @@ async def _approve_latest_run(
     current_user: User,
     db: AsyncSession,
 ) -> dict:
-    """审批当前等待中的工具调用，并优先复用同 request_id 的恢复 run。"""
+    """审批（批准或拒绝）当前等待中的工具调用，并优先复用同 request_id 的恢复 run。"""
     run_repo = AgentRunRepository(db)
     existing_run = await run_repo.get_run_by_request_id(request_id)
     latest_run = await run_repo.get_latest_chat_or_resume_run(
@@ -205,14 +214,27 @@ async def _approve_latest_run(
         meta={"request_id": request_id, "source": "channel", "channel": channel},
         current_uid=str(current_user.uid),
         db=db,
-        resume={"decisions": [{"type": "approve"}]},
+        resume={"decisions": [{"type": decision}]},
         created_by_run_id=parent_run_id,
         source="channel",
         channel=channel,
         external_id=external_id,
         origin_metadata=origin_metadata,
     )
-    return {"kind": "command", "command": "approve", "thread_id": thread_id, "run": result}
+    return {"kind": "command", "command": decision, "thread_id": thread_id, "run": result}
+
+
+_DECISION_COMMANDS = {"approve": "approve", "reject": "reject"}
+
+
+def decision_type_for_command(name: str, args: tuple[str, ...]) -> str | None:
+    """将审批类 slash command 映射为 decision 类型；非审批命令返回 None。"""
+    decision = _DECISION_COMMANDS.get(name)
+    if decision is None:
+        return None
+    if args:
+        raise ValueError(f"/{name} 不接受参数")
+    return decision
 
 
 def _resolve_thread_id(
@@ -223,7 +245,7 @@ def _resolve_thread_id(
     chat_id: str | None,
     requested_thread_id: str | None,
 ) -> str:
-    """根据显式 thread 或通道会话信息解析稳定 Yuxi Thread ID。"""
+    """根据显式 thread 或通道会话信息解析稳定 Linko AI Thread ID。"""
     if requested_thread_id and requested_thread_id.strip():
         return requested_thread_id.strip()
     if not chat_id or not chat_id.strip():

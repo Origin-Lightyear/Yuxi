@@ -1,6 +1,6 @@
 # 生产部署
 
-本页说明如何用 Docker Compose 部署 Yuxi、验证服务状态，以及从 v0.7.1 或 v0.7.2 升级到 `v0.7.3`。重要数据上线前请先在备份环境演练恢复。
+本页说明如何用 Docker Compose 部署 Linko AI、验证服务状态，以及从 v0.7.1 或 v0.7.2 升级到 `v0.7.3`。重要数据上线前请先在备份环境演练恢复。
 
 ## 前置条件
 
@@ -44,6 +44,8 @@ openssl rand -hex 32
 
 模型 API Key 按实际使用的供应商填写。生产 Compose 所有必填项都通过变量校验，缺失时会拒绝启动。
 
+如需启用 IM 机器人（飞书 / 钉钉），还要在 `.env.prod` 中设置 `IM_GATEWAY_TOKEN`：它与 api 服务共享同一个值，未配置时内部配置接口返回 404，网关进程会因缺少令牌直接退出。
+
 后续命令必须显式使用 `--env-file .env.prod`。Compose 的 `env_file` 负责把变量注入容器，但不会替代 Compose 文件插值所需的 `--env-file`。
 
 ### 环境隔离与自定义配置文件
@@ -73,6 +75,12 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile all up -d --build
+```
+
+启用 IM 网关时叠加 `gateway` profile：
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile gateway up -d --build
 ```
 
 `storage-migrator` 是启动依赖的一部分。迁移器成功后会退出，退出码为 0 是正常结果；API、worker 和 provisioner 会等待它成功。
@@ -251,7 +259,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml \
 
 ## 第三方组件和许可证
 
-Yuxi 本体使用 MIT License。Compose 依赖以独立进程运行，Yuxi 通过公开协议访问它们；第三方组件的许可证不会因为使用 Compose 就变成 MIT。
+Linko AI 本体使用 MIT License。Compose 依赖以独立进程运行，Linko AI 通过公开协议访问它们；第三方组件的许可证不会因为使用 Compose 就变成 MIT。
 
 当前 Compose 引用的主要组件如下。表中的版本是镜像 tag；只有明确写死的 tag 才能提供对应的版本预期，`postgres:16`、`mineru-vllm:latest` 和 `paddlex:latest` 仍可能随重新拉取而变化：
 

@@ -23,7 +23,7 @@ class ChatWebError(Exception):
 
 
 class ChatWebServer(ThreadingHTTPServer):
-    """仅监听本机并代理 Yuxi Agent 请求的临时 HTTP 服务。"""
+    """仅监听本机并代理 Linko AI Agent 请求的临时 HTTP 服务。"""
 
     daemon_threads = True
 
@@ -80,7 +80,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             self._send_json_error(403, "请求来源无效")
             return
         if not secrets.compare_digest(
-            self.headers.get("X-Yuxi-Chat-Token", ""), self.server.session_token
+            self.headers.get("X-Linko AI-Chat-Token", ""), self.server.session_token
         ):
             self._send_json_error(403, "会话令牌无效")
             return

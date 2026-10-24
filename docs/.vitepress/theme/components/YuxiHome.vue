@@ -9,7 +9,7 @@ const MASCOT_IMAGE = `${OSS_ASSET_BASE}/yuxi-mascot-cutout.png`
 
 const docPaths = [
   {
-    title: '第一次部署 Yuxi',
+    title: '第一次部署 Linko AI',
     desc: '准备 Docker 与模型 API，启动完整服务并完成第一次登录。',
     link: '/intro/quick-start',
     action: '打开快速开始',
@@ -495,7 +495,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="yx-hero__visual">
-          <figure class="pixel-mascot" role="img" aria-label="Yuxi 在循环流动的文档、知识图谱、记忆与交付信号中持续工作">
+          <figure class="pixel-mascot" role="img" aria-label="Linko AI 在循环流动的文档、知识图谱、记忆与交付信号中持续工作">
             <canvas ref="canvasRef" class="pixel-mascot__canvas" aria-hidden="true"></canvas>
             <img
               class="pixel-mascot__character"
@@ -645,7 +645,7 @@ onBeforeUnmount(() => {
         <div class="yx-shell">
           <header v-reveal class="yx-heading">
             <h2>一条完整的知识智能体链路</h2>
-            <p>Yuxi 把知识、执行、交付和团队治理放在同一套可部署边界内。</p>
+            <p>Linko AI 把知识、执行、交付和团队治理放在同一套可部署边界内。</p>
           </header>
 
           <ol class="yx-workflow">
@@ -659,7 +659,7 @@ onBeforeUnmount(() => {
             <div class="yx-capabilities__intro">
               <span>可私有部署</span>
               <h3>数据、模型与权限由你的团队掌握</h3>
-              <a :href="withBase('/intro/project-overview')">认识 Yuxi <span aria-hidden="true">→</span></a>
+              <a :href="withBase('/intro/project-overview')">认识 Linko AI <span aria-hidden="true">→</span></a>
             </div>
             <dl>
               <div v-for="group in capabilityGroups" :key="group.label">
@@ -716,7 +716,7 @@ docker compose up --build -d</code></pre>
           >
             <img
               src="https://contrib.rocks/image?repo=xerrors/Yuxi&max=60&columns=12"
-              alt="Yuxi 贡献者头像墙"
+              alt="Linko AI 贡献者头像墙"
               width="812"
               height="268"
               loading="lazy"
@@ -726,7 +726,7 @@ docker compose up --build -d</code></pre>
           <div v-reveal class="yx-community__footer">
             <div>
             <h2>继续探索，也欢迎一起构建</h2>
-            <p>查看演示、提交 Issue，或从贡献指南开始参与 Yuxi。</p>
+            <p>查看演示、提交 Issue，或从贡献指南开始参与 Linko AI。</p>
             </div>
             <div class="yx-community__actions">
               <a class="yx-button yx-button--primary" :href="DEMO" target="_blank" rel="noreferrer">观看演示</a>

@@ -208,7 +208,14 @@ async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
 def test_shipping_skills_keep_required_dependencies():
     """默认知识能力及研究依赖不能因发现重组缺失。"""
     found = {spec["slug"]: spec for spec in skill_service.list_builtin_skill_specs()}
-    assert set(found) == {"image-gen", "html-preview", "deep-research", "knowledge-base", "mysql-reporter"}
+    assert set(found) == {
+        "deep-research",
+        "html-preview",
+        "image-gen",
+        "knowledge-base",
+        "linko-enterprise",
+        "mysql-reporter",
+    }
     assert found["knowledge-base"]["tool_dependencies"] == [
         "list_kbs",
         "query_kb",
@@ -220,4 +227,5 @@ def test_shipping_skills_keep_required_dependencies():
     ]
     assert found["deep-research"]["skill_dependencies"] == []
     assert found["mysql-reporter"]["mcp_dependencies"] == ["saas-mcp"]
+    assert found["linko-enterprise"]["mcp_dependencies"] == ["finance-mcp"]
     assert found["html-preview"]["version"] == "2026.07.23"

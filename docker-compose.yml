@@ -92,6 +92,7 @@ services:
       YUXI_USER_DATA_DIR: /app/user-data
       POSTGRES_POOL_SIZE: ${API_POSTGRES_POOL_SIZE:-120}
       POSTGRES_MAX_OVERFLOW: ${API_POSTGRES_MAX_OVERFLOW:-40}
+      IM_GATEWAY_TOKEN: ${IM_GATEWAY_TOKEN:-}
       POSTGRES_POOL_TIMEOUT_SECONDS: ${API_POSTGRES_POOL_TIMEOUT_SECONDS:-30}
       LANGGRAPH_POSTGRES_POOL_SIZE: ${API_LANGGRAPH_POSTGRES_POOL_SIZE:-10}
       LANGGRAPH_POSTGRES_POOL_TIMEOUT_SECONDS: ${API_LANGGRAPH_POSTGRES_POOL_TIMEOUT_SECONDS:-30}
@@ -212,6 +213,35 @@ services:
     restart: "no"
     depends_on:
       postgres:
+        condition: service_healthy
+
+  # 编辑网关代码后需执行 `docker compose restart gateway`（镜像不安装 watchfiles，不做热重载）
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
+    image: yuxi-gateway:${YUXI_VERSION:-0.7.3}
+    container_name: gateway-dev
+    profiles:
+      - gateway
+    working_dir: /app
+    volumes:
+      - ./packages/yuxi-im-gateway/src:/app/src
+      - ./packages/yuxi-im-gateway/pyproject.toml:/app/pyproject.toml
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      - YUXI_GATEWAY_API_BASE=${YUXI_GATEWAY_API_BASE:-http://api:5050}
+      - IM_GATEWAY_TOKEN=${IM_GATEWAY_TOKEN:-}
+      - IM_GATEWAY_POLL_INTERVAL=${IM_GATEWAY_POLL_INTERVAL:-30}
+    command: python -m yuxi_im_gateway
+    restart: unless-stopped
+    depends_on:
+      api:
         condition: service_healthy
 
   sandbox-provisioner:
@@ -435,7 +465,7 @@ services:
     image: postgres:16
     command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-600}"]
     ports:
-      - "127.0.0.1:${YUXI_POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${YUXI_POSTGRES_PORT:-5433}:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
@@ -457,7 +487,7 @@ services:
   redis:
     image: redis:7.4.10-alpine
     ports:
-      - "127.0.0.1:${YUXI_REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${YUXI_REDIS_PORT:-6380}:6379"
     command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

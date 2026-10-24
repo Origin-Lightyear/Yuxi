@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import pytest_asyncio
+from langchain_core.tools import StructuredTool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.agents.mcp import service as mcp_service
@@ -525,6 +528,68 @@ async def test_inspection_rejects_stdio_even_for_builtin_slug():
     server = MCPServer(slug="deepwiki-official", transport="stdio", command="sh")
     with pytest.raises(ValueError, match="stdio"):
         await mcp_service.inspect_mcp_server_tools(server)
+
+
+async def test_get_mcp_tools_turns_connect_errors_into_tool_errors(monkeypatch):
+    """MCP 建连失败应变成工具错误消息，而不是抛异常击穿整轮 Run。"""
+    mcp_service.clear_mcp_cache()
+
+    config = {"transport": "streamable_http", "url": "http://mcp.example/mcp", "disabled_tools": []}
+
+    async def fake_get_enabled_mcp_server_config(server_name: str, db=None):
+        del db
+        return config
+
+    async def boom() -> str:
+        raise httpx.ConnectError("All connection attempts failed")
+
+    async def fake_get_mcp_client(server_configs):
+        tool = StructuredTool.from_function(coroutine=boom, name="k3_search_forms", description="金蝶表单检索")
+        return _FakeClient([tool])
+
+    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+
+    tools = await mcp_service.get_mcp_tools("demo")
+    result = await tools[0].arun({}, tool_call_id="call_1")
+
+    assert result.status == "error"
+    assert "demo" in result.content
+    assert "连接失败" in result.content or "网络" in result.content
+
+    mcp_service.clear_mcp_cache()
+
+
+async def test_get_mcp_tools_turns_slow_calls_into_tool_errors(monkeypatch):
+    """MCP 工具长时间不返回时应变成工具错误消息，避免拖死整轮 Run。"""
+    mcp_service.clear_mcp_cache()
+    monkeypatch.setattr(mcp_service, "MCP_TOOL_TIMEOUT_SECONDS", 0.05)
+
+    config = {"transport": "streamable_http", "url": "http://mcp.example/mcp", "disabled_tools": []}
+
+    async def fake_get_enabled_mcp_server_config(server_name: str, db=None):
+        del db
+        return config
+
+    async def slow() -> str:
+        await asyncio.sleep(60)
+        return "never"
+
+    async def fake_get_mcp_client(server_configs):
+        tool = StructuredTool.from_function(coroutine=slow, name="k3_query_report", description="金蝶报表查询")
+        return _FakeClient([tool])
+
+    monkeypatch.setattr(mcp_service, "get_enabled_mcp_server_config", fake_get_enabled_mcp_server_config)
+    monkeypatch.setattr(mcp_service, "get_mcp_client", fake_get_mcp_client)
+
+    tools = await mcp_service.get_mcp_tools("demo")
+    result = await tools[0].arun({}, tool_call_id="call_1")
+
+    assert result.status == "error"
+    assert "超时" in result.content
+
+    mcp_service.clear_mcp_cache()
+
 
 async def test_get_all_mcp_tools_propagates_discovery_errors(monkeypatch):
     config = {"transport": "streamable_http", "url": "https://example.com/mcp", "disabled_tools": []}

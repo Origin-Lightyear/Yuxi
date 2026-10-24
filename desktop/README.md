@@ -60,6 +60,11 @@ npm run dist:mac
 desktop/
 ├── main.js                # 主进程（健康检查 /api/system/health + 窗口 + 地址弹窗）
 ├── preload.js             # 地址输入窗口的 IPC 桥
+├── url_policy.js          # openExternal 协议白名单（纯函数）
+├── window_state.js        # 窗口位置/大小校验（纯函数）
+├── test/                  # 纯函数单测（node --test）
 ├── package.json           # 依赖与脚本
 └── electron-builder.yml   # macOS/Windows 打包配置
 ```
+
+窗口顶部 36px 是主进程注入的拖动区，网页组件不要在该区域放置按钮、输入框等可点击控件。Windows 用透明 `titleBarOverlay` 显示系统窗口按钮，其外观与深色主题需在 Windows 实机确认。

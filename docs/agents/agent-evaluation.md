@@ -1,12 +1,12 @@
 # 评估智能体
 
-智能体评估用 Langfuse Dataset 保存一组固定任务，再让 Yuxi 按真实的 AgentRun、worker 和工具链路逐条执行。它适合比较一个智能体在研究、编程、文件处理或多步骤任务上的表现。
+智能体评估用 Langfuse Dataset 保存一组固定任务，再让 Linko AI 按真实的 AgentRun、worker 和工具链路逐条执行。它适合比较一个智能体在研究、编程、文件处理或多步骤任务上的表现。
 
 本页不介绍知识库的 `recall@K` 和答案指标；那部分见[知识库评估](../intro/evaluation.md)。
 
 ## 需要准备什么
 
-1. Yuxi 已配置 Langfuse tracing，API/worker 环境包含：
+1. Linko AI 已配置 Langfuse tracing，API/worker 环境包含：
 
    ```bash
    LANGFUSE_PUBLIC_KEY=<your-public-key>
@@ -35,7 +35,7 @@
 
 也兼容把任务放在 `query`、`question` 或 `prompt` 字段中。`expected_output` 可以保存参考答案，具体评分规则由 Langfuse evaluator 或人工评审负责。
 
-Yuxi 不负责创建或上传 Dataset。先在 Langfuse 中检查任务文本、参考输出和数据集版本，再运行实验。
+Linko AI 不负责创建或上传 Dataset。先在 Langfuse 中检查任务文本、参考输出和数据集版本，再运行实验。
 
 ## 运行实验
 
@@ -51,17 +51,17 @@ yuxi agent eval \
 CLI 对每条 item：
 
 1. 从 Dataset 读取任务文本；
-2. 调用 Yuxi 的 `POST /api/agent-invocation/eval/runs`；
-3. 由 Yuxi 创建临时 Conversation 和 AgentRun；
+2. 调用 Linko AI 的 `POST /api/agent-invocation/eval/runs`；
+3. 由 Linko AI 创建临时 Conversation 和 AgentRun；
 4. 通过 worker 执行真实智能体；
 5. 等待 Run 进入终态；
 6. 把最终输出写回 Langfuse experiment item。
 
-`--max-concurrency` 是 Dataset 实验的并发数。先从 `1` 开始，再根据模型服务、worker 和沙盒容量提高。`--timeout-seconds` 是每条样例等待 Yuxi 结果的上限；超时会报告当前运行状态，不应把它当作成功。
+`--max-concurrency` 是 Dataset 实验的并发数。先从 `1` 开始，再根据模型服务、worker 和沙盒容量提高。`--timeout-seconds` 是每条样例等待 Linko AI 结果的上限；超时会报告当前运行状态，不应把它当作成功。
 
 ## 查看结果
 
-实验完成后，在 Langfuse Dataset 的 experiment 中查看每条 item 的最终输出。Yuxi 会在本地运行上下文和 trace 中保存以下标记，便于筛选：
+实验完成后，在 Langfuse Dataset 的 experiment 中查看每条 item 的最终输出。Linko AI 会在本地运行上下文和 trace 中保存以下标记，便于筛选：
 
 ```text
 source=agent_evaluation
@@ -75,8 +75,8 @@ evaluation_experiment_name=<experiment-name>
 ## 排查失败
 
 - 没有 experiment：检查 CLI 的 Langfuse 公钥、密钥、地址和 Dataset 名称。
-- experiment 有 item 但 Yuxi 失败：检查 CLI 登录的 API Key、Agent slug，并用 `docker compose logs api worker` 查看当前槽位日志。
-- Trace 缺失：检查 API/worker 是否读取到 Langfuse 配置；Yuxi 业务结果仍以 PostgreSQL 的 Run 和消息为准。
+- experiment 有 item 但 Linko AI 失败：检查 CLI 登录的 API Key、Agent slug，并用 `docker compose logs api worker` 查看当前槽位日志。
+- Trace 缺失：检查 API/worker 是否读取到 Langfuse 配置；Linko AI 业务结果仍以 PostgreSQL 的 Run 和消息为准。
 - 大量超时：降低 `--max-concurrency`，检查模型响应时间、worker 健康状态和沙盒创建耗时。
 - 实验部分成功：不要只看命令退出前的汇总，回到 Langfuse 检查每条 item 是否都有结果；CLI 会在成功写入数量与 Dataset 总数不一致时报告错误。
 

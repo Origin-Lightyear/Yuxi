@@ -41,7 +41,7 @@ chore/<topic>     工程辅助
 
 ## 2. 开发环境
 
-Yuxi 的开发拓扑以 Docker Compose 为准。首次启动前，根据 `.env.template` 准备 `.env`，再运行：
+Linko AI 的开发拓扑以 Docker Compose 为准。首次启动前，根据 `.env.template` 准备 `.env`，再运行：
 
 ```bash
 docker compose up -d

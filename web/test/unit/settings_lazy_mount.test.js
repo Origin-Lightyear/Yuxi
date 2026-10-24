@@ -122,17 +122,6 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
       ocr
     )
     assert.equal(ocr.props.value, 'draft')
-    await select('API Keys')
-    const apiKeys = find(host, (node) => node.props.panel === 'ApiKeyManagementComponent')
-    apiKeys.props.onInput({ target: { value: 'api-draft' } })
-    await select('账户设置')
-    await select('API Keys')
-    assert.equal(
-      find(host, (node) => node.props.panel === 'ApiKeyManagementComponent'),
-      apiKeys
-    )
-    assert.equal(apiKeys.props.value, 'api-draft')
-
     await select('环境变量')
     const agentEnv = find(host, (node) => node.props.panel === 'AgentEnvSettingsCard')
     agentEnv.props.onInput({ target: { value: 'env-draft' } })

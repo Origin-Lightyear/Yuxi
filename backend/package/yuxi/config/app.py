@@ -37,6 +37,10 @@ class Config(BaseModel):
         default=DEFAULT_EMBED_FALLBACK_MODEL,
         description="Embedding 模型未注册时的降级模型",
     )
+    saas_service_url: str = Field(default="", description="SaaS 登录服务地址")
+    im_gateway_token: str = Field(
+        default="", description="IM 网关拉取机器人配置的静态服务令牌；未配置时内部接口返回 404"
+    )
 
     model_config = {"extra": "allow"}
 
@@ -59,8 +63,10 @@ class Config(BaseModel):
             self.agent_data_sync_enabled = False
 
         for field_name, env_key in (
+            ("saas_service_url", "SAAS_SERVICE_URL"),
             ("platform_service_url", "PLATFORM_SERVICE_URL"),
             ("tenant_admin_api_key", "TENANT_ADMIN_API_KEY"),
+            ("im_gateway_token", "IM_GATEWAY_TOKEN"),
         ):
             env_val = os.getenv(env_key, "").strip()
             if env_val:

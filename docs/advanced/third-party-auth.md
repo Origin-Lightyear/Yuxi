@@ -1,6 +1,6 @@
 # 接入 OIDC 登录
 
-Yuxi 可以通过 OpenID Connect（OIDC）接入企业身份提供商。功能默认关闭；开启前，需要在身份提供商中注册客户端，并准备一个与 Yuxi 地址完全一致的回调地址。
+Linko AI 可以通过 OpenID Connect（OIDC）接入企业身份提供商。功能默认关闭；开启前，需要在身份提供商中注册客户端，并准备一个与 Linko AI 地址完全一致的回调地址。
 
 ## 1. 在身份提供商中注册客户端
 
@@ -10,15 +10,15 @@ Yuxi 可以通过 OpenID Connect（OIDC）接入企业身份提供商。功能�
 - Client Secret；
 - Issuer URL。
 
-把下面的后端回调地址注册到允许的 Redirect URI。生产环境请替换为实际的 Yuxi 域名并使用 HTTPS：
+把下面的后端回调地址注册到允许的 Redirect URI。生产环境请替换为实际的 Linko AI 域名并使用 HTTPS：
 
 ```text
 https://<your-yuxi-host>/api/auth/oidc/callback
 ```
 
-本机开发可以使用 Vite 代理后的 `http://localhost:5173/api/auth/oidc/callback`，前提是身份提供商允许该回调地址；不要在不受信任的网络中使用 HTTP。Yuxi 部署在反向代理后时，回调地址必须是用户实际访问的外部地址，而不是容器内部地址。
+本机开发可以使用 Vite 代理后的 `http://localhost:5173/api/auth/oidc/callback`，前提是身份提供商允许该回调地址；不要在不受信任的网络中使用 HTTP。Linko AI 部署在反向代理后时，回调地址必须是用户实际访问的外部地址，而不是容器内部地址。
 
-## 2. 配置 Yuxi
+## 2. 配置 Linko AI
 
 在 `.env` 或生产环境使用的 env file 中设置：
 
@@ -31,7 +31,7 @@ OIDC_CLIENT_SECRET=<your-client-secret>
 OIDC_REDIRECT_URI=https://<your-yuxi-host>/api/auth/oidc/callback
 ```
 
-没有配置 `OIDC_AUTHORIZATION_ENDPOINT` 时，Yuxi 会根据 `OIDC_ISSUER_URL` 请求 `/.well-known/openid-configuration`，读取授权、换 token 和 UserInfo 端点。只要填写了 `OIDC_AUTHORIZATION_ENDPOINT`，代码就把手动端点当作权威配置并跳过 discovery；这时 `OIDC_TOKEN_ENDPOINT` 和 `OIDC_USERINFO_ENDPOINT` 也要按实际流程补齐，否则回调换 token 或读取用户信息会失败。
+没有配置 `OIDC_AUTHORIZATION_ENDPOINT` 时，Linko AI 会根据 `OIDC_ISSUER_URL` 请求 `/.well-known/openid-configuration`，读取授权、换 token 和 UserInfo 端点。只要填写了 `OIDC_AUTHORIZATION_ENDPOINT`，代码就把手动端点当作权威配置并跳过 discovery；这时 `OIDC_TOKEN_ENDPOINT` 和 `OIDC_USERINFO_ENDPOINT` 也要按实际流程补齐，否则回调换 token 或读取用户信息会失败。
 
 | 变量 | 默认值或说明 |
 | --- | --- |
@@ -57,7 +57,7 @@ OIDC_REDIRECT_URI=https://<your-yuxi-host>/api/auth/oidc/callback
 
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
-| `OIDC_USE_RAW_USERNAME` | `false` | 是否用 OIDC 用户名作为 Yuxi 的 `uid` |
+| `OIDC_USE_RAW_USERNAME` | `false` | 是否用 OIDC 用户名作为 Linko AI 的 `uid` |
 | `OIDC_FETCH_DEPARTMENT_INFO` | `false` | 是否读取 UserInfo 中的部门并创建/关联部门 |
 | `OIDC_DEPARTMENT_CLAIM` | `department` | 部门名称字段 |
 
@@ -83,15 +83,15 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --force-rec
 2. 身份提供商登录后回调 `/api/auth/oidc/callback`。
 3. API 校验一次性 `state`，用授权码换取 token 并读取 UserInfo。
 4. API 将一次性登录 code 交给前端 `/auth/oidc/callback` 页面。
-5. 前端使用 code 调用 `/api/auth/oidc/exchange-code`，再进入 Yuxi。
+5. 前端使用 code 调用 `/api/auth/oidc/exchange-code`，再进入 Linko AI。
 
 ## 使用原始用户名绑定已有账号
 
-将 `OIDC_USE_RAW_USERNAME=true` 后，Yuxi 会尝试用 OIDC 返回的用户名匹配已有的 `uid`。匹配成功后，系统会创建一条已删除状态的占位用户记录，保存 `OIDC sub` 与目标用户的绑定关系；占位记录不能用于登录。
+将 `OIDC_USE_RAW_USERNAME=true` 后，Linko AI 会尝试用 OIDC 返回的用户名匹配已有的 `uid`。匹配成功后，系统会创建一条已删除状态的占位用户记录，保存 `OIDC sub` 与目标用户的绑定关系；占位记录不能用于登录。
 
 绑定占位用户的 `uid` 格式是 `oidc:{sub}:{target_user_id}`：其中 `target_user_id` 是数据库 `users.id` 的数值，用户实际登录标识仍是字符串 `uid`。`sub` 中即使包含冒号，系统也会从最后一个冒号解析目标 ID。
 
-如果同一个 OIDC `sub` 已绑定到其他用户，登录会被拒绝，防止因为用户名相同而接管账号。启用此模式前，请确认 OIDC 用户名在身份提供商中稳定且唯一，并提前创建需要绑定的 Yuxi 用户。
+如果同一个 OIDC `sub` 已绑定到其他用户，登录会被拒绝，防止因为用户名相同而接管账号。启用此模式前，请确认 OIDC 用户名在身份提供商中稳定且唯一，并提前创建需要绑定的 Linko AI 用户。
 
 ## 从 UserInfo 获取部门
 

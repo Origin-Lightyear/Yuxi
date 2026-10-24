@@ -1,6 +1,6 @@
-![Yuxi: a self-hosted, multi-tenant knowledge agent platform](https://xerrors.oss-cn-shanghai.aliyuncs.com/posts/2026/08/20260818-151118-mac-1787037059154-8c08f48c.png)
+![Linko AI: a self-hosted, multi-tenant knowledge agent platform](https://xerrors.oss-cn-shanghai.aliyuncs.com/posts/2026/08/20260818-151118-mac-1787037059154-8c08f48c.png)
 
-Yuxi is a self-hosted, multi-tenant knowledge agent platform. It brings knowledge base retrieval, knowledge graphs, LangGraph multi-agent orchestration, MCP/Skills, sandbox tools, and access control into one workspace.
+Linko AI is a self-hosted, multi-tenant knowledge agent platform. It brings knowledge base retrieval, knowledge graphs, LangGraph multi-agent orchestration, MCP/Skills, sandbox tools, and access control into one workspace.
 
 [![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=ffffff)](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml)
 [![Release](https://img.shields.io/github/v/release/xerrors/Yuxi?color=046A82)](https://github.com/xerrors/Yuxi/releases/latest)
@@ -12,9 +12,9 @@ Yuxi is a self-hosted, multi-tenant knowledge agent platform. It brings knowledg
 
 [Project home](https://xerrors.github.io/Yuxi/) · [Quick start](https://xerrors.github.io/Yuxi/intro/quick-start) · [Demo video](https://www.bilibili.com/video/BV1erE26iEgv/) · [Releases](https://github.com/xerrors/Yuxi/releases) · [中文](README.md)
 
-## What Yuxi Can Do
+## What Linko AI Can Do
 
-Yuxi is built for teams that need control over their data, models, and permissions:
+Linko AI is built for teams that need control over their data, models, and permissions:
 
 - **Build knowledge-based Q&A**: Upload documents, parse and chunk them, build vector indexes, and let agents answer questions using retrieved content.
 - **Execute multi-step tasks**: Combine tools, MCP, Skills, sub-agents, and sandboxes to produce previewable, downloadable files.
@@ -82,7 +82,7 @@ When upgrading from v0.7.1 or v0.7.2 to the current version, do not run `docker 
 
 ## Feature Showcase
 
-Yuxi connects knowledge ingestion, agent execution, and team governance into one workflow. The following six modules introduce its core capabilities:
+Linko AI connects knowledge ingestion, agent execution, and team governance into one workflow. The following six modules introduce its core capabilities:
 
 | Module | What It Solves | Key Capabilities |
 | --- | --- | --- |
@@ -101,7 +101,7 @@ Reference knowledge base documents, personal files, or extension Skills in the s
 - View task breakdowns, tool execution status, and context token usage.
 - Preview and download generated artifacts.
 
-![Yuxi unified agent workspace](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825145022410.png)
+![Linko AI unified agent workspace](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825145022410.png)
 
 <details>
 <summary><strong>More screenshots: conversations, execution status, and human approval</strong></summary>
@@ -141,7 +141,7 @@ Support common formats including PDF, Word, PowerPoint, Excel, and Markdown. Bui
 
 **Knowledge base types and external sources**
 
-Alongside the built-in local vector knowledge base, Yuxi connects to external knowledge services such as Dify and Notion. A unified retriever makes them available to agents.
+Alongside the built-in local vector knowledge base, Linko AI connects to external knowledge services such as Dify and Notion. A unified retriever makes them available to agents.
 
 ![Knowledge base types](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825155356171.png)
 
@@ -202,7 +202,7 @@ Combine models, prompts, knowledge bases, external tools, and specialized sub-ag
 - Run multiple SubAgents asynchronously in parallel for deep research, data analysis, or content generation.
 - Use native support for Skills extensions and MCP (Model Context Protocol).
 
-![Yuxi multi-agent orchestration](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152252874.png)
+![Linko AI multi-agent orchestration](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152252874.png)
 
 <details>
 <summary><strong>More screenshots: agent configuration, sub-agents, and extensions</strong></summary>
@@ -247,7 +247,7 @@ Agents can read and write files through sandbox tools. Beyond answering question
 - Generate illustrated reports, data analysis charts, web pages, and other artifacts.
 - Preview supported file formats in the browser and download files as an archive.
 
-![Yuxi sandbox workspace and artifacts](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152123583.png)
+![Linko AI sandbox workspace and artifacts](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152123583.png)
 
 <details>
 <summary><strong>More screenshots: file management, online preview, and task delivery</strong></summary>
@@ -319,7 +319,7 @@ Thanks to all contributors for supporting this project!
 
 ---
 
-Yuxi's implementation and documentation draw on the following excellent open-source projects:
+Linko AI's implementation and documentation draw on the following excellent open-source projects:
 
 - [LightRAG](https://github.com/HKUDS/LightRAG): Early graph construction and retrieval ideas.
 - [DeepAgents](https://github.com/langchain-ai/deepagents): Deep agent framework.
@@ -330,6 +330,6 @@ Yuxi's implementation and documentation draw on the following excellent open-sou
 
 ## License
 
-Yuxi itself is licensed under the MIT License. See [LICENSE](LICENSE) for details. Third-party components included through Docker Compose retain their own licenses. Before redistribution or commercial deployment, check the upstream licenses and source-code obligations for the actual image versions you use; see the [production deployment guide](docs/advanced/deployment.md) for the relevant boundaries.
+Linko AI itself is licensed under the MIT License. See [LICENSE](LICENSE) for details. Third-party components included through Docker Compose retain their own licenses. Before redistribution or commercial deployment, check the upstream licenses and source-code obligations for the actual image versions you use; see the [production deployment guide](docs/advanced/deployment.md) for the relevant boundaries.
 
-[![Give Yuxi a Star](https://xerrors.oss-cn-shanghai.aliyuncs.com/posts/2026/08/20260818-184409-image-da91658b.png)](https://github.com/xerrors/Yuxi)
+[![Give Linko AI a Star](https://xerrors.oss-cn-shanghai.aliyuncs.com/posts/2026/08/20260818-184409-image-da91658b.png)](https://github.com/xerrors/Yuxi)

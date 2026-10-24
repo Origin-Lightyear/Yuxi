@@ -61,7 +61,7 @@ Available subagent slugs:
 
 {available_agents}"""
 
-SUBAGENT_START_DESCRIPTION = """Start a configured Yuxi subagent asynchronously.
+SUBAGENT_START_DESCRIPTION = """Start a configured Linko AI subagent asynchronously.
 
 Returns a child thread ID for future continuation and a run ID for status/cancel/result checks.
 Use this for all subagent work; call subagent_await when the result is needed.

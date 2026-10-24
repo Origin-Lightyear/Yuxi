@@ -15,5 +15,5 @@ executor = ThreadPoolExecutor()  # noqa: E402
 
 
 def get_version():
-    """Return the Yuxi version."""
+    """Return the Linko AI version."""
     return __version__

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "yuxi-cli"
 version = "0.1.4"
-description = "Yuxi command line client"
+description = "Linko AI command line client"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Wenjie Zhang" }]

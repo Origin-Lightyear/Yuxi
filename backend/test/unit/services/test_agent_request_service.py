@@ -120,7 +120,7 @@ async def test_submit_agent_request_owns_commit_and_publication(monkeypatch: pyt
             input_message_id=10,
             dispatched_run_id="run-1",
             conversation_thread_id="thread-1",
-        ), svc.DispatchResult(request_id="req-1", run_id="run-1", workdir_binding=kwargs["workdir_binding"])
+        ), svc.DispatchResult(request_id="req-1", run_id="run-1", workdir_binding=kwargs["workdir_binding"]), None
 
     async def enqueue(run_id):
         calls["effects"].append("enqueue")

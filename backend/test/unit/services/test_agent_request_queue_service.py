@@ -281,7 +281,7 @@ async def test_channel_steer_is_accepted_for_active_message_run(
     await _seed_thread(session)
     await _seed_active_run(session, source=active_source)
 
-    result, _ = await _persist_request(
+    result, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -314,7 +314,7 @@ async def test_intake_request_binds_resolved_model_to_conversation(session, monk
     monkeypatch.setattr(agent_request_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
 
-    first, _ = await _persist_request(
+    first, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -334,7 +334,7 @@ async def test_intake_request_binds_resolved_model_to_conversation(session, monk
     assert first.status == "dispatched"
     assert conversation.extra_metadata["model_spec"] == "provider:conversation-model"
 
-    second, _ = await _persist_request(
+    second, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -350,7 +350,7 @@ async def test_intake_request_binds_resolved_model_to_conversation(session, monk
     assert second.status == "queued"
     assert resolved_requests == ["provider:conversation-model", "provider:conversation-model"]
 
-    rejected, _ = await _persist_request(
+    rejected, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -389,7 +389,7 @@ async def test_reject_dispatch_conflict_does_not_change_conversation_model(sessi
     conversation.extra_metadata = {"model_spec": "provider:existing-model"}
     await session.commit()
 
-    result, _ = await _persist_request(
+    result, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -424,7 +424,7 @@ async def test_intake_request_binds_attachments_in_request_transaction(session, 
     conversation.extra_metadata = {"attachments": [{"file_id": "file-1", "file_name": "notes.txt"}]}
     await session.commit()
 
-    result, _ = await _persist_request(
+    result, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -614,7 +614,7 @@ async def test_queued_request_can_be_upgraded_to_steer(session):
     assert result["queue_position"] == 1
     assert request.queue_policy == "steer"
 
-    replay, _ = await _persist_request(
+    replay, _, _msg = await _persist_request(
         db=session,
         request_input=AgentRequestInput(
             agent_slug="main",
@@ -806,7 +806,7 @@ async def test_intake_idempotent_returns_existing(session):
         directory_mode="managed",
     )
 
-    result, _ = await _persist_request(
+    result, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -1099,7 +1099,7 @@ async def test_reject_with_active_run_persists_request_and_is_idempotent(session
     )
     await session.commit()
 
-    first, _ = await _persist_request(
+    first, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -1124,7 +1124,7 @@ async def test_reject_with_active_run_persists_request_and_is_idempotent(session
     msg = await session.get(Message, first.input_message_id)
     assert msg.delivery_status == "rejected"
 
-    second, _ = await _persist_request(
+    second, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -1326,7 +1326,7 @@ async def test_reject_does_not_resume_paused_queue(session):
     )
     await session.commit()
 
-    result, _ = await _persist_request(
+    result, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -1366,7 +1366,7 @@ async def test_reject_marks_request_rejected_when_immediate_dispatch_loses_race(
     monkeypatch.setattr(agent_request_service, "dispatch_ready_head", lose_dispatch_race)
     await _seed_thread(session)
 
-    result, _ = await _persist_request(
+    result, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -1461,7 +1461,7 @@ async def test_enqueue_after_empty_failed_queue_dispatches_new_request(session, 
     )
     await session.commit()
 
-    result, _ = await _persist_request(
+    result, _, _msg = await _persist_request(
         db=session,
         agent_item=MagicMock(),
         agent_backend=MagicMock(),
@@ -1506,7 +1506,7 @@ async def test_intake_persists_multimodal_input_and_effective_config(
         agent_run_service.model_cache, "get_model_info", lambda _spec: SimpleNamespace(model_type="chat")
     )
     await _seed_thread(session)
-    result, _ = await _persist_request(
+    result, _, _msg = await _persist_request(
         db=session,
         agent_item=SimpleNamespace(config_json={"context": {"model": configured_model}}),
         agent_backend=SimpleNamespace(context_schema=BaseContext),

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.mcp.service import (
     MCPServerNotFoundError,
+    SAAS_MCP_SERVER_SLUG,
     create_mcp_server,
     delete_mcp_server,
     get_all_mcp_servers,
@@ -269,7 +270,11 @@ async def test_mcp_server(
         ensure_mcp_server_runnable(server)
 
         try:
-            tools = await inspect_mcp_server_tools(server)
+            if slug == SAAS_MCP_SERVER_SLUG:
+                # SaaS MCP 的凭证按当前用户会话申请，测试连接也要带上
+                tools = await get_all_mcp_tools(slug, uid=current_user.uid)
+            else:
+                tools = await inspect_mcp_server_tools(server)
             return {
                 "success": True,
                 "message": f"连接成功，共发现 {len(tools)} 个工具",

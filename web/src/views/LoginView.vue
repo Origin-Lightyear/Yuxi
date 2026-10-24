@@ -17,7 +17,7 @@
     <!-- 顶部导航：品牌名称 & 操作按钮 -->
     <nav class="login-navbar">
       <div class="navbar-content">
-        <div class="brand-container" @click="goHome" style="cursor: pointer">
+        <div class="brand-container">
           <img v-if="brandLogo" :src="brandLogo" alt="logo" class="brand-logo" />
           <h1 class="brand-text">{{ brandName }}</h1>
         </div>
@@ -223,7 +223,7 @@
                 </a-form>
 
                 <!-- OIDC 登录选项  -->
-                <div v-if="oidcChecking || oidcEnabled" class="third-party-login">
+                <div v-if="false" class="third-party-login">
                   <div class="divider">
                     <span>或使用以下方式登录</span>
                   </div>
@@ -382,10 +382,6 @@ const adminForm = reactive({
   confirmPassword: '',
   phone_number: '' // 手机号字段（可选）
 })
-
-const goHome = () => {
-  router.push('/')
-}
 
 // 清理倒计时器
 const clearLockCountdown = () => {

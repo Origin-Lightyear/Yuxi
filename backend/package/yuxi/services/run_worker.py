@@ -76,6 +76,7 @@ RUN_CANCEL_POLL_SECONDS = 0.2
 RUN_DURABLE_CANCEL_POLL_SECONDS = 1.0
 RUN_LEASE_SECONDS = 120
 RUN_HEARTBEAT_SECONDS = 30
+RUN_IDLE_TIMEOUT_SECONDS = int(os.getenv("YUXI_RUN_IDLE_TIMEOUT_SECONDS", "300"))
 SUPPORTED_RUN_TYPES = {"chat", "resume", "subagent"}
 WORKER_ID = f"worker-{uuid.uuid4().hex}"
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
@@ -143,6 +144,10 @@ async def _validate_run_workdir_binding(run: AgentRun) -> AuthorizedWorkdir:
             ):
                 raise NonRetryableRunError("SubAgent Run 的 runtime scope 不属于创建者执行树")
     return binding
+
+
+class RunIdleTimeout(NonRetryableRunError):
+    """长时间没有收到任何流事件，判定 Run 卡死。"""
 
 
 @dataclass(frozen=True)
@@ -806,14 +811,23 @@ async def _finish_user_cancel(
     return transition
 
 
-async def _consume_stream_with_cancel(agen, run_ctx: RunContext):
-    """每 Run 只建一个取消等待器，退出前回收执行任务和生成器。"""
+async def _consume_stream_with_cancel(agen, run_ctx: RunContext, *, idle_timeout_seconds: float | None = None):
+    """每 Run 只建一个取消等待器，退出前回收执行任务和生成器；长时间无事件时判定 Run 卡死。"""
+    if idle_timeout_seconds is None:
+        idle_timeout_seconds = RUN_IDLE_TIMEOUT_SECONDS
+
     cancel_task = asyncio.create_task(run_ctx.wait_cancelled())
     next_task = None
     try:
         while True:
             next_task = asyncio.create_task(agen.__anext__())
-            done, _ = await asyncio.wait({next_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                {next_task, cancel_task},
+                timeout=idle_timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                raise RunIdleTimeout(f"运行超时：{int(idle_timeout_seconds)} 秒内没有收到任何进展，请稍后重试")
             if cancel_task in done:
                 raise asyncio.CancelledError(f"run {run_ctx.run_id} cancelled")
             try:
@@ -1443,9 +1457,10 @@ async def process_agent_run(ctx, run_id: str):
             raise RetryableRunError(str(e)) from e
 
         logger.error(f"Run failed {run_id}: {e}")
+        error_type = "run_timeout" if isinstance(e, RunIdleTimeout) else "worker_error"
         error_chunk = {
             "status": "error",
-            "error_type": "worker_error",
+            "error_type": error_type,
             "error_message": str(e),
             "request_id": request_id,
             "retryable": False,
@@ -1455,7 +1470,7 @@ async def process_agent_run(ctx, run_id: str):
             "failed",
             thread_id=thread_id,
             chunk=error_chunk,
-            error_type="worker_error",
+            error_type=error_type,
             error_message=str(e),
             current_user=user,
             worker_id=worker_id,

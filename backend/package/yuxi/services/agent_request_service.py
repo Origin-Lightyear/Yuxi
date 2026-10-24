@@ -19,6 +19,7 @@ from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.project_repository import ProjectRepository
+from yuxi.services import agent_data_sync
 from yuxi.services.agent_request_queue_service import (
     DELIVERY_STATUS_QUEUED,
     DELIVERY_STATUS_REJECTED,
@@ -36,7 +37,7 @@ from yuxi.services.agent_run_service import create_agent_run_input_message, enqu
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.project_service import create_implicit_project
 from yuxi.services.workdir_service import WorkdirBinding, resolve_conversation_workdir_binding
-from yuxi.storage.postgres.models_business import AgentRunRequest, User
+from yuxi.storage.postgres.models_business import AgentRunRequest, Message, User
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.workspace.paths import ensure_bound_user_workdir
 
@@ -206,7 +207,7 @@ async def submit_agent_request(
         origin=replace(origin, external_id=external_id, metadata=origin_metadata),
         request_metadata=request_metadata,
     )
-    request, dispatch = await _persist_request(
+    request, dispatch, persisted_message = await _persist_request(
         db=db,
         request_input=request_input,
         current_user=current_user,
@@ -219,6 +220,9 @@ async def submit_agent_request(
     if workdir_binding.materialize_managed:
         ensure_bound_user_workdir(workdir_binding.uid, workdir_binding.workdir_path)
     if dispatch is not None:
+        # 双写 USER 消息到 Tenant 服务（fail-soft），只在本请求真正创建了待执行 Run 时同步
+        if persisted_message is not None and dispatch.request_id == request.request_id:
+            await agent_data_sync.sync_user_message(db, conversation, persisted_message)
         await enqueue_agent_run(dispatch.run_id)
     return response
 
@@ -231,7 +235,7 @@ async def _persist_request(
     agent_item: Any,
     agent_backend: Any,
     workdir_binding: WorkdirBinding | None = None,
-) -> tuple[AgentRunRequest, DispatchResult | None]:
+) -> tuple[AgentRunRequest, DispatchResult | None, Message | None]:
     """保存请求并返回本事务实际派发的队头，供提交后投递。"""
     request_id = request_input.request_id
     uid = current_user.uid
@@ -261,7 +265,7 @@ async def _persist_request(
         return existing
 
     if result := await existing_request(workdir_binding):
-        return result, None
+        return result, None, None
 
     conversation = await get_thread_conversation(
         db=db,
@@ -284,7 +288,7 @@ async def _persist_request(
     ):
         raise RuntimeError("传入的 Workdir 绑定与 Conversation 不一致")
     if result := await existing_request(workdir_binding):
-        return result, None
+        return result, None, None
     existing_requests = await repo.list_queued(
         uid=uid_str,
         agent_slug=agent_slug,
@@ -375,7 +379,7 @@ async def _persist_request(
             )
     except IntegrityError:
         if result := await existing_request(workdir_binding):
-            return result, None
+            return result, None, None
         raise
 
     dispatched = None
@@ -393,7 +397,7 @@ async def _persist_request(
         if dispatched and dispatched.request_id == request_id:
             if policy == "reject":
                 await ConversationRepository(db).set_model_spec(conversation, resolved_model_spec)
-            return persisted_request, dispatched
+            return persisted_request, dispatched, persisted_message
 
         if policy == "reject":
             persisted_request.status = REQUEST_STATUS_REJECTED
@@ -401,7 +405,7 @@ async def _persist_request(
             persisted_request.updated_at = utc_now_naive()
             persisted_message.delivery_status = DELIVERY_STATUS_REJECTED
             await db.flush()
-    return persisted_request, dispatched
+    return persisted_request, dispatched, persisted_message
 
 
 def _validate_request_scope(request: AgentRunRequest, *, request_input: AgentRequestInput, uid: str) -> None:

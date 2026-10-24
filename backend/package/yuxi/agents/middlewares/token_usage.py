@@ -1,4 +1,4 @@
-"""Yuxi Agent 的 Token 用量观测中间件。
+"""Linko AI Agent 的 Token 用量观测中间件。
 
 在每次主模型调用后估算近似上下文占用，并持久化 Provider 返回的实际
 usage_metadata，按配置模型分桶累计到 Run 与 Thread 两级；快照写入

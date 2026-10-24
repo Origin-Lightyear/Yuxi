@@ -22,7 +22,7 @@ Dify、Notion 连接器见[知识库管理 API](../advanced/knowledge-base-api.m
 | Dify | 调用 Dify Dataset 的检索接口 | 复用已有 Dify 数据集 |
 | Notion | 调用 Notion Data Source 的检索接口 | 复用已有 Notion 内容 |
 
-Dify 和 Notion 是只读连接器，不能在 Yuxi 中上传、解析、索引或预览文档全文。本教程使用 Milvus。
+Dify 和 Notion 是只读连接器，不能在 Linko AI 中上传、解析、索引或预览文档全文。本教程使用 Milvus。
 
 ## 1. 创建知识库
 

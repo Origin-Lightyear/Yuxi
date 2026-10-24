@@ -1,6 +1,6 @@
-![Yuxi：可私有部署的多租户知识智能体平台](https://xerrors.oss-cn-shanghai.aliyuncs.com/posts/2026/08/20260818-151118-mac-1787037059154-8c08f48c.png)
+![Linko AI：可私有部署的多租户知识智能体平台](https://xerrors.oss-cn-shanghai.aliyuncs.com/posts/2026/08/20260818-151118-mac-1787037059154-8c08f48c.png)
 
-**Yuxi = Cloud Agents + Knowledge RAG**，Yuxi 是一个可私有部署的多租户知识智能体平台。自定义智能体，权限可控，沉淀企业轨迹。它把知识库检索、知识图谱、LangGraph 多智能体编排、MCP/Skills、沙盒工具和权限管理放进同一个工作区。让每个用户都拥有一个云端 Codex。
+**Linko AI = Cloud Agents + Knowledge RAG**，Linko AI 是一个可私有部署的多租户知识智能体平台。自定义智能体，权限可控，沉淀企业轨迹。它把知识库检索、知识图谱、LangGraph 多智能体编排、MCP/Skills、沙盒工具和权限管理放进同一个工作区。让每个用户都拥有一个云端 Codex。
 
 [项目主页](https://xerrors.github.io/Yuxi/) · [快速开始](https://xerrors.github.io/Yuxi/intro/quick-start) · [演示视频](https://www.bilibili.com/video/BV1erE26iEgv/) · [版本记录](https://github.com/xerrors/Yuxi/releases) · [English](README.en.md)
 
@@ -13,9 +13,9 @@
 
 <a href="https://trendshift.io/repositories/24335" target="_blank"><img src="https://trendshift.io/api/badge/repositories/24335" alt="xerrors%2FYuxi | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-## Yuxi 能做什么
+## Linko AI 能做什么
 
-Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己掌握数据、模型和权限的团队：
+Linko AI 是面向需要企业自部署的多用户 Agent 产品，且需要自己掌握数据、模型和权限的团队：
 
 - **二开友好**：MIT 协议、代码简洁、可拓展性强、高并发部署友好。
 - **Harness**：功能完善的云端多用户 Harness，自定义智能体，沉淀企业轨迹。
@@ -34,7 +34,7 @@ Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己�
 
 ## 快速启动
 
-语析（Yuxi）完全基于 Docker 启动，服务和中间件主要包括：LangGraph、Vue、FastAPI、Milvus、Neo4j、PostgreSQL、MinerU、PaddleOCR。
+Linko AI 完全基于 Docker 启动，服务和中间件主要包括：LangGraph、Vue、FastAPI、Milvus、Neo4j、PostgreSQL、MinerU、PaddleOCR。
 
 ### 前置条件
 
@@ -84,7 +84,7 @@ curl --fail http://localhost:5050/api/system/ready
 
 ## 能力展示
 
-Yuxi 把知识进入系统、Agent 执行任务和团队治理放在一条完整链路中。以下按六个核心模块介绍系统能力：
+Linko AI 把知识进入系统、Agent 执行任务和团队治理放在一条完整链路中。以下按六个核心模块介绍系统能力：
 
 
 | 模块               | 解决的问题                           | 代表能力                                             |
@@ -104,7 +104,7 @@ Yuxi 把知识进入系统、Agent 执行任务和团队治理放在一条完整
 - 展示任务拆解步骤、工具调用状态与上下文 Token 消耗。
 - 支持预览和下载生成的文件产物。
 
-![Yuxi 统一智能体工作台](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825145022410.png)
+![Linko AI 统一智能体工作台](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825145022410.png)
 
 <details>
 <summary><strong>展开详细截图：对话、执行状态与人工审批</strong></summary>
@@ -205,7 +205,7 @@ Yuxi 把知识进入系统、Agent 执行任务和团队治理放在一条完整
 - 支持多个 SubAgents 异步并行执行深度调研、数据分析或内容生成。
 - 原生兼容 Skills 插件机制与 MCP（Model Context Protocol）标准协议。
 
-![Yuxi 多智能体编排](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152252874.png)
+![Linko AI 多智能体编排](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152252874.png)
 
 <details>
 <summary><strong>展开详细截图：Agent 配置、子智能体与扩展能力</strong></summary>
@@ -250,7 +250,7 @@ Yuxi 把知识进入系统、Agent 执行任务和团队治理放在一条完整
 - 支持生成图文报告、数据分析图表、Web 页面等多种格式产物。
 - 在浏览器中预览受支持的文件格式，并打包下载。
 
-![Yuxi 沙盒工作区与文件产物](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152123583.png)
+![Linko AI 沙盒工作区与文件产物](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152123583.png)
 
 <details>
 <summary><strong>展开详细截图：文件管理、在线预览与任务交付</strong></summary>
@@ -328,9 +328,9 @@ Yuxi 把知识进入系统、Agent 执行任务和团队治理放在一条完整
 
 ## 许可证
 
-Yuxi 本体采用 MIT License，详见 [LICENSE](LICENSE)。Docker Compose 引入的第三方组件遵循各自的许可证；再分发和商业部署前，请按实际镜像版本核对上游许可和源码义务，相关边界见[生产部署指南](docs/advanced/deployment.md)。
+Linko AI 本体采用 MIT License，详见 [LICENSE](LICENSE)。Docker Compose 引入的第三方组件遵循各自的许可证；再分发和商业部署前，请按实际镜像版本核对上游许可和源码义务，相关边界见[生产部署指南](docs/advanced/deployment.md)。
 
-Yuxi 的实现和文档参考了以下优秀的开源项目：
+Linko AI 的实现和文档参考了以下优秀的开源项目：
 
 - [LightRAG](https://github.com/HKUDS/LightRAG)：早期图谱构建和检索思路；
 - [DeepAgents](https://github.com/langchain-ai/deepagents)：深度智能体框架；
@@ -350,4 +350,4 @@ Yuxi 的实现和文档参考了以下优秀的开源项目：
 </a>
 
 
-[![给 Yuxi 一个 Star](https://xerrors.oss-cn-shanghai.aliyuncs.com/posts/2026/08/20260818-184409-image-da91658b.png)](https://github.com/xerrors/Yuxi)
+[![给 Linko AI 一个 Star](https://xerrors.oss-cn-shanghai.aliyuncs.com/posts/2026/08/20260818-184409-image-da91658b.png)](https://github.com/xerrors/Yuxi)

@@ -8,7 +8,7 @@
  * 服务地址优先级：环境变量 YUXI_BACKEND_URL > 用户上次保存的地址 > 默认 http://10.69.188.181:5173
  * 连接失败时弹窗提供地址输入，用户可修改并重试（保存到 userData/config.json）。
  */
-const { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, session, shell, Tray } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, screen, session, shell, Tray } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -21,6 +21,10 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 const DEFAULT_URL = 'http://10.69.188.181:5173';
 const CONFIG_FILE = 'config.json';
+// 顶部给系统按钮（macOS 红绿灯 / Windows 窗口控件）留出的高度，窗口与页面留白共用同一常量
+const TITLEBAR_HEIGHT = 36;
+// 拖动条元素 id：注入脚本按它判重，全屏规则按它隐藏同一条带，改名单点即可
+const DRAG_STRIP_ID = 'yuxi-titlebar-drag';
 
 let mainWindow = null;
 let backendUrl = null;
@@ -239,12 +243,32 @@ function createWindow(url) {
     ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height }
     : { width: 1280, height: 820 };
 
+  // 无边框外观：macOS 隐藏标题栏但把红绿灯内嵌到页面左上角留白内；
+  // 其他平台隐藏标题栏，用透明 titleBarOverlay 把系统窗口控件浮在页面右上角
+  const titleBarOptions =
+    process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset',
+          trafficLightPosition: { x: 14, y: (TITLEBAR_HEIGHT - 14) / 2 },
+        }
+      : {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: {
+            color: '#00000000',
+            symbolColor: '#5f6a6a',
+            height: TITLEBAR_HEIGHT,
+          },
+        };
+
   mainWindow = new BrowserWindow({
     ...initialBounds,
     minWidth: 900,
     minHeight: 600,
     title: '大力水手',
     icon: resolveAppIcon(),
+    // 与页面侧栏底色一致，减少无边框窗口启动时的白闪
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#030303' : '#fcfefe',
+    ...titleBarOptions,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -281,6 +305,16 @@ function createWindow(url) {
     Menu.buildFromTemplate(editSubmenuTemplate()).popup({ window: mainWindow });
   });
 
+  const { webContents } = mainWindow;
+
+  // 每次导航（含托盘切换服务地址）在 DOMContentLoaded 重新注入留白、拖动条与全屏状态；
+  // 注入幂等，且不阻塞窗口显示
+  webContents.on('dom-ready', () => installPageChrome(webContents));
+
+  // 全屏切换只切 body 类：样式恒在，快速进出全屏或全屏中导航都不会残留失效覆盖
+  mainWindow.on('enter-full-screen', () => syncFullscreenClass(webContents));
+  mainWindow.on('leave-full-screen', () => syncFullscreenClass(webContents));
+
   // 默认打开 /agent 聊天页；未登录由前端路由守卫自动跳转登录页，登录后跳回 /agent
   mainWindow.loadURL(`${url}/agent`);
 
@@ -300,6 +334,74 @@ function createWindow(url) {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+/**
+ * 给远程页面补上无边框窗口所需的顶部留白、拖动条与全屏样式。
+ *
+ * 远程页面不知道窗口无边框，这里替它留出标题栏高度，并叠一个透明拖动区。
+ * 基础规则与全屏规则同在一张样式表内，全屏规则由 `body.yuxi-fullscreen` 限定，
+ * 因此每次 DOMContentLoaded 重新注入后，全屏状态由 syncFullscreenClass 一并恢复。
+ */
+function installPageChrome(webContents) {
+  // 留白用 padding 而非 margin，避免 body 背景色与页面顶部之间露出窗口底色
+  const css = `
+body {
+  height: 100vh;
+  padding-top: ${TITLEBAR_HEIGHT}px;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+.app-layout { height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important; }
+.login-view, .oidc-callback-view, .cli-auth-view {
+  min-height: calc(100vh - ${TITLEBAR_HEIGHT}px) !important;
+}
+
+/* 全屏下系统按钮消失，留白、拖动区与独立视图高度一并按整屏计算 */
+body.yuxi-fullscreen { padding-top: 0 !important; }
+body.yuxi-fullscreen .app-layout { height: 100vh !important; }
+body.yuxi-fullscreen .login-view,
+body.yuxi-fullscreen .oidc-callback-view,
+body.yuxi-fullscreen .cli-auth-view {
+  min-height: 100vh !important;
+}
+body.yuxi-fullscreen #${DRAG_STRIP_ID} { display: none !important; }
+`;
+
+  const script = `
+(() => {
+  const id = '${DRAG_STRIP_ID}';
+  if (document.getElementById(id)) return;
+
+  const bar = document.createElement('div');
+  bar.id = id;
+  bar.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0', 'height:${TITLEBAR_HEIGHT}px',
+    'z-index:2147483647', 'background:transparent', '-webkit-app-region:drag',
+  ].join(';');
+  document.body.appendChild(bar);
+})();
+`;
+
+  webContents.insertCSS(css).catch(warnPageChromeFailure);
+  webContents.executeJavaScript(script).catch(warnPageChromeFailure);
+  syncFullscreenClass(webContents);
+}
+
+/**
+ * 按窗口当前全屏状态切换页面上的 `yuxi-fullscreen` 类。
+ *
+ * 全屏样式常驻样式表，这里只改类名：快速进出全屏、全屏中切换服务地址都不会留下失效覆盖。
+ */
+function syncFullscreenClass(webContents) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const script = `document.body.classList.toggle('yuxi-fullscreen', ${mainWindow.isFullScreen()});`;
+  webContents.executeJavaScript(script).catch(warnPageChromeFailure);
+}
+
+// 导航过程中注入可能失败（页面被替换、窗口关闭），失败要可见而不是变成未处理的 rejection
+function warnPageChromeFailure(err) {
+  console.warn('[yuxi] 页面样式注入失败:', err);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,27 +443,16 @@ function editSubmenuTemplate() {
   ];
 }
 
-function buildMenu() {
-  const template = [];
-  if (process.platform === 'darwin') {
-    template.push({
-      label: '大力水手',
-      submenu: [
-        { role: 'about', label: '关于' },
-        { type: 'separator' },
-        { role: 'hide', label: '隐藏' },
-        { type: 'separator' },
-        { role: 'quit', label: '退出' },
-      ],
-    });
+function applyAppMenu() {
+  // 窗口无边框后不需要完整菜单栏：macOS 保留应用菜单与编辑菜单，保证 Cmd+Q / Cmd+C/V
+  // 等系统快捷键可用；其他平台清空默认菜单，编辑能力由页面与右键菜单承担
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null);
+    return;
   }
-  template.push(
-    { label: '编辑', submenu: editSubmenuTemplate() },
-    { label: '查看', submenu: [{ role: 'reload', label: '重新加载' }] },
-    // role quit 走 app.quit() -> before-quit 置 isQuitting，close 处理器不会拦截，真正退出
-    { label: '应用', submenu: [{ role: 'quit', label: '退出' }] }
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([{ role: 'appMenu' }, { label: '编辑', submenu: editSubmenuTemplate() }])
   );
-  return Menu.buildFromTemplate(template);
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +546,7 @@ if (!gotLock) {
       tray.on('click', showMainWindow);
     }
 
-    Menu.setApplicationMenu(buildMenu());
+    applyAppMenu();
 
     // 下载显式落系统下载目录：默认文件名 + 重名自动编号，不依赖 Electron 默认且不覆盖已有文件
     session.defaultSession.on('will-download', (_event, item) => {
