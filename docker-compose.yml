@@ -44,8 +44,8 @@ x-api-worker-env: &api-worker-env
   # 租户知识库管理 API 的静态密钥（Tenant 服务持有；未配置时管理 API 返回 404）
   TENANT_ADMIN_API_KEY: ${TENANT_ADMIN_API_KEY:-}
   # 其他环境变量
-  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
-  no_proxy: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
+  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,asr,api.siliconflow.cn
+  no_proxy: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,asr,api.siliconflow.cn
 
 # 长驻服务的容器日志轮转上界，防止 docker json.log 无限增长占满磁盘。
 x-logging: &default-logging
@@ -576,6 +576,9 @@ services:
     build:
       context: .
       dockerfile: docker/asr.Dockerfile
+      args:
+        APT_MIRROR: ${ASR_APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
+        PIP_INDEX_URL: ${ASR_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
     image: ${COMPOSE_PROJECT_NAME:-yuxi}-asr:${YUXI_VERSION:-0.7.3}
     profiles:
       - voice

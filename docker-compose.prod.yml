@@ -33,8 +33,8 @@ x-api-worker-env: &api-worker-env
   YUXI_DATASET_PERSIST_BATCH_SIZE: ${YUXI_DATASET_PERSIST_BATCH_SIZE:-1}
   YUXI_SKILL_DATA_DIR: /app/skill-sources
   YUXI_SKILL_PROJECTION_DIR: /app/skill-projections
-  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
-  no_proxy: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
+  NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,asr,api.siliconflow.cn
+  no_proxy: localhost,127.0.0.1,milvus,graph,minio,etcd,mineru,paddlex,sandbox-provisioner,asr,api.siliconflow.cn
 
 # 长驻服务的容器日志轮转上界，防止 docker json.log 无限增长占满磁盘。
 x-logging: &default-logging
@@ -190,6 +190,27 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  # 语音输入（可选能力）：仅在 --profile voice 下启动。
+  asr:
+    build:
+      context: .
+      dockerfile: docker/asr.Dockerfile
+      args:
+        APT_MIRROR: ${ASR_APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
+        PIP_INDEX_URL: ${ASR_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-asr:${YUXI_VERSION:-0.7.3}
+    profiles:
+      - voice
+    ports:
+      - "127.0.0.1:${YUXI_ASR_PORT:-8100}:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 20s
+      start_period: 120s
+    networks:
+      - app-network
+    restart: unless-stopped
 
   sandbox-provisioner:
     ports:
