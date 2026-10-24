@@ -115,7 +115,7 @@ async def test_concurrent_reject_requests_never_enter_queue(monkeypatch: pytest.
 
     async def submit(request_id: str):
         async with session_factory() as db:
-            result, _ = await agent_request_service._persist_request(
+            result, _, _msg = await agent_request_service._persist_request(
                 db=db,
                 agent_item=MagicMock(),
                 agent_backend=MagicMock(),
@@ -227,7 +227,7 @@ async def test_context_compression_holds_thread_lock_until_checkpoint_update(mon
 
     async def submit_message():
         async with session_factory() as db:
-            result, _ = await agent_request_service._persist_request(
+            result, _, _msg = await agent_request_service._persist_request(
                 db=db,
                 agent_item=MagicMock(),
                 agent_backend=MagicMock(),
@@ -323,7 +323,7 @@ async def test_concurrent_steer_requests_keep_one_pending(monkeypatch: pytest.Mo
     async def submit(request_id: str):
         async with session_factory() as db:
             try:
-                result, _ = await agent_request_service._persist_request(
+                result, _, _msg = await agent_request_service._persist_request(
                     db=db,
                     agent_item=MagicMock(),
                     agent_backend=MagicMock(),
@@ -402,7 +402,7 @@ async def test_concurrent_enqueue_dispatches_fifo_head(monkeypatch: pytest.Monke
 
     async def submit(request_id: str):
         async with session_factory() as db:
-            result, _ = await agent_request_service._persist_request(
+            result, _, _msg = await agent_request_service._persist_request(
                 db=db,
                 agent_item=MagicMock(),
                 agent_backend=MagicMock(),
@@ -813,7 +813,7 @@ async def test_concurrent_request_id_reuse_across_threads_returns_scope_conflict
     async def submit(thread_id: str):
         async with session_factory() as db:
             try:
-                result, _ = await agent_request_service._persist_request(
+                result, _, _msg = await agent_request_service._persist_request(
                     db=db,
                     agent_item=MagicMock(),
                     agent_backend=MagicMock(),

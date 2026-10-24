@@ -5,6 +5,7 @@ Conversation thread status mapping and viewed-marking unit tests.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -233,6 +234,7 @@ async def test_create_thread_view_rejects_client_attachment_metadata():
 
 
 async def test_explicit_project_creation_locks_project_until_commit(monkeypatch):
+    monkeypatch.setattr(svc.agent_data_sync, "sync_thread_created", AsyncMock(return_value=None))
     project = SimpleNamespace(
         id="project-1",
         uid="user-1",

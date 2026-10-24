@@ -80,7 +80,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
             self._send_json_error(403, "请求来源无效")
             return
         if not secrets.compare_digest(
-            self.headers.get("X-Linko AI-Chat-Token", ""), self.server.session_token
+            self.headers.get("X-Yuxi-Chat-Token", ""), self.server.session_token
         ):
             self._send_json_error(403, "会话令牌无效")
             return

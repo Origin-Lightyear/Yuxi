@@ -11,7 +11,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.live_api_cleanup import (
     make_test_conversation_metadata,
@@ -23,7 +23,13 @@ from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.services.agent_run_service import prepare_agent_run_creation_scope
 from yuxi.services.project_service import delete_project_view
 from yuxi.services.subagent_run_service import SubagentRunService
-from yuxi.storage.postgres.models_business import Conversation, Project, SubagentThread, User
+from yuxi.storage.postgres.models_business import (
+    Conversation,
+    ConversationStats,
+    Project,
+    SubagentThread,
+    User,
+)
 from yuxi.workspace.paths import user_workdir_host_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -81,6 +87,8 @@ async def project_lifecycle_database():
     try:
         async with session_factory() as session:
             session.add(User(username=uid, uid=uid, password_hash="test"))
+            # projects.uid 外键非延迟校验，先落 User 再插入 Project
+            await session.flush()
             session.add(
                 Project(
                     id=project_id,
@@ -98,6 +106,10 @@ async def project_lifecycle_database():
         finally:
             async with session_factory() as session:
                 await session.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
+                conversation_ids = select(Conversation.id).where(Conversation.uid == uid)
+                await session.execute(
+                    delete(ConversationStats).where(ConversationStats.conversation_id.in_(conversation_ids))
+                )
                 await session.execute(delete(Conversation).where(Conversation.uid == uid))
                 await session.execute(delete(Project).where(Project.uid == uid))
                 await session.execute(delete(User).where(User.uid == uid))

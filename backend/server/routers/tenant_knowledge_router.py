@@ -115,9 +115,6 @@ async def create_tenant_database(
             tenant_id=ctx.tenant_id,
             **(additional_params or {}),
         )
-        from yuxi.agents.buildin import agent_manager
-
-        await agent_manager.reload_all()
         return serialize_knowledge_base(database_info)
     except KBNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e

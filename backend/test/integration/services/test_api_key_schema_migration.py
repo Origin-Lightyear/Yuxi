@@ -45,6 +45,10 @@ async def test_api_key_schema_upgrade_is_idempotent_and_preserves_safe_history()
         async with scoped_engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
             await connection.execute(text("DROP TABLE cli_auth_sessions"))
+            # fork 的 im_bot_configs 通过 api_key_id 引用 api_keys，显式移除依赖约束后再删表
+            await connection.execute(
+                text("ALTER TABLE im_bot_configs DROP CONSTRAINT IF EXISTS im_bot_configs_api_key_id_fkey")
+            )
             await connection.execute(text("DROP TABLE api_keys"))
             await connection.execute(
                 text(

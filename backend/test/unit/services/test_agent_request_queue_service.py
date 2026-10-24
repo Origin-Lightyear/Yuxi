@@ -1601,6 +1601,12 @@ async def test_submission_publishes_committed_request_and_replays_same_view(
 
     monkeypatch.setattr(agent_request_service, "ensure_bound_user_workdir", materialize)
     monkeypatch.setattr(agent_request_service, "enqueue_agent_run", enqueue)
+    # SaaS 双写会开启新事务，隔离后台镜像以聚焦"提交后投递"边界
+    monkeypatch.setattr(
+        agent_request_service.agent_data_sync,
+        "sync_user_message",
+        AsyncMock(return_value=None),
+    )
     request_input = AgentRequestInput(
         request_id="request-complete",
         agent_slug="main",

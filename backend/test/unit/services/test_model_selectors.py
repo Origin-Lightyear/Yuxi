@@ -79,13 +79,45 @@ def _httpx_embedding_response(status_code: int, content: str | None = None) -> h
     [
         (select_model, {"model_spec": "unknown-provider:namespace/model"}),
         (load_chat_model, {"fully_specified_name": "unknown-provider:namespace/model"}),
-        (select_embedding_model, {"model_id": "unknown-provider:namespace/model"}),
         (get_reranker, {"model_id": "unknown-provider:namespace/model"}),
     ],
 )
 def test_selectors_report_unknown_unconfigured_specs(selector, args):
     with pytest.raises(ValueError, match="Unknown|未找到模型"):
         selector(**args)
+
+
+def test_select_embedding_model_uses_configured_fallback(monkeypatch):
+    """未知嵌入模型解析到 config.embed_fallback_model 指向的已注册模型。"""
+    from yuxi.config import config as app_config
+
+    provider_id, model_id = app_config.embed_fallback_model.split(":", 1)
+    fallback = ModelInfo(
+        provider_id=provider_id,
+        model_id=model_id,
+        model_type="embedding",
+        display_name=model_id,
+        api_key="test-key",
+        base_url="https://example.com/v1",
+        provider_type="openai",
+        dimension=1024,
+    )
+    monkeypatch.setattr(
+        "yuxi.models.embed.model_cache.get_model_info",
+        lambda spec: None if spec == "unknown-provider:namespace/model" else fallback,
+    )
+
+    embedding = select_embedding_model("unknown-provider:namespace/model")
+
+    assert embedding.spec == app_config.embed_fallback_model
+
+
+def test_select_embedding_model_reports_error_when_fallback_unavailable(monkeypatch):
+    """回退模型同样未注册时保持显式失败。"""
+
+    monkeypatch.setattr("yuxi.models.embed.model_cache.get_model_info", lambda _spec: None)
+    with pytest.raises(ValueError, match="Unknown embedding model spec"):
+        select_embedding_model("unknown-provider:namespace/model")
 
 
 def test_resolve_chat_model_spec_prefers_explicit_then_fallback():
