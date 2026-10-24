@@ -1,0 +1,4 @@
+模型名称：iic/SenseVoiceSmall
+来源：ModelScope（https://www.modelscope.cn/models/iic/SenseVoiceSmall）
+许可：FunASR Model Open Source License v1.1
+许可全文：见同目录 MODEL_LICENSE.txt

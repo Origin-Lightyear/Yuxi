@@ -89,6 +89,19 @@
       </template>
       <template #actions-right>
         <div class="input-actions-right">
+          <button
+            v-if="speechButtonVisible"
+            type="button"
+            class="input-action-btn speech-input-btn"
+            :class="{ active: speechStatus === 'recording' }"
+            :aria-label="speechButtonLabel"
+            :title="speechButtonLabel"
+            @click.stop="handleSpeechButtonClick"
+          >
+            <Loader v-if="speechStatus === 'transcribing'" :size="16" class="speech-input-spin" />
+            <Square v-else-if="speechStatus === 'recording'" :size="14" />
+            <Mic v-else :size="16" />
+          </button>
           <slot name="actions-right-extra"></slot>
         </div>
       </template>
@@ -97,14 +110,16 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import ImagePreviewComponent from '@/components/ImagePreviewComponent.vue'
 import AttachmentOptionsComponent from '@/components/AttachmentOptionsComponent.vue'
-import { X } from '@lucide/vue'
+import { Loader, Mic, Square, X } from '@lucide/vue'
 import { normalizeAttachmentPreviews } from '@/utils/file_utils'
 import { uploadMultimodalImage } from '@/utils/multimodal_image_upload'
+import { decideTranscriptAction } from '@/utils/speech_input'
+import { useSpeechInput } from '@/composables/useSpeechInput'
 import {
   MAX_MULTIMODAL_IMAGES,
   MAX_MULTIMODAL_TOTAL_BASE64_BYTES,
@@ -252,6 +267,74 @@ const handleSend = () => {
   currentImages.value = []
 }
 
+// 转写只提供文本，落点由当前草稿与会话决定；会话已切换时旧结果直接丢弃。
+const handleSpeechResult = async ({ text, threadIdAtStart }) => {
+  const action = decideTranscriptAction({
+    draft: props.modelValue,
+    threadIdAtStart,
+    currentThreadId: props.threadId
+  })
+  if (action === 'discard') return
+
+  if (action === 'append') {
+    emit('update:modelValue', `${props.modelValue}\n${text}`)
+    return
+  }
+
+  emit('update:modelValue', text)
+  await nextTick()
+  handleSend()
+}
+
+const {
+  status: speechStatus,
+  available: speechAvailable,
+  start: startSpeech,
+  stop: stopSpeech,
+  cancel: cancelSpeech
+} = useSpeechInput({
+  getThreadId: () => props.threadId,
+  onResult: handleSpeechResult,
+  onError: (text) => message.warning(text)
+})
+
+// 输入框禁用时同样不展示入口，避免点开一个无法使用的麦克风。
+const speechButtonVisible = computed(() => speechAvailable.value && !props.disabled)
+
+const speechButtonLabel = computed(() => {
+  if (speechStatus.value === 'recording') return '停止录音'
+  if (speechStatus.value === 'transcribing') return '取消语音识别'
+  return '语音输入'
+})
+
+const handleSpeechButtonClick = () => {
+  if (speechStatus.value === 'recording') {
+    stopSpeech()
+    return
+  }
+  if (speechStatus.value === 'transcribing') {
+    cancelSpeech()
+    return
+  }
+
+  // 起录会写回输入框，先拒绝一切可能被覆盖的内容。
+  if (props.modelValue.trim()) {
+    message.warning('输入框已有内容，请先清空后再使用语音输入')
+    return
+  }
+  if (currentImages.value.length || previewAttachments.value.length) {
+    message.warning('已有图片或附件，请先发送或移除后再使用语音输入')
+    return
+  }
+  startSpeech()
+}
+
+// 切换会话后旧录音的转写不再属于当前对话。
+watch(
+  () => props.threadId,
+  () => cancelSpeech()
+)
+
 const handleKeyDown = (e) => {
   if (props.sendButtonDisabled) {
     return
@@ -310,6 +393,27 @@ defineExpose({
   align-items: center;
   margin-right: 8px;
   gap: 2px;
+}
+
+.speech-input-btn {
+  justify-content: center;
+  width: 30px;
+  padding: 6px;
+  color: var(--gray-500);
+}
+
+.speech-input-btn.active {
+  color: var(--gray-900);
+}
+
+.speech-input-spin {
+  animation: speech-input-spin 1s linear infinite;
+}
+
+@keyframes speech-input-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .input-top-stack {
