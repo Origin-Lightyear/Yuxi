@@ -59,7 +59,7 @@ YUXI_ENV_FILE=.env.staging docker compose --env-file .env.staging -f docker-comp
 
 同机并行部署时，在各自的环境文件中设置不同的 `COMPOSE_PROJECT_NAME` 和 `YUXI_STATE_DIR`；项目名隔离容器、镜像、Compose 网络和动态沙盒名称，数据目录隔离持久文件。默认数据目录仍是 `./docker/volumes`，同一目录只允许一套运行中的环境写入。已有部署更换项目名或从固定容器名切换前，先结束任务和沙盒会话，用旧配置执行 `docker compose down`（保留数据，不加 `-v`），再用新配置启动；复用数据时保持状态目录和密钥不变。
 
-生产 Web 端口通过 `YUXI_WEB_PORT` 设置，默认 80；API 默认发布到 `127.0.0.1:6050`，管理服务端口也只绑定回环地址。具体默认值由 `docker-compose.prod.yml` 的 `ports` 定义；多套生产环境还需分别设置端口，启用 `all` profile 时包括 `YUXI_MINERU_PORT` 和 `YUXI_PADDLEX_PORT`。开发环境的端口隔离示例见[并行工作树与隔离运行环境](../develop-guides/parallel-worktree-environments.md)。
+生产 Web 端口通过 `YUXI_WEB_PORT` 设置，默认 80；API 默认发布到 `127.0.0.1:6050`，管理服务端口也只绑定回环地址。具体默认值由 `docker-compose.prod.yml` 的 `ports` 定义；多套生产环境还需分别设置端口，启用 `all` profile 时包括 `YUXI_MINERU_PORT` 和 `YUXI_PADDLEX_PORT`，启用 `voice` profile 时包括只绑定回环地址的 `YUXI_ASR_PORT`（默认 8100）。开发环境的端口隔离示例见[并行工作树与隔离运行环境](../develop-guides/parallel-worktree-environments.md)。
 
 MinIO 将同一宿主数据目录挂载到容器 `/data`，Neo4j 将日志目录挂载到 `/logs`；这两个容器内路径的调整不要求移动宿主文件。
 
@@ -82,6 +82,23 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile all up 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile gateway up -d --build
 ```
+
+启用输入框语音录入时叠加 `voice` profile，并在环境文件中设置 `ASR_API_URI=http://asr:8100`：
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile voice up -d --build
+```
+
+`asr` 服务在构建期下载 SenseVoiceSmall 并固化到镜像，运行期不联网；镜像约 2.7 GB，CPU 推理串行执行。构建默认使用清华 Debian 与 PyPI 镜像，构建机访问其他源时用 `ASR_APT_MIRROR` 与 `ASR_PIP_INDEX_URL` 覆盖。语音入口要求安全上下文，只有 HTTPS 入口或 `localhost` 才显示麦克风按钮，HTTP 入口不显示；生产 TLS 由宿主机反向代理提供，仓库内的 Web 容器不新增 TLS 终止。`ASR_API_URI` 留空时语音输入不可用，文字输入与会话主链路不受影响。
+
+离线部署先用同一份环境文件构建并导出该镜像，目标机器首次启动时不下载模型：
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile voice build asr
+docker save -o asr.tar <项目名>-asr:<YUXI_VERSION>
+```
+
+默认项目名为 `yuxi`、版本取 Compose 的 `YUXI_VERSION`，两者都未设置时实际 tag 为 `yuxi-asr:0.7.3`；用 `docker compose --profile voice config --images` 可以核对当前环境下的镜像名。
 
 `storage-migrator` 是启动依赖的一部分。迁移器成功后会退出，退出码为 0 是正常结果；API、worker 和 provisioner 会等待它成功。
 
@@ -272,8 +289,11 @@ Linko AI 本体使用 MIT License。Compose 依赖以独立进程运行，Linko 
 | PostgreSQL | `postgres:16` | PostgreSQL License |
 | Redis | `redis:7.4.10-alpine` | RSALv2 / SSPLv1（均非 OSI 许可证） |
 | MinerU / PaddleX（可选） | `mineru-vllm:latest` / `paddlex:latest` | 以各自 Dockerfile 和上游声明为准 |
+| FunASR / SenseVoiceSmall（可选） | 本地构建：`<项目名>-asr:<YUXI_VERSION>`（`docker/asr.Dockerfile`） | 模型权重：FunASR Model Open Source License v1.1；FunASR 代码：MIT |
 
 MinIO 的镜像由本仓库构建：MinIO 在 Docker Hub 与 quay.io 上的镜像已不再公开分发（同一 registry 上其他镜像仍可匿名拉取），`dl.min.io` 返回 410。Compose 按 `docker/minio/Dockerfile` 构建该镜像，构建时从官方 GitHub Release 下载固定版本的二进制并校验 sha256；它运行与下架前镜像逐字节相同的 MinIO 二进制，基础镜像与镜像内附带文件则不同（不再包含 `mc`、`minisig` 与 `*_FILE` 变量默认值）。
+
+SenseVoiceSmall 的模型权重按 FunASR Model Open Source License v1.1 分发，启用 `voice` profile 或再分发该镜像时需要保留协议全文、出处、作者信息与模型名称；仓库把它们放在 `docker/asr/MODEL_LICENSE.txt` 与 `docker/asr/NOTICE.txt`，并随镜像复制到 `/opt/licenses/SenseVoiceSmall/`。
 
 这张表只覆盖 Compose 的主要镜像本体，不是完整的软件物料清单，也不承诺 `latest` 镜像的内容固定。镜像还可能包含各自的基础系统和传递依赖，离线交付前要按实际 digest 核对许可证、版权声明和对应源码。
 

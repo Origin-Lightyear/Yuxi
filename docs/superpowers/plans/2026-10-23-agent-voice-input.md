@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI + httpx（后端）、FunASR 1.x + SenseVoiceSmall（识别服务，CPU）、Vue 3 + MediaRecorder + WebAudio（前端）、node:test（前端单测）、pytest（后端单测/集成）。
 
-**Spec:** `docs/develop-guides/decisions/proposed/2026-10-23-agent-voice-input.md`
+**Spec:** `docs/develop-guides/decisions/implemented/2026-10-23-agent-voice-input.md`
 
 ## Global Constraints
 
@@ -499,12 +499,12 @@ git commit -m "feat(web): 输入框支持语音录入"
 
 **Files:**
 - Modify: `docs/advanced/deployment.md`（组件表与语音输入启用步骤）
-- Modify: `docs/develop-guides/decisions/proposed/2026-10-23-agent-voice-input.md`（补充实施后的验证结果）
+- Modify: `docs/develop-guides/decisions/implemented/2026-10-23-agent-voice-input.md`（补充实施后的验证结果）
 - Modify: `docs/develop-guides/decisions/README.md` 之外的导航不需要改动（决策记录不进用户导航）
 
 - [ ] **Step 1: 写部署说明**
 
-在组件表加入 `asr`，写明：默认不启动、`docker compose --profile voice up`、`ASR_API_URI`、镜像约 2 GB、CPU 推理、模型协议的署名要求；并写明语音入口要求 HTTPS 安全上下文，HTTP 入口不显示该按钮。
+在组件表加入 `asr`，写明：默认不启动、`docker compose --profile voice up`、`ASR_API_URI`、镜像约 2.7 GB、CPU 推理、模型协议的署名要求；并写明语音入口要求 HTTPS 安全上下文，HTTP 入口不显示该按钮。
 
 - [ ] **Step 2: 记录实施结果**
 
@@ -522,7 +522,7 @@ Expected: 全部通过；失败则修文档或链接，不放宽检查。
 - [ ] **Step 4: 提交**
 
 ```bash
-git add docs/advanced/deployment.md docs/develop-guides/decisions/proposed/2026-10-23-agent-voice-input.md
+git add docs/advanced/deployment.md docs/develop-guides/decisions/implemented/2026-10-23-agent-voice-input.md
 git commit -m "docs: 补充语音输入的部署与验证说明"
 ```
 

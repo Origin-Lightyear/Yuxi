@@ -49,6 +49,7 @@
 - 新增内置 `linko-enterprise` 技能统一 Linko 企业数据入口：读正文判断系统，依云/水趣直调 `linko_ent`，金蝶先读 `references/kingdee-k3cloud.md` 再走 `k3_*`；判不准时在正文列出选项询问（禁用 `ask_user_question`，IM 不支持该中断），禁止推测字段含义或裁剪返回，依赖 `finance-mcp`。
 - 修复 MCP 服务不可达或假死时整轮 Run 失败：MCP 工具把 `httpx` 传输异常转为 `ToolException`，并按 `YUXI_MCP_TOOL_TIMEOUT_SECONDS`（默认 120 秒）放弃超时调用，由 `handle_tool_error` 返回工具错误消息，模型可提示数据源暂不可用并继续回答。
 - 新增 Run 空闲看门狗：Worker 消费流事件超过 `YUXI_RUN_IDLE_TIMEOUT_SECONDS`（默认 300 秒）无进展即判定卡死，按 `run_timeout` 结束并提示「运行超时」，避免 Run 永远停在 running。
+- 新增可选的语音输入：`voice` profile 提供自托管 FunASR 识别服务，输入框麦克风按钮支持整段录音、静音自动结束、转写后自动发送；音频只在内存中流转，不落库不落盘。未启用或未配置 `ASR_API_URI` 时入口隐藏，文字输入不受影响；浏览器要求 HTTPS 安全上下文，部署与离线镜像说明见[部署文档](../advanced/deployment.md)。
 
 ### 运行与维护
 
