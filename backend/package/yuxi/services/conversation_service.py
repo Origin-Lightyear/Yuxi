@@ -12,6 +12,7 @@ from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SO
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.services import agent_data_sync
 from yuxi.services.attachment_service import serialize_attachment
+from yuxi.services.digital_employee_service import ensure_digital_employee_can_start
 from yuxi.services.input_message_service import extract_image_contents
 from yuxi.services.project_service import create_implicit_project
 from yuxi.services.workdir_service import (
@@ -95,6 +96,7 @@ async def create_thread_view(
     agent_item = await agent_repo.get_visible_by_slug(slug=agent_slug, user=current_user)
     if not agent_item:
         raise HTTPException(status_code=404, detail="智能体不存在")
+    ensure_digital_employee_can_start(current_user, agent_item)
 
     conv_repo = ConversationRepository(db)
     project_repo = ProjectRepository(db)

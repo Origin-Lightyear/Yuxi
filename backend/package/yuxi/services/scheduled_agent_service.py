@@ -20,6 +20,7 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.repositories.scheduled_agent_repository import ScheduledAgentRepository
 from yuxi.services.agent_request_service import AgentRequestInput, RunOrigin, submit_agent_request
+from yuxi.services.digital_employee_service import ensure_digital_employee_can_start
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import ScheduledAgentJob, ScheduledAgentRun, User
@@ -107,6 +108,7 @@ async def _validate_agent(agent_slug: str, user: User, db: AsyncSession):
         get_agent_backend(agent.backend_id)
     except AgentBackendNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ensure_digital_employee_can_start(user, agent)
     return agent
 
 

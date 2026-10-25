@@ -7,12 +7,14 @@ import json
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.im_bot_repository import (
     create_im_bot as _create,
     delete_im_bot as _delete,
     get_im_bot,
     list_im_bots as _list,
 )
+from yuxi.services.digital_employee_service import ensure_digital_employee_can_start
 from yuxi.storage.postgres.models_business import APIKey, IMBotConfig, User
 from yuxi.utils.auth_utils import AuthUtils
 from yuxi.utils.crypto_utils import decrypt_secret, encrypt_secret
@@ -78,6 +80,14 @@ async def _resolve_owner(db: AsyncSession, owner_uid: str) -> User:
     return user
 
 
+async def _validate_agent_binding(db: AsyncSession, agent_slug: str, owner: User) -> None:
+    """校验 IM Bot 绑定的智能体对属主可见且当前可运行。"""
+    agent = await AgentRepository(db).get_visible_by_slug(slug=agent_slug, user=owner, kind="main")
+    if agent is None:
+        raise ValueError("智能体不存在或不可访问")
+    ensure_digital_employee_can_start(owner, agent)
+
+
 async def _provision_api_key(db: AsyncSession, user: User, bot_name: str) -> tuple[APIKey, str]:
     """为机器人创建绑定属主的 API Key，返回 (记录, 明文)。"""
     full_key, key_hash, key_prefix = AuthUtils.generate_api_key()
@@ -114,6 +124,7 @@ async def create_im_bot(db: AsyncSession, payload: dict, username: str) -> IMBot
     if not agent_slug:
         raise ValueError("agent_slug 不能为空")
     owner = await _resolve_owner(db, payload.get("owner_uid"))
+    await _validate_agent_binding(db, agent_slug, owner)
     credentials_encrypted = encrypt_credentials(platform, payload.get("credentials") or {})
     api_key, full_key = await _provision_api_key(db, owner, name)
     bot = await _create(
@@ -156,6 +167,10 @@ async def update_im_bot(db: AsyncSession, bot_id: int, payload: dict, username: 
             bot.owner_uid = owner.uid
             bot.api_key_id = api_key.id
             bot.api_key_cipher = encrypt_secret(full_key)
+    if "agent_slug" in payload or "owner_uid" in payload:
+        effective_owner = owner if "owner_uid" in payload else await _resolve_owner(db, bot.owner_uid)
+        effective_slug = str(payload.get("agent_slug") or "").strip() or bot.agent_slug
+        await _validate_agent_binding(db, effective_slug, effective_owner)
     if "credentials" in payload:
         bot.credentials_encrypted = encrypt_credentials(bot.platform, payload.get("credentials") or {})
     if "name" in payload:

@@ -128,7 +128,7 @@ async def create_employee(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     repo = AgentRepository(db)
-    data = await _serialize_employee(repo, agent, current_user, include_resources=True)
+    data = await _serialize_employee(repo, agent, current_user, include_resources=False)
     return {"employee": data}
 
 
@@ -149,7 +149,7 @@ async def update_employee(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     repo = AgentRepository(db)
-    data = await _serialize_employee(repo, updated, current_user, include_resources=True)
+    data = await _serialize_employee(repo, updated, current_user, include_resources=False)
     return {"employee": data}
 
 
@@ -166,7 +166,7 @@ async def publish_employee(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     repo = AgentRepository(db)
-    data = await _serialize_employee(repo, updated, current_user, include_resources=True)
+    data = await _serialize_employee(repo, updated, current_user, include_resources=False)
     return {"employee": data}
 
 
@@ -180,7 +180,7 @@ async def disable_employee(
     agent = await get_manageable_digital_employee(user=current_user, db=db, slug=slug)
     updated = await disable_digital_employee(user=current_user, db=db, agent=agent)
     repo = AgentRepository(db)
-    data = await _serialize_employee(repo, updated, current_user, include_resources=True)
+    data = await _serialize_employee(repo, updated, current_user, include_resources=False)
     return {"employee": data}
 
 
