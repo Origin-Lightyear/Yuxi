@@ -12,6 +12,7 @@ import {
 } from '@lucide/vue'
 
 import { userApi } from '@/apis/user_api'
+import { digitalEmployeeApi } from '@/apis/digital_employee_api'
 import AgentRuntimeConfigForm from '@/components/AgentRuntimeConfigForm.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
@@ -22,7 +23,8 @@ import { MAX_IMAGE_UPLOAD_SIZE_BYTES, MAX_IMAGE_UPLOAD_SIZE_MB } from '@/utils/u
 import { normalizeAgent } from '@/utils/agentConfigUtils'
 
 const props = defineProps({
-  backendOptions: { type: Array, default: () => [] }
+  backendOptions: { type: Array, default: () => [] },
+  digitalEmployee: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['saved'])
@@ -58,6 +60,15 @@ const agentForm = reactive({
 // 仅在创建模式可编辑，因此新建时不参与比对。
 const originalAgentForm = ref({ name: '', description: '', icon: '' })
 const originalShareConfig = ref(null)
+const employeeProfileForm = reactive({
+  position: '',
+  department: '',
+  responsibilities: '',
+  capabilitiesText: '',
+  boundaries: '',
+  acceptance: ''
+})
+const originalEmployeeProfile = ref(null)
 
 const snapshotAgentForm = () => ({
   name: (agentForm.name || '').trim(),
@@ -94,6 +105,32 @@ const snapshotShareConfig = () => {
   return cloneShareConfig(agentShareConfig.value)
 }
 
+const splitCapabilities = (text) =>
+  String(text || '')
+    .split(/[,，、\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+const snapshotEmployeeProfile = () => ({
+  position: (employeeProfileForm.position || '').trim(),
+  department: (employeeProfileForm.department || '').trim(),
+  responsibilities: (employeeProfileForm.responsibilities || '').trim(),
+  capabilities: splitCapabilities(employeeProfileForm.capabilitiesText),
+  boundaries: (employeeProfileForm.boundaries || '').trim(),
+  acceptance: (employeeProfileForm.acceptance || '').trim()
+})
+
+const setEmployeeProfileForm = (profile = {}) => {
+  Object.assign(employeeProfileForm, {
+    position: profile.position || '',
+    department: profile.department || '',
+    responsibilities: profile.responsibilities || '',
+    capabilitiesText: Array.isArray(profile.capabilities) ? profile.capabilities.join('、') : profile.capabilities || '',
+    boundaries: profile.boundaries || '',
+    acceptance: profile.acceptance || ''
+  })
+}
+
 const stringifyShareConfig = (share) => {
   if (!share) return ''
   const sortIds = (arr) => [...(arr || [])].map((v) => String(v)).sort()
@@ -125,6 +162,11 @@ const hasProfileChanges = computed(() => {
   ) {
     return true
   }
+  if (props.digitalEmployee) {
+    const currentProfile = JSON.stringify(snapshotEmployeeProfile())
+    const baselineProfile = JSON.stringify(originalEmployeeProfile.value || snapshotEmployeeProfile())
+    if (currentProfile !== baselineProfile) return true
+  }
   if (!canEditAgentShareConfig.value) return false
   const currentShare = snapshotShareConfig()
   const baselineShare = originalShareConfig.value
@@ -135,6 +177,7 @@ const hasProfileChanges = computed(() => {
 const captureProfileBaseline = () => {
   originalAgentForm.value = snapshotAgentForm()
   originalShareConfig.value = snapshotShareConfig()
+  originalEmployeeProfile.value = snapshotEmployeeProfile()
 }
 
 const hasAnyUnsavedChanges = computed(() => agentStore.hasConfigChanges || hasProfileChanges.value)
@@ -188,11 +231,16 @@ const getAgentShareAllowedLevels = () => {
   return ['user']
 }
 
-const agentModalTitle = computed(() => (editingAgentId.value ? '编辑智能体' : '新增智能体'))
+const agentModalTitle = computed(() => {
+  if (props.digitalEmployee) return editingAgentId.value ? '编辑数字员工' : '配置数字员工'
+  return editingAgentId.value ? '编辑智能体' : '新增智能体'
+})
 const agentPreviewDefaultIcon = computed(() =>
   editingAgentId.value ? generatePixelAvatar(editingAgentId.value) : ''
 )
-const agentPreviewName = computed(() => agentForm.name || editingAgentId.value || '智能体')
+const agentPreviewName = computed(
+  () => agentForm.name || editingAgentId.value || (props.digitalEmployee ? '数字员工' : '智能体')
+)
 const selectedBackendOption = computed(() =>
   props.backendOptions.find((backend) => backend.value === agentForm.backend_id)
 )
@@ -207,8 +255,8 @@ const selectedBackendIcon = computed(() => {
 const generateDefaultAgentProfile = () => {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
   return {
-    name: '新建智能体',
-    slug: `agent-${stamp}`
+    name: props.digitalEmployee ? '新建数字员工' : '新建智能体',
+    slug: `${props.digitalEmployee ? 'employee' : 'agent'}-${stamp}`
   }
 }
 
@@ -222,7 +270,15 @@ const resetAgentForm = () => {
     icon: '',
     ...defaults
   })
-  agentShareConfig.value = getInitialShareConfig()
+  agentShareConfig.value = props.digitalEmployee
+    ? {
+        version: 2,
+        read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
+        manage_scope: null
+      }
+    : getInitialShareConfig()
+  setEmployeeProfileForm()
+  originalEmployeeProfile.value = null
 }
 
 const focusAgentNameInput = async () => {
@@ -277,14 +333,19 @@ const openEdit = async (agent) => {
         manage_scope: null
       }
     : detail.share_config || getInitialShareConfig()
+  if (props.digitalEmployee) setEmployeeProfileForm(detail.digital_employee_profile || {})
   await agentStore.selectAgent(detail.id, { allowSubagent: true })
   captureProfileBaseline()
   showAgentModal.value = true
 }
 
 const restoreChatAgentSelectionIfNeeded = async () => {
-  if (!agentStore.selectedAgent?.is_subagent) return
-  const fallbackAgentId = (agentStore.agents || []).find((agent) => !agent.is_subagent)?.id
+  const current = agentStore.selectedAgent
+  const needsRestore = current?.is_subagent || (props.digitalEmployee && current?.kind === 'digital_employee')
+  if (!needsRestore) return
+  const fallbackAgentId = (agentStore.agents || []).find(
+    (agent) => !agent.is_subagent && (agent.kind || 'agent') !== 'digital_employee'
+  )?.id
   if (fallbackAgentId) await agentStore.selectAgent(fallbackAgentId)
 }
 
@@ -327,8 +388,12 @@ const buildAgentPayload = () => {
     name: agentForm.name.trim(),
     description: agentForm.description.trim() || null,
     icon: agentForm.icon.trim() || null,
-    share_config: normalizeShareConfigForPayload(),
-    is_subagent: isSubAgentBackend(agentForm.backend_id)
+    share_config: normalizeShareConfigForPayload()
+  }
+  if (props.digitalEmployee) {
+    payload.profile = snapshotEmployeeProfile()
+  } else {
+    payload.is_subagent = isSubAgentBackend(agentForm.backend_id)
   }
 
   if (!editingAgentId.value) {
@@ -358,7 +423,21 @@ const saveAgent = async () => {
   saving.value = true
   try {
     const payload = buildAgentPayload()
-    if (editingAgentId.value) {
+    if (props.digitalEmployee) {
+      if (editingAgentId.value) {
+        if (agentStore.hasConfigChanges) {
+          payload.config_json = { context: agentStore.changedAgentConfig }
+        }
+        const response = await digitalEmployeeApi.updateDigitalEmployee(editingAgentId.value, payload)
+        captureProfileBaseline()
+        emit('saved', { mode: 'edit', agent: response.employee })
+        message.success('数字员工已保存')
+      } else {
+        const response = await digitalEmployeeApi.createDigitalEmployee(payload)
+        emit('saved', { mode: 'create', agent: response.employee })
+        message.success('数字员工已创建')
+      }
+    } else if (editingAgentId.value) {
       if (agentStore.hasConfigChanges) {
         payload.config_json = { context: agentStore.changedAgentConfig }
       }
@@ -391,7 +470,7 @@ defineExpose({
   <a-modal
     v-model:open="showAgentModal"
     class="agent-edit-modal"
-    :width="editingAgentId ? 820 : 740"
+    :width="props.digitalEmployee ? 860 : editingAgentId ? 820 : 740"
     :footer="null"
     :closable="false"
     @cancel="closeAgentModal"
@@ -523,6 +602,51 @@ defineExpose({
                 placeholder="可选"
               />
             </label>
+          </div>
+
+          <div v-if="digitalEmployee" class="employee-profile-block">
+            <div class="section-heading"><span>岗位信息</span></div>
+            <div class="modal-form employee-profile-grid">
+              <label class="form-label">
+                <span>岗位</span>
+                <a-input v-model:value="employeeProfileForm.position" placeholder="例如：经营分析官" />
+              </label>
+              <label class="form-label">
+                <span>展示部门</span>
+                <a-input v-model:value="employeeProfileForm.department" placeholder="例如：经营管理" />
+              </label>
+              <label class="form-label full-width">
+                <span>职责</span>
+                <a-textarea
+                  v-model:value="employeeProfileForm.responsibilities"
+                  :rows="3"
+                  placeholder="写清楚员工负责什么、产出什么"
+                />
+              </label>
+              <label class="form-label full-width">
+                <span>能力（用逗号、顿号或换行分隔）</span>
+                <a-input
+                  v-model:value="employeeProfileForm.capabilitiesText"
+                  placeholder="例如：数据查询、报告生成、会议纪要"
+                />
+              </label>
+              <label class="form-label full-width">
+                <span>边界</span>
+                <a-textarea
+                  v-model:value="employeeProfileForm.boundaries"
+                  :rows="2"
+                  placeholder="写清楚不做什么、何时需要人工确认"
+                />
+              </label>
+              <label class="form-label full-width">
+                <span>验收标准</span>
+                <a-textarea
+                  v-model:value="employeeProfileForm.acceptance"
+                  :rows="2"
+                  placeholder="写清楚什么样的结果算完成"
+                />
+              </label>
+            </div>
           </div>
 
           <div v-if="canEditAgentShareConfig" class="share-config-block">
@@ -979,6 +1103,17 @@ defineExpose({
   :deep(.ant-select-arrow) {
     color: var(--gray-500);
   }
+}
+
+.employee-profile-block {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--gray-150);
+}
+
+.employee-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .share-config-block {
