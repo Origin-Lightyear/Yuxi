@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import AgentBackendNotFoundError, get_agent_backend, list_agent_backend_info
 from yuxi.agents.context import filter_declared_config
+from yuxi.agents.digital_employee import DIGITAL_EMPLOYEE_KIND
 from yuxi.repositories.agent_repository import (
     AgentRepository,
     is_builtin_agent,
@@ -38,6 +39,7 @@ from yuxi.services.agent_run_service import (
     get_agent_run_view,
     stream_agent_run_events,
 )
+from yuxi.services.digital_employee_service import digital_employee_can_view, digital_employee_is_runnable
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.manager import pg_manager
@@ -139,12 +141,18 @@ async def get_agent_backend_detail(
 @agent_router.get("")
 async def list_agents(
     include_subagents: bool = Query(False),
+    kind: str | None = Query(None, description="产品类型：agent 或 digital_employee"),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if kind is not None and kind not in {"agent", DIGITAL_EMPLOYEE_KIND}:
+        raise HTTPException(status_code=422, detail="kind 只支持 agent 或 digital_employee")
     repo = AgentRepository(db)
     await repo.ensure_default_agent()
     items = await repo.list_visible(user=current_user, include_subagent_definitions=include_subagents)
+    if kind is not None:
+        items = [item for item in items if (item.kind or "agent") == kind]
+    items = [item for item in items if digital_employee_is_runnable(item)]
     backend_info_cache: dict[tuple[str, bool, str], dict] = {}
     agents = [await _serialize_agent(repo, item, current_user, backend_info_cache=backend_info_cache) for item in items]
     return {"agents": agents}
@@ -221,6 +229,8 @@ async def get_agent(agent_id: str, current_user: User = Depends(get_required_use
     item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any")
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
+    if item.kind == DIGITAL_EMPLOYEE_KIND and not digital_employee_can_view(current_user, item):
+        raise HTTPException(status_code=404, detail="智能体不存在")
     return {"agent": await _serialize_agent(repo, item, current_user, include_configurable_items=True)}
 
 
@@ -236,6 +246,8 @@ async def update_agent(
     item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any")
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
+    if item.kind == DIGITAL_EMPLOYEE_KIND:
+        raise HTTPException(status_code=400, detail="数字员工请使用 /api/digital-employees 接口")
     if not user_can_manage_agent(current_user, item):
         raise HTTPException(status_code=403, detail="不能编辑非自己创建的智能体")
 
@@ -286,6 +298,8 @@ async def delete_agent(
     item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any")
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
+    if item.kind == DIGITAL_EMPLOYEE_KIND:
+        raise HTTPException(status_code=400, detail="数字员工请使用 /api/digital-employees 接口")
     if not user_can_manage_agent(current_user, item):
         raise HTTPException(status_code=403, detail="不能删除非自己创建的智能体")
     if is_builtin_agent(item):

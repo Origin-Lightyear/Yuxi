@@ -62,6 +62,8 @@ async def duplicate_agent(agent_slug: str, *, user: User, db: AsyncSession) -> d
         raise HTTPException(status_code=404, detail="智能体不存在")
     if source.is_subagent:
         raise HTTPException(status_code=400, detail="子智能体不能另存为副本")
+    if source.kind == "digital_employee":
+        raise HTTPException(status_code=400, detail="数字员工不能另存为普通智能体")
 
     backend = get_agent_backend(source.backend_id)
     config_json, config_resource_access = await prepare_agent_config_write(

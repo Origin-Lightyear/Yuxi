@@ -9,6 +9,7 @@ from server.routers.auth_dept_router import department
 from server.routers.auth_router import auth
 from server.routers.chat_router import chat
 from server.routers.dashboard_router import dashboard
+from server.routers.digital_employee_router import digital_employee_router
 from server.routers.external_kb_router import external_kb
 from server.routers.filesystem_router import filesystem_router
 from server.routers.graph_router import graph
@@ -36,6 +37,7 @@ router.include_router(system)  # /api/system/* 系统状态与全局配置
 router.include_router(auth)  # /api/auth/* 登录、用户信息与 CLI 浏览器登录授权
 router.include_router(agent_memory_router)  # /api/agent/{slug}/memories 用户×Agent 记忆条目
 router.include_router(agent_router)  # /api/agent/* 智能体管理与运行态
+router.include_router(digital_employee_router)  # /api/digital-employees/* 数字员工配置与生命周期
 router.include_router(agent_invocation_call_router)  # /api/agent-invocation/agent-call/*
 router.include_router(agent_invocation_channel_router)  # /api/agent-invocation/channel/*
 router.include_router(agent_invocation_eval_router)  # /api/agent-invocation/eval/*
