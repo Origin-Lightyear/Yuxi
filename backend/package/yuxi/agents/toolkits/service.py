@@ -1,5 +1,7 @@
 from typing import Any
 
+from pydantic import PydanticInvalidForJsonSchema
+
 from yuxi.utils import logger
 
 # 工具元数据缓存
@@ -20,7 +22,11 @@ def _extract_tool_info(tool_obj) -> dict:
     if hasattr(tool_obj, "args_schema") and tool_obj.args_schema:
         schema = tool_obj.args_schema
         if hasattr(schema, "schema"):
-            schema = schema.schema()
+            try:
+                schema = schema.schema()
+            except PydanticInvalidForJsonSchema:
+                # 运行时注入参数（如 ToolRuntime）不可表达为 JSON Schema，跳过参数列表但不阻断工具发现。
+                schema = {}
         for arg_name, arg_info in schema.get("properties", {}).items():
             info["args"].append(
                 {
