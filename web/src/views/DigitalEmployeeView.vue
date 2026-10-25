@@ -245,6 +245,7 @@ onMounted(async () => {
               </span>
             </template>
             <template #actions>
+              <button type="button" class="employee-chat-link" @click.stop="openDetail(employee)">详情</button>
               <button type="button" class="employee-chat-link" @click.stop="goChat(employee)">
                 去对话
               </button>
@@ -438,6 +439,10 @@ onMounted(async () => {
   color: var(--primary-color);
   font-size: 13px;
   cursor: pointer;
+
+  & + & {
+    margin-left: 10px;
+  }
 }
 
 .employee-detail-head {

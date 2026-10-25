@@ -113,6 +113,9 @@ async def _serialize_agent(
             backend_info_cache=backend_info_cache,
         )
         data["config_json"] = _filter_agent_config_json(item.backend_id, data.get("config_json"))
+        if item.kind == DIGITAL_EMPLOYEE_KIND and not data.get("can_manage"):
+            data.pop("config_json", None)
+            data.pop("configurable_items", None)
     except AgentBackendNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return data
