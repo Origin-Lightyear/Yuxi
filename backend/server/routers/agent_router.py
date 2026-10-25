@@ -113,7 +113,7 @@ async def _serialize_agent(
             backend_info_cache=backend_info_cache,
         )
         data["config_json"] = _filter_agent_config_json(item.backend_id, data.get("config_json"))
-        if item.kind == DIGITAL_EMPLOYEE_KIND and not data.get("can_manage"):
+        if getattr(item, "kind", "agent") == DIGITAL_EMPLOYEE_KIND and not data.get("can_manage"):
             data.pop("config_json", None)
             data.pop("configurable_items", None)
     except AgentBackendNotFoundError as exc:
@@ -154,7 +154,7 @@ async def list_agents(
     await repo.ensure_default_agent()
     items = await repo.list_visible(user=current_user, include_subagent_definitions=include_subagents)
     if kind is not None:
-        items = [item for item in items if (item.kind or "agent") == kind]
+        items = [item for item in items if (getattr(item, "kind", "agent") or "agent") == kind]
     items = [item for item in items if digital_employee_is_runnable(item)]
     backend_info_cache: dict[tuple[str, bool, str], dict] = {}
     agents = [await _serialize_agent(repo, item, current_user, backend_info_cache=backend_info_cache) for item in items]
@@ -232,7 +232,7 @@ async def get_agent(agent_id: str, current_user: User = Depends(get_required_use
     item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any")
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
-    if item.kind == DIGITAL_EMPLOYEE_KIND and not digital_employee_can_view(current_user, item):
+    if getattr(item, "kind", "agent") == DIGITAL_EMPLOYEE_KIND and not digital_employee_can_view(current_user, item):
         raise HTTPException(status_code=404, detail="智能体不存在")
     return {"agent": await _serialize_agent(repo, item, current_user, include_configurable_items=True)}
 
@@ -249,7 +249,7 @@ async def update_agent(
     item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any")
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
-    if item.kind == DIGITAL_EMPLOYEE_KIND:
+    if getattr(item, "kind", "agent") == DIGITAL_EMPLOYEE_KIND:
         raise HTTPException(status_code=400, detail="数字员工请使用 /api/digital-employees 接口")
     if not user_can_manage_agent(current_user, item):
         raise HTTPException(status_code=403, detail="不能编辑非自己创建的智能体")
@@ -301,7 +301,7 @@ async def delete_agent(
     item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any")
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
-    if item.kind == DIGITAL_EMPLOYEE_KIND:
+    if getattr(item, "kind", "agent") == DIGITAL_EMPLOYEE_KIND:
         raise HTTPException(status_code=400, detail="数字员工请使用 /api/digital-employees 接口")
     if not user_can_manage_agent(current_user, item):
         raise HTTPException(status_code=403, detail="不能删除非自己创建的智能体")

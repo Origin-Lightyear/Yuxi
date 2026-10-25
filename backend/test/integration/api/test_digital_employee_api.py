@@ -98,6 +98,28 @@ async def standard_user(test_client, local_admin_headers):
 
 
 @pytest_asyncio.fixture()
+async def read_only_admin(test_client, local_admin_headers):
+    """创建没有员工 manage_scope 的管理员，验证角色本身不能绕过资源权限。"""
+    username = f"pytest_ro_{uuid.uuid4().hex[:6]}"
+    password = f"Pw!{uuid.uuid4().hex[:12]}"
+    departments = await test_client.get("/api/departments", headers=local_admin_headers)
+    assert departments.status_code == 200, departments.text
+    department_id = departments.json()[0]["id"]
+    response = await test_client.post(
+        "/api/auth/users",
+        headers=local_admin_headers,
+        json={"username": username, "password": password, "role": "admin", "department_id": department_id},
+    )
+    assert response.status_code == 200, response.text
+    user_payload = response.json()
+    token = AuthUtils.create_access_token({"sub": str(user_payload["id"])})
+    try:
+        yield {"user": user_payload, "password": password, "headers": {"Authorization": f"Bearer {token}"}}
+    finally:
+        await test_client.delete(f"/api/auth/users/{user_payload['id']}", headers=local_admin_headers)
+
+
+@pytest_asyncio.fixture()
 async def employee_factory(test_client, local_admin_headers):
     """创建唯一 slug 的数字员工，并在测试结束后移除持久引用和员工行。"""
     created_slugs: list[str] = []
@@ -142,6 +164,13 @@ async def test_digital_employee_draft_hidden_from_standard_user_and_readable_by_
     )
     assert thread.status_code == 404, thread.text
 
+    manager_thread = await test_client.post(
+        "/api/chat/thread",
+        headers=local_admin_headers,
+        json={"agent_id": slug, "title": make_test_conversation_title("管理者草稿线程")},
+    )
+    assert manager_thread.status_code == 409, manager_thread.text
+
     manager_detail = await test_client.get(f"/api/digital-employees/{slug}", headers=local_admin_headers)
     assert manager_detail.status_code == 200, manager_detail.text
     assert manager_detail.json()["employee"]["digital_employee_profile"]["status"] == "draft"
@@ -151,10 +180,12 @@ async def test_digital_employee_draft_hidden_from_standard_user_and_readable_by_
 
 
 async def test_digital_employee_publish_then_visible_and_generic_agent_isolation(
-    test_client, local_admin_headers, standard_user, employee_factory
+    test_client, local_admin_headers, standard_user, read_only_admin, employee_factory
 ):
     """发布后按共享范围可见，且通用 Agent 路由不能修改、删除或复制员工。"""
-    employee = await employee_factory(share_config=_user_share(standard_user["user"]["uid"]))
+    share_config = _user_share(standard_user["user"]["uid"])
+    share_config["read_scope"]["user_uids"].append(read_only_admin["user"]["uid"])
+    employee = await employee_factory(share_config=share_config)
     slug = employee["slug"]
 
     published = await test_client.post(f"/api/digital-employees/{slug}/publish", headers=local_admin_headers)
@@ -197,6 +228,19 @@ async def test_digital_employee_publish_then_visible_and_generic_agent_isolation
         await test_client.post(f"/api/agent/{slug}/duplicate", headers=local_admin_headers),
     ):
         assert response.status_code == 400, response.text
+
+    read_only_detail = await test_client.get(f"/api/digital-employees/{slug}", headers=read_only_admin["headers"])
+    assert read_only_detail.status_code == 200, read_only_detail.text
+    assert read_only_detail.json()["employee"]["can_manage"] is False
+    for response in (
+        await test_client.put(
+            f"/api/digital-employees/{slug}", headers=read_only_admin["headers"], json={"name": "越权改名"}
+        ),
+        await test_client.post(f"/api/digital-employees/{slug}/publish", headers=read_only_admin["headers"]),
+        await test_client.post(f"/api/digital-employees/{slug}/disable", headers=read_only_admin["headers"]),
+        await test_client.delete(f"/api/digital-employees/{slug}", headers=read_only_admin["headers"]),
+    ):
+        assert response.status_code == 403, response.text
 
 
 async def test_digital_employee_disable_blocks_new_run_and_keeps_history(
