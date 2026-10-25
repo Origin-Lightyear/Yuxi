@@ -103,6 +103,19 @@ const router = createRouter({
       ]
     },
     {
+      path: '/digital-employees',
+      name: 'digital-employees',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'DigitalEmployeeComp',
+          component: () => import('../views/DigitalEmployeeView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
       path: '/extensions',
       name: 'extensions',
       component: AppLayout,

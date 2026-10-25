@@ -11,7 +11,8 @@ import {
   PanelLeft,
   PanelLeftOpen,
   MessageCirclePlus,
-  Search
+  Search,
+  Users
 } from '@lucide/vue'
 
 import { useConfigStore } from '@/stores/config'
@@ -154,6 +155,13 @@ const mainList = computed(() => {
     path: '/agent-manage',
     icon: Box,
     activeIcon: Box
+  })
+
+  items.push({
+    name: '数字员工',
+    path: '/digital-employees',
+    icon: Users,
+    activeIcon: Users
   })
 
   items.push({
