@@ -1020,6 +1020,8 @@ class PostgresManager(metaclass=SingletonMeta):
                 pics JSONB NOT NULL DEFAULT '[]'::jsonb,
                 config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 share_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+                kind VARCHAR(32) NOT NULL DEFAULT 'agent',
+                digital_employee_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
                 is_default BOOLEAN NOT NULL DEFAULT FALSE,
                 is_subagent BOOLEAN NOT NULL DEFAULT FALSE,
                 created_by VARCHAR(64),
@@ -1039,6 +1041,12 @@ class PostgresManager(metaclass=SingletonMeta):
                 "WHERE share_config IS NOT NULL AND share_config->>'version' IS DISTINCT FROM '2'"
             ),
             "ALTER TABLE IF EXISTS agents ALTER COLUMN share_config DROP DEFAULT",
+            "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS kind VARCHAR(32) NOT NULL DEFAULT 'agent'",
+            (
+                "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS "
+                "digital_employee_profile JSONB NOT NULL DEFAULT '{}'::jsonb"
+            ),
+            "CREATE INDEX IF NOT EXISTS ix_agents_kind ON agents (kind)",
             "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS is_subagent BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS enable_memory BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS tenant_id INTEGER",

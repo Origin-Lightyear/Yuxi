@@ -422,3 +422,21 @@ def test_opt_in_resource_selection_preserves_all_intent(field):
     """默认关闭的资源同样可显式选择全部，且不展开持久化。"""
     merged = merge_agent_config_json({}, {"context": {field: "all"}}, resource_access={})
     assert merged == {"context": {field: "all"}}
+
+
+def test_agent_defaults_to_normal_agent_and_serializes_profile():
+    """Agent 缺省是普通智能体，员工档案随 to_dict 输出。"""
+    from yuxi.storage.postgres.models_business import Agent
+
+    plain = Agent(slug="plain", backend_id="ChatbotAgent", name="普通", share_config={})
+    assert plain.kind is None or plain.kind == "agent"
+    data = Agent(
+        slug="employee",
+        backend_id="ChatbotAgent",
+        name="员工",
+        share_config={},
+        kind="digital_employee",
+        digital_employee_profile={"status": "draft", "position": "经营分析官"},
+    ).to_dict()
+    assert data["kind"] == "digital_employee"
+    assert data["digital_employee_profile"]["position"] == "经营分析官"

@@ -313,6 +313,8 @@ class Agent(Base):
     pics = Column(JSON, nullable=False, default=list)
     config_json = Column(JSON, nullable=False, default=dict)
     share_config = Column(JSON_VALUE, nullable=False)
+    kind = Column(String(32), nullable=False, default="agent", index=True)
+    digital_employee_profile = Column(JSON_VALUE, nullable=False, default=dict)
 
     is_default = Column(Boolean, nullable=False, default=False, index=True)
     is_subagent = Column(Boolean, nullable=False, default=False, index=True)
@@ -344,6 +346,8 @@ class Agent(Base):
             "pics": [normalize_public_minio_url(pic) for pic in (self.pics or [])],
             "config_json": self.config_json or {},
             "share_config": self.share_config or {},
+            "kind": self.kind or "agent",
+            "digital_employee_profile": self.digital_employee_profile or {},
             "is_default": bool(self.is_default),
             "is_subagent": bool(self.is_subagent),
             "created_by": self.created_by,
