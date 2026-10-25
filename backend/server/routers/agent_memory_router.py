@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.agents.digital_employee import DIGITAL_EMPLOYEE_KIND
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.services.agent_memory_service import delete_memory, list_memories
+from yuxi.services.digital_employee_service import digital_employee_can_view
 from yuxi.storage.postgres.models_business import User
 
 from server.utils.auth_middleware import get_db, get_required_user
@@ -17,6 +19,8 @@ async def _require_visible_agent(slug: str, *, user: User, db: AsyncSession) -> 
     """入口可见性统一 fail-closed：不可见智能体一律 404，不泄露存在性。"""
     agent = await AgentRepository(db).get_visible_by_slug(slug=slug, user=user, kind="main")
     if agent is None:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    if getattr(agent, "kind", "agent") == DIGITAL_EMPLOYEE_KIND and not digital_employee_can_view(user, agent):
         raise HTTPException(status_code=404, detail="智能体不存在")
 
 

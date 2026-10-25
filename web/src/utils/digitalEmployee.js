@@ -21,10 +21,10 @@ export const EMPTY_DIGITAL_EMPLOYEE_PROFILE = Object.freeze({
 /** 统一员工身份字段并补齐档案默认值。 */
 export function normalizeDigitalEmployee(agent) {
   const profile = agent?.digital_employee_profile || agent?.profile || {}
-  const slug = agent?.slug || agent?.agent_id || agent?.id
+  const slug = agent?.slug || agent?.agent_id || (typeof agent?.id === 'string' ? agent.id : '')
   return {
     ...agent,
-    id: agent?.id || slug,
+    id: slug,
     slug,
     kind: agent?.kind || 'digital_employee',
     profile: { ...EMPTY_DIGITAL_EMPLOYEE_PROFILE, ...profile }

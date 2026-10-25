@@ -177,8 +177,13 @@ class AgentRepository:
         return result.scalar_one_or_none()
 
     async def get_by_slug_for_update(self, *, slug: str) -> Agent | None:
-        """锁定单个智能体，供状态迁移串行化。"""
-        result = await self.db.execute(select(Agent).where(Agent.slug == slug).with_for_update())
+        """锁定单个智能体，并用数据库最新行刷新 identity map 中的旧快照。"""
+        result = await self.db.execute(
+            select(Agent)
+            .where(Agent.slug == slug)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         return result.scalar_one_or_none()
 
     async def list_by_kind(self, *, kind: str) -> list[Agent]:

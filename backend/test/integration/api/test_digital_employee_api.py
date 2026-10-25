@@ -6,9 +6,12 @@ import uuid
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test.live_api_cleanup import cleanup_test_chat_resources, make_test_conversation_title
+from yuxi.repositories.agent_repository import AgentRepository
+from yuxi.services.agent_request_queue_service import dispatch_next_request
+from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.auth_utils import AuthUtils
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -47,6 +50,17 @@ async def _execute(sql: str, params: dict | None = None) -> None:
     try:
         async with engine.begin() as conn:
             await conn.execute(text(sql), params or {})
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_one(sql: str, params: dict | None = None):
+    """读取一行测试造数结果，例如 RETURNING 的消息主键。"""
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text(sql), params or {})
+            return result.first()
     finally:
         await engine.dispose()
 
@@ -155,7 +169,8 @@ async def test_digital_employee_draft_hidden_from_standard_user_and_readable_by_
     assert slug not in {item["slug"] for item in visible.json()["employees"]}
     assert visible.json()["summary"]["draft"] == 0
 
-    assert (await test_client.get(f"/api/digital-employees/{slug}", headers=standard_user["headers"])).status_code == 404
+    employee_detail = await test_client.get(f"/api/digital-employees/{slug}", headers=standard_user["headers"])
+    assert employee_detail.status_code == 404
     assert (await test_client.get(f"/api/agent/{slug}", headers=standard_user["headers"])).status_code == 404
     thread = await test_client.post(
         "/api/chat/thread",
@@ -170,6 +185,14 @@ async def test_digital_employee_draft_hidden_from_standard_user_and_readable_by_
         json={"agent_id": slug, "title": make_test_conversation_title("管理者草稿线程")},
     )
     assert manager_thread.status_code == 409, manager_thread.text
+    assert (
+        await test_client.get(f"/api/agent/{slug}/memories", headers=standard_user["headers"])
+    ).status_code == 404
+    assert (
+        await test_client.get(f"/api/agent/{slug}/memories", headers=local_admin_headers)
+    ).status_code == 200
+    draft_disable = await test_client.post(f"/api/digital-employees/{slug}/disable", headers=local_admin_headers)
+    assert draft_disable.status_code == 409, draft_disable.text
 
     manager_detail = await test_client.get(f"/api/digital-employees/{slug}", headers=local_admin_headers)
     assert manager_detail.status_code == 200, manager_detail.text
@@ -317,10 +340,138 @@ async def test_digital_employee_active_update_rejects_empty_profile(
     assert profile["capabilities"] == ["数据查询", "报告生成"]
 
 
+async def test_digital_employee_locking_read_refreshes_identity_map_snapshot(employee_factory):
+    """锁定读取必须用数据库最新行覆盖同一 session 中的旧员工快照。"""
+    employee = await employee_factory()
+    slug = employee["slug"]
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with session_factory() as reader:
+            repo = AgentRepository(reader)
+            before = await repo.get_by_slug(slug)
+            assert before.digital_employee_profile["status"] == "draft"
+            async with session_factory() as writer:
+                await writer.execute(
+                    text(
+                        "UPDATE agents SET digital_employee_profile = "
+                        "jsonb_set(digital_employee_profile, '{status}', '\"active\"') "
+                        "WHERE slug = :slug"
+                    ),
+                    {"slug": slug},
+                )
+                await writer.commit()
+            after = await repo.get_by_slug_for_update(slug=slug)
+            assert after is before
+            assert after.digital_employee_profile["status"] == "active"
+            await reader.rollback()
+    finally:
+        await engine.dispose()
+
+
+async def test_digital_employee_disable_blocks_queued_dispatch_and_continue(
+    test_client, local_admin_headers, employee_factory
+):
+    """停用后由队列派发或人工继续产生的 Run 也必须被拒绝。"""
+    employee = await employee_factory()
+    slug = employee["slug"]
+    published = await test_client.post(f"/api/digital-employees/{slug}/publish", headers=local_admin_headers)
+    assert published.status_code == 200, published.text
+    me = await test_client.get("/api/auth/me", headers=local_admin_headers)
+    assert me.status_code == 200, me.text
+    admin_uid = str(me.json()["uid"])
+
+    thread_id = None
+    request_id = f"pytest-queue-{uuid.uuid4().hex[:10]}"
+    message_id = None
+    try:
+        thread = await test_client.post(
+            "/api/chat/thread",
+            headers=local_admin_headers,
+            json={"agent_id": slug, "title": make_test_conversation_title("停用队列守卫")},
+        )
+        assert thread.status_code == 200, thread.text
+        thread_id = thread.json()["id"]
+        conversation = await _fetch_one(
+            "SELECT id FROM conversations WHERE thread_id = :thread_id",
+            {"thread_id": thread_id},
+        )
+        assert conversation is not None
+
+        disabled = await test_client.post(f"/api/digital-employees/{slug}/disable", headers=local_admin_headers)
+        assert disabled.status_code == 200, disabled.text
+
+        message = await _fetch_one(
+            """
+            INSERT INTO messages (conversation_id, role, content, delivery_status, created_at, request_id)
+            VALUES (:conversation_id, 'user', '停用后队列请求', 'queued', now(), :request_id)
+            RETURNING id
+            """,
+            {"conversation_id": conversation[0], "request_id": request_id},
+        )
+        assert message is not None
+        message_id = int(message[0])
+        await _execute(
+            """
+            INSERT INTO agent_run_requests (
+                request_id, uid, agent_slug, conversation_thread_id, source, channel,
+                origin_metadata, queue_policy, status, input_message_id, input_payload, created_at, updated_at
+            ) VALUES (
+                :request_id, :uid, :slug, :thread_id, 'chat', 'web',
+                '{}'::json, 'enqueue', 'queued', :message_id, '{}'::json, now(), now()
+            )
+            """,
+            {
+                "request_id": request_id,
+                "uid": admin_uid,
+                "slug": slug,
+                "thread_id": thread_id,
+                "message_id": message_id,
+            },
+        )
+
+        continued = await test_client.post(
+            f"/api/agent/thread/{thread_id}/requests/continue",
+            params={"agent_slug": slug},
+            headers=local_admin_headers,
+        )
+        assert continued.status_code == 409, continued.text
+        assert continued.json()["detail"]["code"] == "agent_not_runnable"
+
+        dispatched = await dispatch_next_request(uid=admin_uid, agent_slug=slug, thread_id=thread_id)
+        assert dispatched is None
+        row = await _fetch_one(
+            "SELECT status, error_message FROM agent_run_requests WHERE request_id = :request_id",
+            {"request_id": request_id},
+        )
+        assert row is not None
+        assert row[0] == "rejected"
+        assert "未发布或已停用" in row[1]
+        message_row = await _fetch_one(
+            "SELECT delivery_status FROM messages WHERE id = :message_id",
+            {"message_id": message_id},
+        )
+        assert message_row[0] == "rejected"
+        runs = await _fetch_one(
+            "SELECT count(*) FROM agent_runs WHERE request_id = :request_id",
+            {"request_id": request_id},
+        )
+        assert runs[0] == 0
+    finally:
+        await _execute("DELETE FROM agent_run_requests WHERE request_id = :request_id", {"request_id": request_id})
+        if message_id is not None:
+            await _execute("DELETE FROM messages WHERE id = :message_id", {"message_id": message_id})
+        if thread_id:
+            await test_client.delete(f"/api/chat/thread/{thread_id}", headers=local_admin_headers)
+        # dispatch_next_request 使用进程内 pg_manager；每个 pytest 测试有独立事件循环，
+        # 必须在这里释放连接池，避免后续测试拿到上一轮 loop 的连接。
+        await pg_manager.close()
+
+
 async def test_digital_employee_delete_draft_with_reference_returns_409(
     test_client, local_admin_headers, employee_factory
 ):
-    """草稿被定时任务或 IM Bot 绑定时拒绝删除，并覆盖两条绑定入口。"""
+    """草稿被对话、定时任务或 IM Bot 引用时拒绝删除，并覆盖三类引用入口。"""
     employee = await employee_factory()
     slug = employee["slug"]
     me = await test_client.get("/api/auth/me", headers=local_admin_headers)
@@ -369,6 +520,48 @@ async def test_digital_employee_delete_draft_with_reference_returns_409(
         )
         assert bot.status_code == 409, bot.text
 
+        ref_thread_id = f"pytest-ref-{uuid.uuid4().hex[:12]}"
+        await _execute(
+            """
+            INSERT INTO conversations (
+                thread_id, uid, agent_id, title, status, is_pinned, created_at, updated_at, project_id
+            ) VALUES (
+                :thread_id, :uid, :slug, 'pytest-reference-conversation', 'active', false, now(), now(), :project_id
+            )
+            """,
+            {"thread_id": ref_thread_id, "uid": admin_uid, "slug": slug, "project_id": project_id},
+        )
+        blocked_by_conversation = await test_client.delete(
+            f"/api/digital-employees/{slug}", headers=local_admin_headers
+        )
+        assert blocked_by_conversation.status_code == 409, blocked_by_conversation.text
+        await _execute("DELETE FROM conversations WHERE thread_id = :thread_id", {"thread_id": ref_thread_id})
+
+        ref_job_id = f"pytest-ref-job-{uuid.uuid4().hex[:8]}"
+        await _execute(
+            """
+            INSERT INTO scheduled_agent_jobs (
+                id, uid, creation_request_id, creation_intent_hash, project_id, agent_slug,
+                name, prompt, tool_approval_mode, cron_expression, timezone, enabled,
+                next_run_at, created_at, updated_at
+            ) VALUES (
+                :job_id, :uid, :request_id, 'pytest-reference', :project_id, :slug,
+                'pytest-reference-job', 'test', 'default', '0 9 * * *', 'Asia/Shanghai', false,
+                now(), now(), now()
+            )
+            """,
+            {
+                "job_id": ref_job_id,
+                "uid": admin_uid,
+                "request_id": f"pytest-ref-job-req-{uuid.uuid4().hex[:8]}",
+                "project_id": project_id,
+                "slug": slug,
+            },
+        )
+        blocked_by_scheduled = await test_client.delete(f"/api/digital-employees/{slug}", headers=local_admin_headers)
+        assert blocked_by_scheduled.status_code == 409, blocked_by_scheduled.text
+        await _execute("DELETE FROM scheduled_agent_jobs WHERE id = :job_id", {"job_id": ref_job_id})
+
         await _execute(
             """
             INSERT INTO im_bot_configs (
@@ -381,18 +574,17 @@ async def test_digital_employee_delete_draft_with_reference_returns_409(
             """,
             {"uid": admin_uid, "slug": slug},
         )
-        blocked = await test_client.delete(f"/api/digital-employees/{slug}", headers=local_admin_headers)
-        assert blocked.status_code == 409, blocked.text
+        blocked_by_bot = await test_client.delete(f"/api/digital-employees/{slug}", headers=local_admin_headers)
+        assert blocked_by_bot.status_code == 409, blocked_by_bot.text
+        await _execute("DELETE FROM im_bot_configs WHERE agent_slug = :slug", {"slug": slug})
 
-        await _execute(
-            "DELETE FROM im_bot_configs WHERE agent_slug = :slug AND name = 'pytest-reference-bot'",
-            {"slug": slug},
-        )
         deleted = await test_client.delete(f"/api/digital-employees/{slug}", headers=local_admin_headers)
         assert deleted.status_code == 200, deleted.text
         assert (await test_client.get(f"/api/digital-employees/{slug}", headers=local_admin_headers)).status_code == 404
     finally:
         await _execute("DELETE FROM im_bot_configs WHERE agent_slug = :slug", {"slug": slug})
+        await _execute("DELETE FROM scheduled_agent_jobs WHERE agent_slug = :slug", {"slug": slug})
+        await _execute("DELETE FROM conversations WHERE agent_id = :slug", {"slug": slug})
         if thread_id:
             await test_client.delete(f"/api/chat/thread/{thread_id}", headers=local_admin_headers)
         if project_id:

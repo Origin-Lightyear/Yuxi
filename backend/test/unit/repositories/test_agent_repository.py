@@ -440,3 +440,21 @@ def test_agent_defaults_to_normal_agent_and_serializes_profile():
     ).to_dict()
     assert data["kind"] == "digital_employee"
     assert data["digital_employee_profile"]["position"] == "经营分析官"
+
+
+@pytest.mark.asyncio
+async def test_get_by_slug_for_update_refreshes_identity_map_snapshot():
+    """锁定读取必须带 populate_existing，避免返回预加载的旧状态。"""
+
+    class CaptureDb:
+        def __init__(self):
+            self.statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    db = CaptureDb()
+    await AgentRepository(db).get_by_slug_for_update(slug="employee")
+
+    assert db.statement.get_execution_options().get("populate_existing") is True

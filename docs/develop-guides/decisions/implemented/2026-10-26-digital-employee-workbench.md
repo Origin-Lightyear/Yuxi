@@ -24,7 +24,7 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 
 新增 `backend/package/yuxi/services/digital_employee_service.py`，拥有档案归一化、发布校验、active 更新校验、状态迁移、可见性和运行守卫。状态机为 `draft -> active -> disabled`，`disabled` 可重新发布；草稿可删除，已发布/停用只能停用。新增 `backend/server/routers/digital_employee_router.py`（`/api/digital-employees`）提供列表、详情、创建、更新、发布、停用、删除草稿。创建仅限 `admin`/`superadmin`，更新/发布/停用/删除要求现有 `user_can_manage_agent`。
 
-通用 Agent 接口保持普通智能体语义：`POST/PUT/DELETE /api/agent` 不能创建或修改员工；`GET /api/agent` 是运行时目录，排除非 active 员工；`GET /api/agent?kind=agent` 供智能体管理页使用。`GET /api/agent/{slug}` 对 active/disabled 员工可读，保证停用后会话历史还能加载；draft 对非管理者返回 404，管理者可读以便编辑加载。运行时在 `submit_agent_request`、`create_resume_run_view`、`create_thread_view`、定时任务校验和 IM Bot 配置处调用 `digital_employee_is_runnable`：非 active 员工拒绝新请求/新 resume/新线程/新任务/新绑定，但不影响历史读取和已在运行的 Run。
+通用 Agent 接口保持普通智能体语义：`POST/PUT/DELETE /api/agent` 不能创建或修改员工；`GET /api/agent` 是运行时目录，排除非 active 员工；`GET /api/agent?kind=agent` 供智能体管理页使用。`GET /api/agent/{slug}` 对 active/disabled 员工可读，保证停用后会话历史还能加载；draft 对非管理者返回 404，管理者可读以便编辑加载。运行时在 `submit_agent_request`、`create_resume_run_view`、`create_thread_view`、定时任务校验、IM Bot 配置以及 FIFO 队列派发/人工 continue 处调用 `digital_employee_is_runnable`：非 active 员工拒绝新请求/新 resume/新线程/新任务/新绑定/排队派发，但不影响历史读取和已在运行的 Run；已排队请求在轮到派发时被置为 `rejected` 并写入可观察原因；同线程其余请求保持 `queued`，由后续回收循环逐个拒绝，paused 队列保持 `queued`，用户 continue 返回 409 或自行取消。派发时锁定员工行，与停用迁移串行化，避免停用提交后仍创建 Run。
 
 前端新增 `/digital-employees` 页面与导航项，复用 `InfoCard`、`PageHeader`、`AgentView` 对话入口；扩展现有 `AgentEditModal` 增加「岗位信息」分组和员工 API 分支，普通 Agent 路径不变。页面只展示后端返回的真实数据，不做静态演示。非管理者详情不展示管理员配置的私有 KB/Skills 名称；数字员工详情和通用 Agent 详情在 `can_manage=false` 时都移除 `config_json` 与 `configurable_items`。创建/更新/发布/停用响应使用 `include_resources=False`，详情仍返回资源摘要。
 
@@ -44,7 +44,8 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 - 数字员工成为 `Agent` 的受管类型，普通智能体列表、权限、对话和 Run 链路不需要第二套实现。
 - active 员工会出现在聊天选择器、API Key、IM Bot 和定时任务的 Agent 列表；这些入口的数据权限跟随调用身份，不提供员工独立服务账号。
 - 员工状态存在 JSON 档案中，列表在服务层过滤；P1 接受几十到几百的规模，超过后需要重新提案分页或独立状态列。
-- 停用只阻止新请求、新 resume、新线程、新定时任务和新 IM Bot 绑定，不中断已在运行的 Run。
+- 停用只允许 active → disabled；草稿只能删除，避免草稿被停用后既不能删也不能发布。
+- 停用只阻止新请求、新 resume、新线程、新定时任务、新 IM Bot 绑定和队列中的后续派发，不中断已在运行的 Run。
 - 非管理者读取员工详情时看不到私有资源标识；管理者仍可通过详情加载编辑器所需资源。
 - 通用 `/api/agent` 详情首次加载工具元数据时曾因 `ToolRuntime` 参数不可生成 JSON Schema 而失败；本实现跳过不可序列化的运行时参数，避免首个详情请求 500。
 
@@ -56,16 +57,17 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 | 管理员创建草稿后，普通员工不可见，管理者可见 | 草稿泄露或管理者看不到 | `digital_employee_service.list_digital_employees`、`digital_employee_is_visible` | `test_digital_employee_api.py`：普通用户列表/详情/线程 404，管理者详情 200、管理者建线程 409；7 passed | 移除状态过滤后普通用户可见则变红 | Passed |
 | 发布后共享范围内员工可见 | 发布后仍 404，或越权用户可见 | `publish_digital_employee`、`share_config` | 同一 integration：发布后普通用户列表/详情 200，`can_manage=false`；`GET /api/agent?kind=agent` 不含员工，`kind=digital_employee` 含员工 | 把共享范围改成 user 精确列表后越权用户仍可见则变红 | Passed |
 | 发布后的员工能通过真实 worker 完成 Run | 员工只能建线程，Run 不返回员工配置的输出 | `digital_employee_is_runnable`、`Agent` 配置解析、worker | E2E `test_digital_employee_e2e.py` 已写，但 replay 网关 `http://localhost:8765/health` 不可用，pytest 明确 skip | 网关可用时跑同一 E2E；若 Run 未 completed 或 output 不等于 `DETERMINISTIC_AGENT_E2E_OK` 则失败 | Not run |
-| 停用后新 Run/新线程被拒绝，历史仍可读 | 停用员工仍能执行，或历史丢失 | `digital_employee_is_runnable`、`agent_request_service`、`agent_run_service` | integration：停用→新 Run 409、新线程 409；`GET /api/agent/{slug}` 200、历史 GET 200 | 移除 guard 后新请求成功则变红 | Passed |
+| 停用后新 Run/新线程/排队派发被拒绝，历史仍可读 | 停用员工仍能执行，或历史丢失 | `digital_employee_is_runnable`、`agent_request_service`、`agent_run_service`、`agent_request_queue_service` | integration：停用→新 Run 409、新线程 409、人工 continue 409；直接造 queued 请求后 `dispatch_next_request` 返回 None，请求变 `rejected` 且无 Run；`GET /api/agent/{slug}` 200、历史 GET 200 | 移除 guard 后新请求或排队派发成功则变红 | Passed |
 | 非管理员不能创建/发布/停用；无 manage 权限的管理员也不能 | 前端隐藏被绕过，后端放行 | `digital_employee_router`、`user_can_manage_agent` | integration：普通用户创建 403；只有 read 权限的 admin 对更新/发布/停用/删除全部 403 | 去掉角色/权限检查后测试变红 | Passed |
 | 通用 Agent 接口不能修改/删除/复制员工 | `PUT/DELETE/duplicate /api/agent/{employee}` 成功 | `agent_router` 隔离规则 | integration 三项均 400 | 移除隔离后员工被通用接口改名/删除则变红 | Passed |
+| 并发状态迁移基于数据库最新行 | 预加载旧状态后跳过 active 校验或误删已发布员工 | `AgentRepository.get_by_slug_for_update` | integration：两个 session 中先预加载 draft，另一个 session 改为 active，再锁定读取得到 active；unit 断言 `populate_existing=True` | 去掉 `populate_existing` 后锁定读取仍返回旧 draft 则变红 | Passed |
 | 发布校验和 active 更新校验拒绝缺字段和能力为空的档案 | 空岗位/空能力员工被发布或编辑成非法 | `validate_for_publish` | unit 参数化测试；integration：active 员工 `position=""`、`capabilities=[]` 均 422，回读原档案未变 | 删除校验后空档案发布/active 更新成功则变红 | Passed |
-| 草稿不能建线程/定时任务/IM Bot；删除有引用的草稿被拒绝 | 草稿产生引用后被硬删除 | `create_thread_view`、`scheduled_agent_service`、IM Bot 配置 | integration：普通用户草稿线程 404、管理者草稿线程 409；草稿定时任务 409、草稿 IM Bot 409；直接插入 Bot 引用后删除草稿 409，移除引用后 200 | 移除 guard 后草稿线程/任务/Bot 创建成功则变红 | Passed |
+| 草稿不能建线程/定时任务/IM Bot；删除有引用的草稿被拒绝 | 草稿产生引用后被硬删除 | `create_thread_view`、`scheduled_agent_service`、IM Bot 配置 | integration：普通用户草稿线程 404、管理者草稿线程 409；草稿定时任务 409、草稿 IM Bot 409；分别直接造 conversation / scheduled job / IM Bot 引用后删除均 409，移除引用后 200；草稿停用 409；草稿 memories 普通用户 404、管理者 200 | 移除 guard 后草稿线程/任务/Bot 创建成功则变红 | Passed |
 | 非管理者详情不泄露私有资源标识 | `config_json`/`configurable_items` 出现在普通用户响应 | `digital_employee_router`、`agent_router._serialize_agent` | integration：普通用户在数字员工详情、通用列表、通用详情都没有两个字段；管理者详情仍有 | 移除序列化剥离后测试变红 | Passed |
-| 前端页面只展示真实数据，管理员操作后状态同步 | 页面仍显示静态卡片或状态不刷新 | `DigitalEmployeeView.vue`、`AgentEditModal.vue` | `eslint . --max-warnings=0` 通过；`node --test` 470 passed；`vite build` 通过 | 把接口返回替换成静态数组时页面检查失败 | Partially passed：构建与单测通过，真实浏览器交互未执行 |
+| 前端页面只展示真实数据，管理员操作后状态同步 | 页面仍显示静态卡片或状态不刷新 | `DigitalEmployeeView.vue`、`AgentEditModal.vue`、`AgentView.vue`、`utils/digitalEmployee.js` | `eslint . --max-warnings=0` 通过；`node --test` 471 passed；`vite build` 通过；`normalizeDigitalEmployee` 用真实 `{id: 7, slug}` 和缺 slug payload 断言规范 ID | 非管理者点击编辑后仍打开通用弹窗、或员工保存仍请求数字 id、或页面不刷新则失败；浏览器级检查未执行 | Partially passed：构建/单测通过，真实浏览器交互未执行 |
 | 工程契约与格式 | 文档/路由/契约清单失配或空白错误 | `scripts/verify_engineering_contracts.py`、`.gitignore` | 工程契约脚本通过（55 decisions / 5 workflows / 4 agents files / 207 docs / 30 routers / 268 web sources）；`unittest` 63 passed；`git diff --check` 通过 | 新增未登记路由或不可解析文档链接时脚本变红 | Passed |
 
-最低证据：unit 覆盖档案/状态/可见性/运行守卫纯逻辑（`test/unit` 2677 passed, 58 skipped）；integration 覆盖真实 PostgreSQL、真实 HTTP、权限、迁移、草稿引用与序列化剥离（8 passed）；E2E 已写但当前环境未运行；前端 lint/unit/build 通过，真实页面手工交互未执行；工程契约脚本与 `git diff --check` 通过。
+最低证据：unit 覆盖档案/状态/可见性/运行守卫纯逻辑（`test/unit` 2678 passed, 58 skipped）；integration 覆盖真实 PostgreSQL、真实 HTTP、权限、迁移、草稿引用、队列派发、锁刷新与序列化剥离（10 passed）；E2E 已写但当前环境未运行；前端 lint/unit（471 passed）/build 通过，真实页面手工交互未执行；工程契约脚本与 `git diff --check` 通过。
 
 ## 风险
 

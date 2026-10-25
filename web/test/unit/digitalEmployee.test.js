@@ -10,6 +10,7 @@ import {
 
 test('normalizeDigitalEmployee 统一 slug/id/profile 并补齐草稿状态', () => {
   const employee = normalizeDigitalEmployee({
+    id: 7,
     slug: 'analyst',
     name: '经营分析官',
     digital_employee_profile: { position: '经营分析官', capabilities: ['数据查询'] }
@@ -22,4 +23,10 @@ test('normalizeDigitalEmployee 统一 slug/id/profile 并补齐草稿状态', ()
   assert.equal(digitalEmployeeStatusMeta('active').label, '在岗')
   assert.equal(digitalEmployeeStatusMeta('disabled').label, '已停用')
   assert.equal(digitalEmployeeStatusMeta('unknown').label, '草稿')
+})
+
+test('normalizeDigitalEmployee 在缺少 slug 时不回退数字主键', () => {
+  const employee = normalizeDigitalEmployee({ id: 7, name: '无 slug 员工' })
+  assert.equal(employee.id, '')
+  assert.equal(employee.slug, '')
 })

@@ -16,6 +16,7 @@ from yuxi.agents.digital_employee import (
 )
 from yuxi.repositories.agent_repository import (
     AgentRepository,
+    DEFAULT_SHARE_CONFIG,
     SUB_AGENT_BACKEND_ID,
     user_can_access_agent,
     user_can_manage_agent,
@@ -41,12 +42,6 @@ PROFILE_LABELS = {
 SERVER_FIELDS = ("status", "published_at", "published_by", "disabled_at", "disabled_by")
 MAX_CAPABILITIES = 12
 MAX_CAPABILITY_LENGTH = 40
-DEFAULT_EMPLOYEE_SHARE_CONFIG = {
-    "version": 2,
-    "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
-    "manage_scope": None,
-}
-
 
 def _clean_text(value: Any, field: str, maximum: int) -> str:
     """归一化文本字段并拒绝超长内容。"""
@@ -269,7 +264,7 @@ async def create_digital_employee(
         pics=None,
         config_json=resolved_config,
         config_resource_access=resource_access,
-        share_config=share_config or DEFAULT_EMPLOYEE_SHARE_CONFIG,
+        share_config=share_config or DEFAULT_SHARE_CONFIG,
         kind=DIGITAL_EMPLOYEE_KIND,
         digital_employee_profile=normalized_profile,
         is_default=False,
@@ -370,6 +365,8 @@ async def disable_digital_employee(*, user: User, db: AsyncSession, agent: Agent
         raise HTTPException(status_code=403, detail="不能管理该数字员工")
     if digital_employee_status(locked) == STATUS_DISABLED:
         return locked
+    if digital_employee_status(locked) != STATUS_ACTIVE:
+        raise HTTPException(status_code=409, detail="只有已发布数字员工可以停用")
 
     profile = normalize_profile_patch({}, locked.digital_employee_profile)
     profile["status"] = STATUS_DISABLED

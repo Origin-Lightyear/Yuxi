@@ -26,7 +26,7 @@ from yuxi.services.workdir_service import (
     resolve_conversation_workdir_binding,
 )
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import AgentRun, AgentRunRequest, Message
+from yuxi.storage.postgres.models_business import Agent, AgentRun, AgentRunRequest, Message
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.logging_config import logger
 from yuxi.utils.sse_utils import (
@@ -329,6 +329,26 @@ async def get_thread_queue_snapshot(*, db: AsyncSession, uid: str, agent_slug: s
     return {"requests": requests, "queue": {"status": status, **metadata}}
 
 
+async def _digital_employee_dispatch_error(db: AsyncSession, agent_slug: str) -> str | None:
+    """判断目标员工是否仍可执行新 Run；非员工返回 None。
+
+    只锁定员工行，和发布/停用状态迁移串行化；普通智能体不经过这里加锁。
+    """
+    from yuxi.agents.digital_employee import DIGITAL_EMPLOYEE_KIND
+    from yuxi.services.digital_employee_service import digital_employee_is_runnable
+
+    result = await db.execute(
+        select(Agent)
+        .where(Agent.slug == agent_slug, Agent.kind == DIGITAL_EMPLOYEE_KIND)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    agent = result.scalar_one_or_none()
+    if agent is None or digital_employee_is_runnable(agent):
+        return None
+    return f"数字员工 {agent_slug} 未发布或已停用，不能执行新请求"
+
+
 async def continue_thread_queue(
     *,
     db: AsyncSession,
@@ -344,6 +364,9 @@ async def continue_thread_queue(
         thread_id=thread_id,
         lock=True,
     )
+    dispatch_error = await _digital_employee_dispatch_error(db, agent_slug)
+    if dispatch_error:
+        raise queue_conflict("agent_not_runnable", dispatch_error)
     repo = AgentRunRequestRepository(db)
     head = await repo.get_queue_head(
         uid=str(uid),
@@ -423,7 +446,11 @@ async def stream_request_events(
 
                 if request.status in REQUEST_TERMINAL_STATUSES:
                     yield format_sse(
-                        {"request_id": request_id, "status": request.status},
+                        {
+                            "request_id": request_id,
+                            "status": request.status,
+                            "error_message": request.error_message,
+                        },
                         event=request.status,
                     )
                     return
@@ -594,6 +621,15 @@ async def _dispatch_locked_head(
     """将已锁定的 queued 队头转换为 AgentRun，不提交事务。"""
     repo = AgentRunRequestRepository(db)
     run_repo = AgentRunRepository(db)
+    dispatch_error = await _digital_employee_dispatch_error(db, head.agent_slug)
+    if dispatch_error:
+        await repo.mark_rejected(head.request_id, error_message=dispatch_error)
+        msg = await db.get(Message, head.input_message_id)
+        if msg:
+            msg.delivery_status = DELIVERY_STATUS_REJECTED
+        await db.flush()
+        logger.warning(f"Rejected queued request {head.request_id}: {dispatch_error}")
+        return None
     run_id = str(uuid.uuid4())
     try:
         async with db.begin_nested():

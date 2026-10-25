@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { Plus, RefreshCw, Users } from '@lucide/vue'
 
@@ -21,6 +21,7 @@ import {
   normalizeDigitalEmployee
 } from '@/utils/digitalEmployee'
 
+const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
@@ -125,9 +126,18 @@ const openEdit = (employee) => {
   editModalRef.value?.openEdit(employee)
 }
 
-const openDetail = (employee) => {
+const openDetail = async (employee) => {
+  const targetSlug = employee.slug
   selected.value = employee
   detailOpen.value = true
+  try {
+    const response = await digitalEmployeeApi.getDigitalEmployee(targetSlug)
+    if (selected.value?.slug === targetSlug) {
+      selected.value = normalizeDigitalEmployee(response.employee)
+    }
+  } catch (error) {
+    message.error(error.message || '加载数字员工详情失败')
+  }
 }
 
 const goChat = (employee) => {
@@ -184,6 +194,16 @@ const remove = (employee) => {
 onMounted(async () => {
   await loadEmployees()
   if (canCreate.value) await loadBackends()
+  const editSlug = typeof route.query.edit === 'string' ? route.query.edit : ''
+  if (editSlug) {
+    const employee = employees.value.find((item) => item.slug === editSlug)
+    if (employee) {
+      openEdit(employee)
+      const query = { ...route.query }
+      delete query.edit
+      await router.replace({ query })
+    }
+  }
 })
 </script>
 
@@ -246,7 +266,12 @@ onMounted(async () => {
             </template>
             <template #actions>
               <button type="button" class="employee-chat-link" @click.stop="openDetail(employee)">详情</button>
-              <button type="button" class="employee-chat-link" @click.stop="goChat(employee)">
+              <button
+                v-if="employee.profile.status === 'active'"
+                type="button"
+                class="employee-chat-link"
+                @click.stop="goChat(employee)"
+              >
                 去对话
               </button>
             </template>
@@ -320,7 +345,13 @@ onMounted(async () => {
         <p v-else class="employee-permission-note">运行时资源按你的权限解析，不会继承员工的私有知识库或 Skills。</p>
 
         <div class="employee-drawer-actions">
-          <a-button type="primary" @click="goChat(selected)">去对话</a-button>
+          <a-button v-if="selected.profile.status === 'active'" type="primary" @click="goChat(selected)">
+            去对话
+          </a-button>
+          <span v-else-if="selected.profile.status === 'disabled'" class="employee-permission-note">
+            已停用，历史对话可在会话列表中查看。
+          </span>
+          <span v-else class="employee-permission-note">发布后可发起对话。</span>
           <template v-if="selected.can_manage">
             <a-button @click="openEdit(selected)">编辑</a-button>
             <a-button v-if="selected.profile.status === 'draft'" type="primary" @click="publish(selected)">

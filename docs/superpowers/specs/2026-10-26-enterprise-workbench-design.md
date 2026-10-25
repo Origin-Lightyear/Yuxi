@@ -1,9 +1,13 @@
 # 企业智能工作台：数字员工、待办与老板分身
 
-状态：P1 implemented（2026-10-26）；P2/P3 proposed  
-日期：2026-10-26  
-范围：P1「数字员工」详细设计；P2「待办事项」、P3「老板分身」只定义接口边界，另行提案。  
-部署形态：单企业自建（一个 Yuxi 部署服务一个企业）。SaaS 多租户共享实例不在 P1。  
+状态：P1 implemented（2026-10-26）；P2/P3 proposed
+
+日期：2026-10-26
+
+范围：P1「数字员工」详细设计；P2「待办事项」、P3「老板分身」只定义接口边界，另行提案。
+
+部署形态：单企业自建（一个 Yuxi 部署服务一个企业）。SaaS 多租户共享实例不在 P1。
+
 来源原型：`大力水手Agent-企业智能工作台.html`（未跟踪的静态演示）
 
 ## 1. 意图与为什么
@@ -165,7 +169,7 @@ create ──> draft ──publish──> active ──disable──> disabled
 ```
 
 - 发布：`draft` / `disabled` → `active`，校验档案；重复发布幂等。
-- 停用：任意状态 → `disabled`，幂等；保留历史。
+- 停用：只允许 `active` → `disabled`，幂等；草稿只能删除，避免草稿停用后既不能删也不能发布。
 - 删除：只允许 `draft`，且必须没有线程、定时任务或 IM Bot 引用；`active` / `disabled` 只能停用，避免孤儿 Run。
 - 编辑：不改变 `status`；`active` 员工改档案后必须仍通过发布校验。
 - `kind` 创建后不可变。
@@ -211,6 +215,7 @@ create ──> draft ──publish──> active ──disable──> disabled
 运行时 guard：
 
 - 在 `agent_request_service.submit_agent_request` 和 `agent_run_service.create_resume_run_view` 加载 Agent 后调用 `digital_employee_is_runnable`；不可运行时返回明确 409（员工未发布/已停用）。
+- FIFO 队列的 `dispatch_next_request`/`dispatch_ready_head` 在真正创建 Run 前复查员工状态；不可运行时把**当前派发队头**置为 `rejected`、消息置为 `rejected`，不创建 Run。同线程其余请求仍保持 `queued`，由后续回收循环在轮到它们时逐个拒绝；paused 队列不会自动派发，保持 `queued`，用户 `continue_thread_queue` 返回 409 `agent_not_runnable` 或自行取消。派发检查锁定员工行，与停用状态迁移串行化，避免停用提交后仍创建 Run。
 - `conversation_service.create_thread_view`、`scheduled_agent_service._validate_agent` 和 IM Bot 配置创建/更新使用同一 guard；草稿/停用员工不能建线程、不能建定时任务、不能绑定 Bot。
 - 历史读取（`chat_service`）只使用现有权限可见性，不调用 runtime guard；停用后历史仍可读。
 - 正在运行的 Run 不因停用而中断；停用只影响新请求、新 resume、新线程/任务/Bot 绑定。
@@ -268,7 +273,7 @@ create ──> draft ──publish──> active ──disable──> disabled
 ```json
 {
   "employee": {
-    "id": "business-analyst",
+    "id": 7,
     "slug": "business-analyst",
     "name": "经营分析官",
     "description": "...",
@@ -282,6 +287,8 @@ create ──> draft ──publish──> active ──disable──> disabled
   }
 }
 ```
+
+员工页面和 `/api/digital-employees` 以 `slug` 作为规范 ID；`id` 是通用 Agent 的数字主键，不参与员工路由。
 
 错误语义：
 
@@ -339,9 +346,10 @@ API 模块：
 ### 5.7 失败与边界
 
 - 草稿不可对话：列表不展示给普通用户；`GET /api/agent/{slug}` 对普通用户 404、对管理者 200；`create_thread_view` 与 `submit_agent_request` 对管理者 409、对普通用户 404。
-- 停用后：新 Run/新 resume 409；历史线程仍可打开（`GET /api/agent/{slug}` 200、历史 200）；聊天选择器不再出现该员工（`GET /api/agent` 过滤）。
+- 停用后：新 Run/新 resume/人工 continue 409；已排队请求在派发时被拒绝，不产生新 Run；历史线程仍可打开（`GET /api/agent/{slug}` 200、历史 200）；聊天选择器不再出现该员工（`GET /api/agent` 过滤）。
 - 已绑定停用员工的定时任务/IM Bot：新派发/新消息 409；不自动解绑或停用，owner 需要重新选择员工。P1 不静默跳过。
-- 删除草稿：先检查 `Conversation.agent_id`、`ScheduledAgentJob.agent_slug`、`IMBotConfig.agent_slug`；有引用 409；无引用才硬删除 Agent 行。
+- 删除草稿：先检查 `Conversation.agent_id`、`ScheduledAgentJob.agent_slug`、`IMBotConfig.agent_slug`；有引用 409；无引用才硬删除 Agent 行。草稿对普通用户的 `/api/agent/{slug}/memories` 也返回 404。
+- 状态迁移：`disable` 只接受 active；草稿停用返回 409。锁定读取使用 `populate_existing=True`，避免 identity map 旧快照绕过 active 更新校验或误删已发布员工。
 - 重名：`name` 可重复；`slug` 由 `_unique_slug` 保证唯一。
 - 预置冲突：员工 slug 与 preset slug 冲突时自动加后缀；预置本身不改成员工。
 - 并发发布/停用：服务在事务内对 Agent 行加锁后再写状态，避免两个管理员互相覆盖。
@@ -358,20 +366,21 @@ API 模块：
 | 管理员创建草稿后，普通员工列表不可见，管理者可见 | 草稿泄露到普通员工或管理者看不到 | `digital_employee_service.list_digital_employees` / `digital_employee_is_visible` | `test_digital_employee_api.py`：普通用户列表/详情/线程 404，管理者详情 200、管理者建线程 409 | 移除状态过滤后测试变红 | Passed |
 | 发布后，共享范围内员工可见 | 发布后仍 404，或越权用户可见 | `digital_employee_service.publish_digital_employee` + `share_config` | 真实 HTTP：创建→发布→普通用户列表/详情 200；`kind=agent` 排除员工，`kind=digital_employee` 包含员工 | 把 `share_config` 改成 user 精确列表后越权用户仍可见则变红 | Passed |
 | 发布后的员工能通过真实 worker 完成 Run | 只能建线程，Run 不返回员工配置的输出 | `digital_employee_is_runnable` + worker | E2E `test_digital_employee_e2e.py` 已写；当前 replay 网关不可用，测试明确 skip | 网关可用时 Run 未 completed 或 output 不等于 `DETERMINISTIC_AGENT_E2E_OK` 则失败 | Not run |
-| 停用后新 Run/新线程被拒绝，历史仍可读 | 停用员工仍能执行，或历史丢失 | `digital_employee_is_runnable` + request/run guard | integration：停用→新 Run 409、新线程 409；`GET /api/agent/{slug}` 200；历史 GET 200 | 移除 guard 后新请求成功则变红 | Passed |
+| 停用后新 Run/新线程/排队派发被拒绝，历史仍可读 | 停用员工仍能执行，或历史丢失 | `digital_employee_is_runnable` + request/run/queue guard | integration：停用→新 Run 409、新线程 409、人工 continue 409；直接造 queued 请求后 `dispatch_next_request` 返回 None，请求变 `rejected` 且无 Run；`GET /api/agent/{slug}` 200；历史 GET 200 | 移除 guard 后新请求或排队派发成功则变红 | Passed |
 | 非管理员不能创建/发布/停用；无 manage 权限的管理员也不能 | 前端隐藏被绕过，后端放行 | `digital_employee_router` + `user_can_manage_agent` | integration：普通用户创建 403；只有 read 权限的 admin 更新/发布/停用/删除全部 403 | 去掉角色/权限检查后测试变红 | Passed |
 | 通用 Agent 接口不能修改/删除/复制员工 | `PUT/DELETE/duplicate /api/agent/{employee}` 成功 | `agent_router` 隔离规则 | integration 三项均 400 | 移除隔离后员工被通用接口改名/删除则变红 | Passed |
+| 并发状态迁移基于数据库最新行 | 预加载旧状态后跳过 active 校验或误删已发布员工 | `AgentRepository.get_by_slug_for_update` | integration：两个 session 中先预加载 draft，另一个 session 改为 active，再锁定读取得到 active；unit 断言 `populate_existing=True` | 去掉 `populate_existing` 后锁定读取仍返回旧 draft 则变红 | Passed |
 | 发布校验和 active 更新校验拒绝缺字段和能力为空 | 空岗位/空能力员工被发布或编辑成非法 | `digital_employee_service.validate_for_publish` | unit 参数化测试；integration：active 员工空岗位/空能力 422，回读原档案未变 | 删除校验后空档案发布/active 更新成功则变红 | Passed |
-| 草稿不能建线程/定时任务/IM Bot；删除有引用的草稿被拒绝 | 草稿产生引用后被硬删除 | `create_thread_view`、`scheduled_agent_service`、IM Bot 配置 | integration：普通用户草稿线程 404、管理者草稿线程 409；定时任务 409、IM Bot 409；直接插入 Bot 引用后删除 409，移除引用后 200 | 移除 guard 后草稿线程/任务/Bot 创建成功则变红 | Passed |
+| 草稿不能建线程/定时任务/IM Bot；删除有引用的草稿被拒绝 | 草稿产生引用后被硬删除 | `create_thread_view`、`scheduled_agent_service`、IM Bot 配置 | integration：普通用户草稿线程 404、管理者草稿线程 409；定时任务 409、IM Bot 409；分别直接造 conversation / scheduled job / IM Bot 引用后删除均 409，移除引用后 200；草稿停用 409；草稿 memories 普通用户 404、管理者 200 | 移除 guard 后草稿线程/任务/Bot 创建成功则变红 | Passed |
 | 非管理者详情不泄露私有资源标识 | `config_json`/`configurable_items` 出现在普通用户响应 | `digital_employee_router`、`agent_router._serialize_agent` | integration：普通用户的数字员工详情、通用列表、通用详情都没有两个字段；管理者详情仍有 | 移除序列化剥离后测试变红 | Passed |
-| 前端页面只展示真实数据，管理员操作后状态同步 | 页面仍显示静态卡片或状态不刷新 | `DigitalEmployeeView.vue`、`AgentEditModal.vue` | `eslint . --max-warnings=0`、`node --test`（470 passed）、`vite build` | 把接口返回替换成静态数组时页面检查失败 | Partially passed：构建与单测通过，真实浏览器交互未执行 |
+| 前端页面只展示真实数据，管理员操作后状态同步 | 页面仍显示静态卡片或状态不刷新 | `DigitalEmployeeView.vue`、`AgentEditModal.vue`、`AgentView.vue`、`utils/digitalEmployee.js` | `eslint . --max-warnings=0`、`node --test`（471 passed）、`vite build`；`normalizeDigitalEmployee` 用真实 `{id: 7, slug}` 和缺 slug payload 断言规范 ID | 非管理者点击编辑后仍打开通用弹窗、或员工保存仍请求数字 id、或页面不刷新则失败；浏览器级检查未执行 | Partially passed：构建/单测通过，真实浏览器交互未执行 |
 
 最低证据：
 
-- Unit：`test/unit` 2677 passed, 58 skipped；覆盖档案归一化、发布校验、active 更新校验、状态迁移、可见性/运行守卫和工具元数据降级。
-- Integration：数字员工 API + 迁移共 8 passed；覆盖真实 PostgreSQL、真实 HTTP、权限、通用接口隔离、迁移、草稿引用和序列化剥离。
+- Unit：`test/unit` 2678 passed, 58 skipped；覆盖档案归一化、发布校验、active 更新校验、状态迁移、可见性/运行守卫、锁刷新和工具元数据降级。
+- Integration：数字员工 API + 迁移共 10 passed；覆盖真实 PostgreSQL、真实 HTTP、权限、通用接口隔离、迁移、草稿引用、队列派发和序列化剥离。
 - E2E：已写 `test/e2e/test_digital_employee_e2e.py`；当前 replay 网关不可用，未执行。
-- Frontend：lint（0 warning）、unit（470 passed）、build 通过；真实浏览器交互未执行。
+- Frontend：lint（0 warning）、unit（471 passed）、build 通过；真实浏览器交互未执行。
 - 工程契约：`python3 scripts/verify_engineering_contracts.py` 通过（55 decisions / 5 workflows / 4 agents files / 207 docs / 30 routers / 268 web sources）；`python3 -m unittest scripts.test_verify_engineering_contracts` 63 passed；`git diff --check` 通过。
 
 ### 5.9 实施结果与未验证范围
@@ -379,6 +388,7 @@ API 模块：
 - 员工详情响应：创建/更新/发布/停用使用 `include_resources=False`；详情使用 `include_resources=True`，避免变更接口因资源摘要解析失败而回滚。
 - 状态可读性：员工目录只向普通用户展示 active；停用员工的通用详情和历史可读；草稿的通用详情仅管理者可读。
 - 前端：`/digital-employees` 页面、导航、列表/详情抽屉、发布/停用/删除草稿、`AgentEditModal` 岗位信息分组和员工保存分支已实现；智能体管理页改为 `GET /api/agent?kind=agent`，避免员工混入通用管理。
+- 停用后的队列：queued 请求在派发阶段被置为 `rejected` 并记录错误；人工 continue 返回 409。已存在且已投递的 pending Run 不强制中断。
 - 未验证：deterministic E2E 真实 Run 未执行；真实浏览器中的创建/编辑/发布/停用/去对话路径未执行。这两项不写成通过。
 - 修复的既有缺陷：工具元数据首次加载时，`ToolRuntime` 参数无法生成 JSON Schema 会让详情接口 500；现在只跳过不可序列化的参数列表，不阻断工具发现。
 
