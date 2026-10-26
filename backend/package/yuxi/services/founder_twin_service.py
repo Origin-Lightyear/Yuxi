@@ -6,6 +6,7 @@ import math
 import uuid
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.digital_employee import FOUNDER_TWIN_KIND
@@ -26,6 +27,11 @@ EXPERIENCE_STATUS_DRAFT = "draft"
 EXPERIENCE_STATUS_CONFIRMED = "confirmed"
 EXPERIENCE_STATUS_INVALID = "invalid"
 EXPERIENCE_STATUSES = (EXPERIENCE_STATUS_DRAFT, EXPERIENCE_STATUS_CONFIRMED, EXPERIENCE_STATUS_INVALID)
+
+
+class ExperienceCodeConflict(ValueError):
+    """同一分身下的经验编码冲突。"""
+
 MAX_EXPERIENCES_PER_TWIN = 2000
 DEFAULT_RETRIEVAL_LIMIT = 5
 
@@ -177,7 +183,10 @@ async def create_experience_entry(
     if not entry.title or not entry.judgment:
         raise ValueError("经验标题和判断不能为空")
     db.add(entry)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        raise ExperienceCodeConflict("经验编码已存在") from exc
     return entry
 
 
@@ -212,7 +221,10 @@ async def update_experience_entry(
     entry.confirmed_at = None
     entry.updated_by = actor_uid
     entry.updated_at = utc_now_naive()
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        raise ExperienceCodeConflict("经验编码已存在") from exc
     return entry
 
 

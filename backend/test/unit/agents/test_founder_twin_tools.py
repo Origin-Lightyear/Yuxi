@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 from langchain_core.messages import HumanMessage
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.agents import founder_twin as founder_twin_tools
@@ -53,15 +53,23 @@ def _runtime(*, run_id: str = "run-1", uid: str = "u1"):
     )
 
 
-async def _seed_entry(session, *, code: str, title: str, vector: list[float]) -> ExperienceEntry:
+async def _seed_entry(
+    session,
+    *,
+    code: str,
+    title: str,
+    vector: list[float],
+    twin_slug: str = "boss",
+    status: str = "confirmed",
+) -> ExperienceEntry:
     entry = ExperienceEntry(
-        twin_slug="boss",
+        twin_slug=twin_slug,
         code=code,
         title=title,
         situation="客户询价",
         judgment="先看成本再报价",
         boundary="不承诺未确认折扣",
-        status="confirmed",
+        status=status,
         embedding=vector,
         embedding_model="mock",
     )
@@ -114,6 +122,7 @@ async def test_submit_tool_requires_citations_and_records_once(session, founder_
     assert second_result["ok"] is True
 
     consultation = await session.scalar(select(ExperienceConsultation))
+    assert await session.scalar(select(func.count()).select_from(ExperienceConsultation)) == 1
     assert consultation.run_id == "run-1"
     assert consultation.cited_entry_ids == [first_id, second_id]
     assert consultation.question == "怎么定价"
@@ -152,3 +161,36 @@ async def test_handoff_tool_creates_open_request_and_links_consultation(session,
     assert consultation.run_id == "run-2"
     assert consultation.handoff_id == handoff.id
     assert consultation.cited_entry_ids == []
+
+
+async def test_submit_rejects_empty_other_twin_and_invalid_citations(session, founder_tools):
+    await _seed_entry(session, code="pricing", title="定价经验", vector=[1.0, 0.0])
+    other_twin = await _seed_entry(
+        session,
+        code="other",
+        title="别的分身经验",
+        vector=[1.0, 0.0],
+        twin_slug="other",
+    )
+    invalid = await _seed_entry(
+        session,
+        code="invalid",
+        title="失效经验",
+        vector=[1.0, 0.0],
+        status="invalid",
+    )
+
+    other_twin_id, invalid_id = other_twin.id, invalid.id
+    cases = [([], "run-empty"), ([other_twin_id], "run-other"), ([invalid_id], "run-invalid")]
+    for cited_entry_ids, run_id in cases:
+        result = json.loads(
+            await founder_tools["submit_consultation_answer"].coroutine(
+                answer="没有依据的答案",
+                cited_entry_ids=cited_entry_ids,
+                confidence=0.5,
+                runtime=_runtime(run_id=run_id),
+            )
+        )
+        assert result["ok"] is False
+
+    assert await session.scalar(select(func.count()).select_from(ExperienceConsultation)) == 0

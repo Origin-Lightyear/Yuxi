@@ -6,7 +6,6 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
@@ -17,6 +16,7 @@ from yuxi.repositories.founder_twin_repository import FounderTwinRepository
 from yuxi.services.agent_config_service import prepare_agent_config_write
 from yuxi.services.founder_twin_service import (
     EXPERIENCE_STATUSES,
+    ExperienceCodeConflict,
     EXPERIENCE_STATUS_CONFIRMED,
     confirm_experience,
     create_experience_entry,
@@ -314,12 +314,12 @@ async def create_entry(
         )
         await db.commit()
         await db.refresh(entry)
+    except ExperienceCodeConflict as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(status_code=409, detail="经验编码已存在") from exc
     return {"entry": _entry_payload(entry)}
 
 
@@ -350,12 +350,12 @@ async def update_entry(
         )
         await db.commit()
         await db.refresh(entry)
+    except ExperienceCodeConflict as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(status_code=409, detail="经验编码已存在") from exc
     return {"entry": _entry_payload(entry)}
 
 
