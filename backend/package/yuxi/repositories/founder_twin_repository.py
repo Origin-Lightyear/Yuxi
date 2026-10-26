@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.storage.postgres.models_business import ExperienceEntry
+from yuxi.storage.postgres.models_business import ExperienceConsultation, ExperienceEntry, HandoffRequest
 
 
 class FounderTwinRepository:
@@ -51,3 +51,43 @@ class FounderTwinRepository:
         """统计分身全部经验条目，用于 2,000 条上限。"""
         stmt = select(func.count()).select_from(ExperienceEntry).where(ExperienceEntry.twin_slug == twin_slug)
         return int((await self.db.scalar(stmt)) or 0)
+
+    async def entry_status_counts(self, twin_slug: str) -> dict[str, int]:
+        """按状态统计分身经验条目。"""
+        stmt = (
+            select(ExperienceEntry.status, func.count())
+            .where(ExperienceEntry.twin_slug == twin_slug)
+            .group_by(ExperienceEntry.status)
+        )
+        return {str(status): int(count) for status, count in (await self.db.execute(stmt)).all()}
+
+    async def list_consultations(
+        self, twin_slug: str, *, uid: str | None = None, limit: int = 100
+    ) -> list[ExperienceConsultation]:
+        """列出咨询记录；uid 为空时返回分身全部记录。"""
+        stmt = select(ExperienceConsultation).where(ExperienceConsultation.twin_slug == twin_slug)
+        if uid is not None:
+            stmt = stmt.where(ExperienceConsultation.uid == uid)
+        stmt = stmt.order_by(ExperienceConsultation.created_at.desc(), ExperienceConsultation.id.desc()).limit(limit)
+        return list((await self.db.scalars(stmt)).all())
+
+    async def list_handoffs(self, twin_slug: str, *, uid: str | None = None) -> list[HandoffRequest]:
+        """列出转交单；uid 为空时返回分身全部记录。"""
+        stmt = select(HandoffRequest).where(HandoffRequest.twin_slug == twin_slug)
+        if uid is not None:
+            stmt = stmt.where(HandoffRequest.uid == uid)
+        stmt = stmt.order_by(HandoffRequest.created_at.desc(), HandoffRequest.id.desc())
+        return list((await self.db.scalars(stmt)).all())
+
+    async def get_handoff(self, handoff_id: int) -> HandoffRequest | None:
+        """按主键读取转交单。"""
+        return await self.db.get(HandoffRequest, handoff_id)
+
+    async def handoff_status_counts(self, twin_slug: str) -> dict[str, int]:
+        """按状态统计分身转交单。"""
+        stmt = (
+            select(HandoffRequest.status, func.count())
+            .where(HandoffRequest.twin_slug == twin_slug)
+            .group_by(HandoffRequest.status)
+        )
+        return {str(status): int(count) for status, count in (await self.db.execute(stmt)).all()}

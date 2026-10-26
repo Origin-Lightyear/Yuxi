@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import AgentBackendNotFoundError, get_agent_backend, list_agent_backend_info
 from yuxi.agents.context import filter_declared_config
-from yuxi.agents.digital_employee import DIGITAL_EMPLOYEE_KIND
+from yuxi.agents.digital_employee import DIGITAL_EMPLOYEE_KIND, FOUNDER_TWIN_KIND, MANAGED_AGENT_KINDS
 from yuxi.repositories.agent_repository import (
     AgentRepository,
     is_builtin_agent,
@@ -113,7 +113,7 @@ async def _serialize_agent(
             backend_info_cache=backend_info_cache,
         )
         data["config_json"] = _filter_agent_config_json(item.backend_id, data.get("config_json"))
-        if getattr(item, "kind", "agent") == DIGITAL_EMPLOYEE_KIND and not data.get("can_manage"):
+        if (getattr(item, "kind", "agent") or "agent") in MANAGED_AGENT_KINDS and not data.get("can_manage"):
             data.pop("config_json", None)
             data.pop("configurable_items", None)
     except AgentBackendNotFoundError as exc:
@@ -148,8 +148,8 @@ async def list_agents(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if kind is not None and kind not in {"agent", DIGITAL_EMPLOYEE_KIND}:
-        raise HTTPException(status_code=422, detail="kind 只支持 agent 或 digital_employee")
+    if kind is not None and kind not in {"agent", DIGITAL_EMPLOYEE_KIND, FOUNDER_TWIN_KIND}:
+        raise HTTPException(status_code=422, detail="kind 只支持 agent、digital_employee 或 founder_twin")
     repo = AgentRepository(db)
     await repo.ensure_default_agent()
     items = await repo.list_visible(user=current_user, include_subagent_definitions=include_subagents)
@@ -251,6 +251,8 @@ async def update_agent(
         raise HTTPException(status_code=404, detail="智能体不存在")
     if getattr(item, "kind", "agent") == DIGITAL_EMPLOYEE_KIND:
         raise HTTPException(status_code=400, detail="数字员工请使用 /api/digital-employees 接口")
+    if getattr(item, "kind", "agent") == FOUNDER_TWIN_KIND:
+        raise HTTPException(status_code=400, detail="老板分身请使用 /api/founder-twins 接口")
     if not user_can_manage_agent(current_user, item):
         raise HTTPException(status_code=403, detail="不能编辑非自己创建的智能体")
 
@@ -303,6 +305,8 @@ async def delete_agent(
         raise HTTPException(status_code=404, detail="智能体不存在")
     if getattr(item, "kind", "agent") == DIGITAL_EMPLOYEE_KIND:
         raise HTTPException(status_code=400, detail="数字员工请使用 /api/digital-employees 接口")
+    if getattr(item, "kind", "agent") == FOUNDER_TWIN_KIND:
+        raise HTTPException(status_code=400, detail="老板分身请使用 /api/founder-twins 接口")
     if not user_can_manage_agent(current_user, item):
         raise HTTPException(status_code=403, detail="不能删除非自己创建的智能体")
     if is_builtin_agent(item):

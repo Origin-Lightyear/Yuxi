@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import uuid
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -137,6 +138,99 @@ async def validate_citations(
     if len(by_id) != len(unique_ids):
         raise ValueError("引用条目不存在、未确认或不属于该分身")
     return [by_id[entry_id] for entry_id in unique_ids]
+
+
+async def create_experience_entry(
+    db: AsyncSession,
+    *,
+    twin_slug: str,
+    data: dict,
+    actor_uid: str,
+) -> ExperienceEntry:
+    """创建草稿经验；超过单分身 2,000 条上限时拒绝。"""
+    repo = FounderTwinRepository(db)
+    if await repo.count_entries(twin_slug) >= MAX_EXPERIENCES_PER_TWIN:
+        raise ValueError(f"单个分身最多保存 {MAX_EXPERIENCES_PER_TWIN} 条经验")
+    now = utc_now_naive()
+    entry = ExperienceEntry(
+        twin_slug=twin_slug,
+        code=str(data.get("code") or f"exp-{uuid.uuid4().hex[:12]}").strip(),
+        title=str(data.get("title") or "").strip(),
+        situation=str(data.get("situation") or "").strip(),
+        judgment=str(data.get("judgment") or "").strip(),
+        boundary=str(data.get("boundary") or "").strip(),
+        source_type=str(data.get("source_type") or "manual").strip(),
+        source_ref=str(data.get("source_ref") or "").strip() or None,
+        source_excerpt=str(data.get("source_excerpt") or "").strip() or None,
+        status=EXPERIENCE_STATUS_DRAFT,
+        created_by=actor_uid,
+        updated_by=actor_uid,
+        created_at=now,
+        updated_at=now,
+    )
+    if not entry.title or not entry.judgment:
+        raise ValueError("经验标题和判断不能为空")
+    db.add(entry)
+    await db.flush()
+    return entry
+
+
+async def update_experience_entry(
+    db: AsyncSession,
+    entry: ExperienceEntry,
+    *,
+    data: dict,
+    actor_uid: str,
+) -> ExperienceEntry:
+    """编辑经验；一旦内容变化就退回草稿并清空旧 embedding。"""
+    for field_name in (
+        "code",
+        "title",
+        "situation",
+        "judgment",
+        "boundary",
+        "source_type",
+        "source_ref",
+        "source_excerpt",
+    ):
+        if field_name not in data:
+            continue
+        value = data[field_name]
+        setattr(entry, field_name, str(value).strip() if value is not None else None)
+    if not entry.title or not entry.judgment:
+        raise ValueError("经验标题和判断不能为空")
+    entry.status = EXPERIENCE_STATUS_DRAFT
+    entry.embedding = None
+    entry.embedding_model = None
+    entry.confirmed_by = None
+    entry.confirmed_at = None
+    entry.updated_by = actor_uid
+    entry.updated_at = utc_now_naive()
+    await db.flush()
+    return entry
+
+
+async def invalidate_experience(db: AsyncSession, entry: ExperienceEntry, *, actor_uid: str) -> ExperienceEntry:
+    """标记经验失效并移除检索向量。"""
+    entry.status = EXPERIENCE_STATUS_INVALID
+    entry.embedding = None
+    entry.embedding_model = None
+    entry.updated_by = actor_uid
+    entry.updated_at = utc_now_naive()
+    await db.flush()
+    return entry
+
+
+async def get_twin_stats(db: AsyncSession, twin_slug: str) -> dict[str, int]:
+    """返回分身页需要的条目和待处理转交计数。"""
+    repo = FounderTwinRepository(db)
+    entry_counts = await repo.entry_status_counts(twin_slug)
+    handoff_counts = await repo.handoff_status_counts(twin_slug)
+    return {
+        "confirmed_entries": entry_counts.get(EXPERIENCE_STATUS_CONFIRMED, 0),
+        "draft_entries": entry_counts.get(EXPERIENCE_STATUS_DRAFT, 0),
+        "open_handoffs": handoff_counts.get("open", 0),
+    }
 
 
 async def get_visible_twin(db: AsyncSession, *, slug: str, user: User) -> Agent:
