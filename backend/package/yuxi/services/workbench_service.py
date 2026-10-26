@@ -7,6 +7,8 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.agents.digital_employee import FOUNDER_TWIN_KIND
+from yuxi.repositories.agent_repository import AgentRepository, user_can_manage_agent
 from yuxi.repositories.work_item_repository import WorkItemRepository, WorkItemRow
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import format_utc_datetime
@@ -20,6 +22,11 @@ DEFAULT_PAGE_SIZE = 50
 def run_work_item_key(run_id: str) -> str:
     """生成稳定的 Run 待办 key。"""
     return f"run:{run_id}"
+
+
+def handoff_work_item_key(handoff_id: int | str) -> str:
+    """生成稳定的分身转交待办 key。"""
+    return f"handoff:{handoff_id}"
 
 
 def parse_work_item_key(key: str) -> tuple[str, str]:
@@ -49,20 +56,30 @@ def _approval_kind(error_type: str | None) -> str | None:
 
 
 def work_item_to_dto(row: WorkItemRow, *, viewer: User, unread: bool) -> dict[str, Any]:
-    """把投影行转换成前后端共享的 WorkItem DTO。"""
-    approval_kind = _approval_kind(row.error_type)
+    """把统一投影行转换成前后端共享的 WorkItem DTO。"""
+    is_handoff = row.source_type == "handoff"
+    approval_kind = None if is_handoff else _approval_kind(row.error_type)
     is_digital_employee = row.source == "scheduled_agent"
-    key = run_work_item_key(row.run_id)
+    key = handoff_work_item_key(row.source_id) if is_handoff else run_work_item_key(row.source_id)
+    if is_handoff:
+        initiator_type = "human"
+        initiator_name = row.initiator_name or row.owner_uid
+    elif is_digital_employee:
+        initiator_type = "digital_employee"
+        initiator_name = row.agent_name or row.agent_slug
+    else:
+        initiator_type = "human"
+        initiator_name = row.initiator_name or viewer.username
     return {
         "key": key,
-        "source_type": "agent_run",
-        "source_id": row.run_id,
+        "source_type": row.source_type,
+        "source_id": row.source_id,
         "title": _title(row),
         "agent_slug": row.agent_slug,
         "agent_name": row.agent_name or row.agent_slug,
-        "initiator_type": "digital_employee" if is_digital_employee else "human",
-        "initiator_uid": viewer.uid,
-        "initiator_name": (row.agent_name or row.agent_slug) if is_digital_employee else viewer.username,
+        "initiator_type": initiator_type,
+        "initiator_uid": row.owner_uid,
+        "initiator_name": initiator_name,
         "status": row.work_status,
         "approval_kind": approval_kind,
         "approval_summary": {
@@ -75,6 +92,12 @@ def work_item_to_dto(row: WorkItemRow, *, viewer: User, unread: bool) -> dict[st
         "updated_at": format_utc_datetime(row.updated_at),
         "unread": unread,
     }
+
+
+async def _managed_twin_slugs(db: AsyncSession, user: User) -> list[str]:
+    """列出当前用户可管理的老板分身，供转交单可见性过滤。"""
+    agents = await AgentRepository(db).list_by_kind(kind=FOUNDER_TWIN_KIND)
+    return [agent.slug for agent in agents if user_can_manage_agent(user, agent)]
 
 
 async def list_work_items(
@@ -91,8 +114,18 @@ async def list_work_items(
     limit = max(1, min(int(limit), MAX_PAGE_SIZE))
     offset = max(0, int(offset))
     repo = WorkItemRepository(db)
-    rows, total = await repo.list_latest(user.uid, status=status, limit=limit, offset=offset)
-    keys = [run_work_item_key(row.run_id) for row in rows]
+    managed_twin_slugs = await _managed_twin_slugs(db, user)
+    rows, total = await repo.list_items(
+        user.uid,
+        managed_twin_slugs=managed_twin_slugs,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    keys = [
+        handoff_work_item_key(row.source_id) if row.source_type == "handoff" else run_work_item_key(row.source_id)
+        for row in rows
+    ]
     viewed = await repo.viewed_keys(user.uid, keys)
     return {
         "items": [work_item_to_dto(row, viewer=user, unread=key not in viewed) for row, key in zip(rows, keys)],
@@ -108,10 +141,14 @@ async def get_work_item(db: AsyncSession, user: User, key: str) -> dict[str, Any
         source_type, source_id = parse_work_item_key(key)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="待办不存在") from exc
-    if source_type != "run":
-        raise HTTPException(status_code=404, detail="待办不存在")
+    row_source_type = "agent_run" if source_type == "run" else "handoff"
     repo = WorkItemRepository(db)
-    row = await repo.get_latest_run(user.uid, source_id)
+    row = await repo.get_item(
+        user.uid,
+        managed_twin_slugs=await _managed_twin_slugs(db, user),
+        source_type=row_source_type,
+        source_id=source_id,
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="待办不存在")
     viewed = await repo.viewed_keys(user.uid, [key])
@@ -129,10 +166,11 @@ async def mark_work_item_viewed(db: AsyncSession, user: User, key: str) -> dict[
 async def get_work_item_summary(db: AsyncSession, user: User) -> dict[str, Any]:
     """返回状态计数与未读总数。"""
     repo = WorkItemRepository(db)
-    counts = await repo.summary(user.uid)
+    managed_twin_slugs = await _managed_twin_slugs(db, user)
+    counts = await repo.summary(user.uid, managed_twin_slugs=managed_twin_slugs)
     normalized = {status: int(counts.get(status, 0)) for status in WORK_ITEM_STATUSES}
     return {
         "counts": normalized,
         "total": sum(normalized.values()),
-        "unread": await repo.unread_count(user.uid),
+        "unread": await repo.unread_count(user.uid, managed_twin_slugs=managed_twin_slugs),
     }

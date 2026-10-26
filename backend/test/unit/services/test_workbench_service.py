@@ -17,6 +17,8 @@ pytestmark = [pytest.mark.unit]
 
 def _row(**overrides) -> WorkItemRow:
     values = {
+        "source_type": "agent_run",
+        "source_id": "run-1",
         "run_id": "run-1",
         "thread_id": "thread-1",
         "conversation_id": 1,
@@ -28,6 +30,8 @@ def _row(**overrides) -> WorkItemRow:
         "run_status": "completed",
         "work_status": "completed",
         "error_type": None,
+        "owner_uid": "u1",
+        "initiator_name": None,
         "created_at": datetime(2026, 1, 1, 9, 0, 0),
         "updated_at": datetime(2026, 1, 1, 9, 1, 0),
     }
@@ -90,3 +94,35 @@ def test_work_item_key_round_trip_and_rejects_unknown_source() -> None:
         parse_work_item_key("unknown:1")
     with pytest.raises(ValueError):
         parse_work_item_key("run:")
+
+
+def test_handoff_dto_keeps_requester_as_initiator() -> None:
+    item = work_item_to_dto(
+        _row(
+            source_type="handoff",
+            source_id="7",
+            run_id=None,
+            thread_id=None,
+            conversation_id=None,
+            source="founder_twin_handoff",
+            run_status="open",
+            work_status="running",
+            title="组织架构怎么调整",
+            input_text=None,
+            owner_uid="u2",
+            initiator_name="李四",
+        ),
+        viewer=SimpleNamespace(uid="boss", username="老板"),
+        unread=True,
+    )
+
+    assert item["key"] == "handoff:7"
+    assert item["source_type"] == "handoff"
+    assert item["source_id"] == "7"
+    assert item["status"] == "running"
+    assert item["initiator_type"] == "human"
+    assert item["initiator_uid"] == "u2"
+    assert item["initiator_name"] == "李四"
+    assert item["thread_id"] is None
+    assert item["run_id"] is None
+    assert item["approval_kind"] is None

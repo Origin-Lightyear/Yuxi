@@ -243,6 +243,47 @@ async def seeded_two_work_items(workbench_user, seeded_work_item):
         await _db("DELETE FROM conversations WHERE id = :cid", {"cid": conversation_id})
 
 
+@pytest_asyncio.fixture()
+async def seeded_handoff(workbench_user, local_admin_headers):
+    """为待办用户造一条老板分身转交单，并让本地管理员成为分身管理者。"""
+    suffix = uuid.uuid4().hex[:12]
+    slug = f"pytest-wb-twin-{suffix}"
+    await _db(
+        """
+        INSERT INTO agents (
+            slug, backend_id, name, pics, config_json, share_config, kind,
+            digital_employee_profile, is_default, is_subagent, created_by
+        )
+        VALUES (
+            :slug, 'ChatbotAgent', '待办老板分身', '[]'::jsonb, '{}'::jsonb,
+            CAST(:share_config AS jsonb), 'founder_twin', '{}'::jsonb, FALSE, FALSE, :created_by
+        )
+        """,
+        {
+            "slug": slug,
+            "created_by": ADMIN_UID,
+            "share_config": (
+                '{"version":2,"read_scope":{"access_level":"global","department_ids":[],"user_uids":[]},'
+                f'"manage_scope":{{"access_level":"user","department_ids":[],"user_uids":["{ADMIN_UID}"]}}}}'
+            ),
+        },
+    )
+    handoff = await _db(
+        """
+        INSERT INTO handoff_requests (twin_slug, uid, question, status)
+        VALUES (:slug, :uid, '组织架构怎么调整', 'open')
+        RETURNING id
+        """,
+        {"slug": slug, "uid": workbench_user["uid"]},
+    )
+    try:
+        yield {"slug": slug, "id": handoff.id, "key": f"handoff:{handoff.id}"}
+    finally:
+        await _db("DELETE FROM experience_consultations WHERE twin_slug = :slug", {"slug": slug})
+        await _db("DELETE FROM handoff_requests WHERE twin_slug = :slug", {"slug": slug})
+        await _db("DELETE FROM agents WHERE slug = :slug", {"slug": slug})
+
+
 async def test_workbench_todos_list_detail_and_mark_viewed(
     test_client,
     workbench_user,
@@ -336,3 +377,56 @@ async def test_workbench_filters_paginates_and_marks_scheduled_initiator(
     assert scheduled["initiator_type"] == "digital_employee"
     assert scheduled["initiator_name"] == "待办测试助手"
     assert scheduled["source_type"] == "agent_run"
+
+
+async def test_workbench_lists_handoff_for_requester_and_twin_manager(
+    test_client,
+    local_admin_headers,
+    workbench_user,
+    other_workbench_user,
+    seeded_handoff,
+):
+    response = await test_client.get("/api/workbench/todos", headers=workbench_user["headers"])
+    assert response.status_code == 200, response.text
+    item = next(item for item in response.json()["items"] if item["source_type"] == "handoff")
+    assert item["key"] == seeded_handoff["key"]
+    assert item["status"] == "running"
+    assert item["unread"] is True
+    assert item["thread_id"] is None
+    assert item["run_id"] is None
+    assert item["agent_slug"] == seeded_handoff["slug"]
+    assert item["initiator_name"]
+
+    detail = await test_client.get(
+        f"/api/workbench/todos/{seeded_handoff['key']}",
+        headers=workbench_user["headers"],
+    )
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["item"]["source_type"] == "handoff"
+
+    hidden = await test_client.get(
+        f"/api/workbench/todos/{seeded_handoff['key']}",
+        headers=other_workbench_user["headers"],
+    )
+    assert hidden.status_code == 404
+
+    manager_list = await test_client.get("/api/workbench/todos", headers=local_admin_headers)
+    assert manager_list.status_code == 200, manager_list.text
+    assert any(item["key"] == seeded_handoff["key"] for item in manager_list.json()["items"])
+
+    manager_detail = await test_client.get(
+        f"/api/workbench/todos/{seeded_handoff['key']}",
+        headers=local_admin_headers,
+    )
+    assert manager_detail.status_code == 200, manager_detail.text
+
+    marked = await test_client.post(
+        f"/api/workbench/todos/{seeded_handoff['key']}/viewed",
+        headers=workbench_user["headers"],
+    )
+    assert marked.status_code == 200, marked.text
+    refreshed = await test_client.get(
+        f"/api/workbench/todos/{seeded_handoff['key']}",
+        headers=workbench_user["headers"],
+    )
+    assert refreshed.json()["item"]["unread"] is False
