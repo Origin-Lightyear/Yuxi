@@ -1,6 +1,6 @@
 # 企业智能工作台：数字员工、待办与老板分身
 
-状态：P1 implemented（2026-10-26）；P2/P3 proposed
+状态：P1/P2 implemented（2026-10-26）；P3 proposed
 
 日期：2026-10-26
 
@@ -396,7 +396,7 @@ API 模块：
 
 ### 6.1 P2 待办事项
 
-P2 不改变 P1 的员工模型。它新增一个运行时投影：
+P2 已实现，不改变 P1 的员工模型。它新增一个运行时投影：
 
 ```text
 WorkItem
@@ -409,17 +409,19 @@ WorkItem
   initiator_uid / initiator_name
   status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled"
   approval_kind: "tool" | "question" | null
+  approval_summary: string | null
   thread_id / run_id
   created_at / updated_at
+  unread: bool
 ```
 
 - 事实来源：每线程最新顶层 Run；排除 subagent、agent_call、agent_evaluation；`source=scheduled_agent` 的发起方显示为数字员工。
 - `waiting_approval`：最新 Run 为 `interrupted` 且 `error_type` 为 `human_approval_required` / `ask_user_question_required`。
 - 审批动作不在待办页复制：详情抽屉提供「去对话处理」，跳转现有会话，由 `HumanApprovalModal` 完成 resume。
-- 新增 `work_item_views(uid, item_key, viewed_at)` 已读表；不新增待办状态表。
-- P2 的 API 建议：`GET /api/workbench/todos`、`GET /api/workbench/todos/{key}`、`POST /api/workbench/todos/{key}/viewed`、`GET /api/workbench/todos/summary`。
-- P3 的转交单以 `source_type=handoff` 接入同一 DTO；P2 可以先不实现 handoff source，但 DTO 和前端不能写死只有 Run。
-- P2 需要独立提案：窗口查询、索引、分页、已读表和审批跳转的验收。
+- 新增 `work_item_views(uid, item_key, viewed_at)` 已读表，`(uid,item_key)` 唯一；不新增待办状态表。
+- P2 API：`GET /api/workbench/todos`、`GET /api/workbench/todos/{key}`、`POST /api/workbench/todos/{key}/viewed`、`GET /api/workbench/todos/summary`。
+- P3 的转交单以 `source_type=handoff` 接入同一 DTO；P2 已预留 key 解析、DTO 和前端动作，但尚未产生 handoff 记录。
+- P2 实现决策、状态映射、已读粒度和验证见 [待办收件箱接入企业智能工作台](../../develop-guides/decisions/implemented/2026-10-26-workbench-todos-p2.md)。
 
 ### 6.2 P3 老板分身
 
