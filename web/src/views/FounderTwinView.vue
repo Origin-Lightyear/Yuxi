@@ -49,8 +49,7 @@ const handoffDrafts = ref({})
 
 const canManage = computed(() => founderTwinCanManage(selectedTwin.value))
 const canCreateTwin = computed(() => userStore.isAdmin)
-const canAnswerHandoff = (item) =>
-  canManage.value || (!!userStore.uid && item.assigned_to_uid === userStore.uid)
+const canAnswerHandoff = (item) => Boolean(item?.can_answer)
 
 const formatTime = (value) => {
   if (!value) return '—'
@@ -245,8 +244,7 @@ const answerHandoff = async (handoff, closeOnly = false) => {
   }
   try {
     await founderTwinApi.updateHandoff(selectedSlug.value, handoff.id, {
-      ...(closeOnly ? { status: 'closed' } : { answer }),
-      ...(userStore.uid ? { assigned_to_uid: userStore.uid } : {})
+      ...(closeOnly ? { status: 'closed' } : { answer })
     })
     message.success(closeOnly ? '转交单已关闭' : '回答已保存')
     await loadTwinData()
@@ -492,7 +490,9 @@ onMounted(loadTwins)
                     </a-tag>
                   </div>
                   <p class="record-meta">
-                    发起人 {{ item.requester_name || '员工' }} · {{ formatTime(item.created_at) }}
+                    发起人 {{ item.requester_name || '员工' }}
+                    <template v-if="item.assignee_name"> · 指派给 {{ item.assignee_name }}</template>
+                    · {{ formatTime(item.created_at) }}
                   </p>
                   <p v-if="item.answer" class="record-answer">{{ item.answer }}</p>
                   <div v-if="canAnswerHandoff(item) && item.status !== 'closed'" class="handoff-form">

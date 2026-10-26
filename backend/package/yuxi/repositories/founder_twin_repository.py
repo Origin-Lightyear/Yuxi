@@ -57,7 +57,14 @@ class FounderTwinRepository:
 
     async def count_entries(self, twin_slug: str) -> int:
         """统计分身全部经验条目，用于 2,000 条上限。"""
-        stmt = select(func.count()).select_from(ExperienceEntry).where(ExperienceEntry.twin_slug == twin_slug)
+        stmt = (
+            select(func.count())
+            .select_from(ExperienceEntry)
+            .where(
+                ExperienceEntry.twin_slug == twin_slug,
+                ExperienceEntry.status != "invalid",
+            )
+        )
         return int((await self.db.scalar(stmt)) or 0)
 
     async def entry_status_counts(self, twin_slug: str) -> dict[str, int]:

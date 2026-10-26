@@ -410,6 +410,17 @@ async def test_workbench_lists_handoff_for_requester_and_twin_manager(
     )
     assert hidden.status_code == 404
 
+    await _db(
+        "UPDATE handoff_requests SET assigned_to_uid = :uid WHERE id = :id",
+        {"uid": other_workbench_user["uid"], "id": seeded_handoff["id"]},
+    )
+    assigned = await test_client.get(
+        "/api/workbench/todos",
+        headers=other_workbench_user["headers"],
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert any(item["key"] == seeded_handoff["key"] for item in assigned.json()["items"])
+
     manager_list = await test_client.get("/api/workbench/todos", headers=local_admin_headers)
     assert manager_list.status_code == 200, manager_list.text
     assert any(item["key"] == seeded_handoff["key"] for item in manager_list.json()["items"])

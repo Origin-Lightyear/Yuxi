@@ -163,7 +163,7 @@ onMounted(refresh)
           class="list-error"
         >
           <template #action>
-            <a-button size="small" type="text" @click="loadMore">重试</a-button>
+            <a-button size="small" type="text" @click="loadTodos()">重试</a-button>
           </template>
         </a-alert>
         <a-spin :spinning="loading">

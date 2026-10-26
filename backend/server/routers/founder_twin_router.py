@@ -88,7 +88,7 @@ class ExperienceEntryUpdate(BaseModel):
 class HandoffUpdate(BaseModel):
     status: Literal["answered", "closed"] | None = None
     answer: str | None = None
-    assigned_to_uid: str | None = None
+    assigned_to_uid: str | None = Field(None, max_length=64)
 
 
 def _twin_payload(agent: Agent, *, user: User, stats: dict[str, int]) -> dict:
@@ -159,13 +159,20 @@ def _consultation_payload(
     }
 
 
-def _handoff_payload(item: HandoffRequest, *, requester_name: str | None = None) -> dict:
+def _handoff_payload(
+    item: HandoffRequest,
+    *,
+    requester_name: str | None = None,
+    assignee_name: str | None = None,
+    can_answer: bool = False,
+) -> dict:
     return {
         "id": item.id,
         "twin_slug": item.twin_slug,
         "question": item.question,
         "requester_name": requester_name or "员工",
-        "assigned_to_uid": item.assigned_to_uid,
+        "assignee_name": assignee_name,
+        "can_answer": can_answer,
         "status": item.status,
         "answer": item.answer,
         "created_at": format_utc_datetime(item.created_at),
@@ -447,13 +454,22 @@ async def list_handoffs(
 ):
     """列出转交单；普通员工只看自己的，管理者看全部。"""
     agent = await get_visible_twin(db, slug=slug, user=current_user)
-    uid = None if user_can_manage_agent(current_user, agent) else str(current_user.uid)
+    is_manager = user_can_manage_agent(current_user, agent)
+    uid = None if is_manager else str(current_user.uid)
     repo = FounderTwinRepository(db)
     items = await repo.list_handoffs(agent.slug, uid=uid)
-    names = await repo.get_user_names([item.uid for item in items])
+    names = await repo.get_user_names(
+        [item.uid for item in items] + [item.assigned_to_uid for item in items if item.assigned_to_uid]
+    )
     return {
         "handoffs": [
-            _handoff_payload(item, requester_name=names.get(item.uid)) for item in items
+            _handoff_payload(
+                item,
+                requester_name=names.get(item.uid),
+                assignee_name=names.get(item.assigned_to_uid) if item.assigned_to_uid else None,
+                can_answer=is_manager or item.assigned_to_uid == str(current_user.uid),
+            )
+            for item in items
         ]
     }
 
@@ -472,8 +488,11 @@ async def update_handoff(
     handoff = await repo.get_handoff(handoff_id)
     if handoff is None or handoff.twin_slug != agent.slug:
         raise HTTPException(status_code=404, detail="转交单不存在")
-    if not user_can_manage_agent(current_user, agent) and handoff.assigned_to_uid != str(current_user.uid):
+    is_manager = user_can_manage_agent(current_user, agent)
+    if not is_manager and handoff.assigned_to_uid != str(current_user.uid):
         raise HTTPException(status_code=403, detail="无权处理该转交单")
+    if not is_manager and payload.assigned_to_uid is not None:
+        raise HTTPException(status_code=403, detail="只有分身管理者可以改派转交单")
     if payload.status is not None:
         handoff.status = payload.status
     if payload.assigned_to_uid is not None:
@@ -487,5 +506,14 @@ async def update_handoff(
         handoff.answered_at = utc_now_naive()
     await db.commit()
     await db.refresh(handoff)
-    names = await repo.get_user_names([handoff.uid])
-    return {"handoff": _handoff_payload(handoff, requester_name=names.get(handoff.uid))}
+    names = await repo.get_user_names(
+        [handoff.uid] + ([handoff.assigned_to_uid] if handoff.assigned_to_uid else [])
+    )
+    return {
+        "handoff": _handoff_payload(
+            handoff,
+            requester_name=names.get(handoff.uid),
+            assignee_name=names.get(handoff.assigned_to_uid) if handoff.assigned_to_uid else None,
+            can_answer=True,
+        )
+    }

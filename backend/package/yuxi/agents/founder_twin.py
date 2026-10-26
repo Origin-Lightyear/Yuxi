@@ -165,20 +165,23 @@ async def _create_handoff(question: str, reason: str, runtime: ToolRuntime) -> s
     scope = _founder_context(runtime)
     if not str(question or "").strip() or not str(reason or "").strip():
         return _json({"ok": False, "error": "转交问题与原因不能为空"})
-    async with pg_manager.get_async_session_context() as db:
-        agent = await AgentRepository(db).get_by_slug(scope["twin_slug"])
-        assigned_to_uid = str(getattr(agent, "created_by", "") or "").strip() or None
-        handoff = await record_handoff(
-            db,
-            twin_slug=scope["twin_slug"],
-            uid=scope["uid"],
-            thread_id=scope["thread_id"],
-            run_id=scope["run_id"],
-            question=question.strip(),
-            reason=reason.strip(),
-            assigned_to_uid=assigned_to_uid,
-        )
-        await db.commit()
+    try:
+        async with pg_manager.get_async_session_context() as db:
+            agent = await AgentRepository(db).get_by_slug(scope["twin_slug"])
+            assigned_to_uid = str(getattr(agent, "created_by", "") or "").strip() or None
+            handoff = await record_handoff(
+                db,
+                twin_slug=scope["twin_slug"],
+                uid=scope["uid"],
+                thread_id=scope["thread_id"],
+                run_id=scope["run_id"],
+                question=question.strip(),
+                reason=reason.strip(),
+                assigned_to_uid=assigned_to_uid,
+            )
+            await db.commit()
+    except ValueError as exc:
+        return _json({"ok": False, "error": str(exc)})
     return _json(
         {
             "ok": True,
@@ -224,8 +227,8 @@ def build_founder_twin_tools() -> list[StructuredTool]:
             name="submit_consultation_answer",
             coroutine=submit_consultation_answer,
             description=(
-                "提交有经验依据的最终答案；必须提供 cited_entry_ids，"
-                "成功提交后最终回复必须原样复述 answer。"
+                "提交有经验依据的最终答案；必须先单独调用 retrieve_experience，"
+                "cited_entry_ids 只能来自本轮检索结果，成功提交后最终回复必须原样复述 answer。"
             ),
             infer_schema=True,
         ),

@@ -292,15 +292,23 @@ async def test_founder_twin_consultations_and_handoffs_respect_owner_scope(
     )
     assert forbidden_update.status_code == 403
 
+    forbidden_reassign = await test_client.put(
+        f"/api/founder-twins/{slug}/handoffs/{first_handoff.id}",
+        headers=other_twin_user["headers"],
+        json={"assigned_to_uid": twin_user["uid"]},
+    )
+    assert forbidden_reassign.status_code == 403
+
     assigned_handoffs = await test_client.get(
         f"/api/founder-twins/{slug}/handoffs",
         headers=other_twin_user["headers"],
     )
     assert assigned_handoffs.status_code == 200, assigned_handoffs.text
-    assert {item["id"] for item in assigned_handoffs.json()["handoffs"]} == {
-        first_handoff.id,
-        second_handoff.id,
-    }
+    assigned_items = assigned_handoffs.json()["handoffs"]
+    assert {item["id"] for item in assigned_items} == {first_handoff.id, second_handoff.id}
+    can_answer = {item["id"]: item["can_answer"] for item in assigned_items}
+    assert can_answer[first_handoff.id] is True
+    assert can_answer[second_handoff.id] is False
 
     answered = await test_client.put(
         f"/api/founder-twins/{slug}/handoffs/{first_handoff.id}",

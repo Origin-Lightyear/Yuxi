@@ -32,7 +32,7 @@ P3 需要把分身收敛成可验证的产品能力：经验条目有确认状�
 - `experience_consultations`：`run_id` 唯一；保存问题、答案、引用 ID、置信度和关联转交单。
 - `handoff_requests`：`status` 只允许 `open/answered/closed`；保存问题、回答人、回答和时间。
 
-不引入 pgvector。确认经验时用现有 `select_embedding_model` 生成 embedding，存 JSONB；查询时加载本分身最多 2,000 条 confirmed 向量，在进程内计算余弦 top-k。创建经验时执行 2,000 条上限；编辑任何已确认条目会退回草稿并清空旧向量；`invalid` 是终态，不能重新确认或编辑，失效条目清空向量，避免被后续检索误用。检索只比较 `embedding_model` 与本次查询模型一致的条目，模型切换后旧向量不会被错误混算。确认失败时返回 503 且不写入 `confirmed`，不把未就绪伪装成成功。
+不引入 pgvector。确认经验时用现有 `select_embedding_model` 生成 embedding，存 JSONB；查询时加载本分身最多 2,000 条 confirmed 向量，在进程内计算余弦 top-k。创建经验时按非 invalid 条目执行 2,000 条上限，失效条目不会永久占满容量；编辑任何已确认条目会退回草稿并清空旧向量；`invalid` 是终态，不能重新确认或编辑，失效条目清空向量，避免被后续检索误用。检索只比较 `embedding_model` 与本次查询模型一致的条目，模型切换后旧向量不会被错误混算；代价是切换模型后已确认条目暂时不可检索，需要管理员逐条编辑回草稿并重新确认（当前未提供批量重建入口），上线前应避免无故切换 embedding 模型。确认失败时返回 503 且不写入 `confirmed`，不把未就绪伪装成成功。
 
 ### 工具与 guard
 
@@ -40,7 +40,7 @@ P3 需要把分身收敛成可验证的产品能力：经验条目有确认状�
 
 - `retrieve_experience`：检索当前分身的已确认经验。
 - `submit_consultation_answer`：引用不能为空，且必须是本轮 `retrieve_experience` 实际返回的条目；逐条校验条目属于当前分身、状态 confirmed 且有 embedding；成功后按 `run_id` 新建或更新唯一咨询记录，只对新增引用累加 `citation_count`。`record_consultation_answer` 在 PostgreSQL 按 `run_id` 取事务级 advisory lock，避免并发重复提交双写。
-- `create_handoff_request`：写 `open` 转交单，并把本次咨询记录指向它；`assigned_to_uid` 取分身创建者。同一 Run 的提交答案和转交互斥：已转交后不能再提交答案，已提交带引用答案后不能转交。转交工具返回固定 `answer`（“已将问题转交老板本人，请等待本人回答。”）。
+- `create_handoff_request`：写 `open` 转交单，并把本次咨询记录指向它；`assigned_to_uid` 取分身创建者。同一 Run 的提交答案和转交互斥：已转交后不能再提交答案，已提交带引用答案后不能转交。转交工具返回固定 `answer`（“已将问题转交老板本人，请等待本人回答。”）。只有分身管理者可以改派转交单；被指派人回答时不能顺手改派，接口返回 `can_answer`/`assignee_name`，不把登录 uid 暴露给前端。
 
 `FounderTwinAnswerGuardMiddleware` 在 `aafter_model` 检查当前用户轮次之后的工具消息。模型带 tool calls 时先放行等待工具执行；最终文本必须与成功 `submit_consultation_answer` 的 `answer` 或成功 `create_handoff_request` 返回的固定 `answer` 归一化后一致。转交后不能输出实质性结论，必须复述转交确认。首次违规注入一条 `founder_twin_guard` 纠正消息并跳回模型；同一轮再次违规抛 `RuntimeError`，让 Run 显式失败。不能靠提示词或 HTTP 200 证明约束生效。
 
@@ -73,7 +73,7 @@ P2 的 repository 从只投影 Run 改为 `UNION ALL`：
 - 2,000 条上限和进程内余弦限制单分身规模和查询吞吐；超过后需要独立向量索引和迁移决策。
 - guard 只检查当前 LangGraph 状态中最近用户轮次之后的工具消息；它不能证明模型内部「理解」了经验，只能证明最终答案与成功提交的引用答案一致。
 - `citation_count` 是提交次数近似值；同一 Run 重复提交只对新增引用累加。若模型先成功提交答案后又转交，已累加计数不会回滚；正常 guard 流程下不会发生。
-- `answer_message_id` 当前为空；咨询记录以 `run_id` 绑定 Run，消息级定位需要后续回填。提交答案在工具调用时落库，guard 仍可能在最终文本不一致时让 Run 失败；该记录应视为“已提交但未确认交付”的审计事实。
+- 切换 embedding 模型后旧 confirmed 条目会暂时不可检索；必须批量重建向量或逐条重新确认，否则页面仍显示“已确认”但检索为空。`answer_message_id` 当前为空；咨询记录以 `run_id` 绑定 Run，消息级定位需要后续回填。提交答案在工具调用时落库，guard 仍可能在最终文本不一致时让 Run 失败；该记录应视为“已提交但未确认交付”的审计事实。
 - 转交回答不会自动恢复原会话或通知提问人；当前通过待办状态和分身页面查看结果。
 - 普通员工能看到管理者的公开分身说明和已确认经验，但看不到内部 prompt、embedding、草稿或全部转交。
 
@@ -88,7 +88,7 @@ P2 的 repository 从只投影 Run 改为 `UNION ALL`：
 | 引用必须来自本轮检索、同分身、confirmed 且有向量 | 引用别的分身/失效条目/未检索 ID 也能通过 | `_retrieved_entry_ids`、`validate_citations`、submit 工具 | `test_founder_twin_tools.py` 5 passed：空引用、其他分身、invalid、不存在 ID、未检索 ID 均失败 | 去掉检索集合或 twin/status/embedding 条件后测试变红 | Passed |
 | 同一 Run 重复提交/转交保持幂等，转交/答案互斥 | 重复插入、双计数或同 Run 同时转交和回答 | `record_consultation_answer`、`record_handoff`、`run_id` 唯一、advisory lock | tools 同一 run 两次提交 count=1 且新增引用只加一次；service 互斥与 handoff 幂等测试 passed | 删除 run_id 唯一、互斥检查或锁后测试/并发场景变红 | Passed（串行）+ 并发未压测 |
 | guard 首次纠正、第二次失败，提交/转交都必须匹配工具答案 | 模型直接回答无引用答案，或转交后输出实质性结论 | `FounderTwinAnswerGuardMiddleware` | `test_founder_twin_guard.py` 4 passed：无工具、答案不一致、答案一致、handoff 规范答案/非规范答案 | 删除 guard 或去掉 handoff 文本比较后测试变红 | Passed |
-| 转交单进入待办且只对发起人/被指派老板/管理者可见 | 其他员工看到，或老板本人看不到/不能回答 | `WorkItemRepository._handoff_select`、`founder_twin_router.update_handoff`、`_managed_twin_slugs` | repository 5 passed；workbench API 6 passed；founder API 2 passed（普通被指派用户可回答） | 去掉 uid/assigned/managed 过滤后隔离测试变红；只允许 manager 回答时被指派用户测试变红 | Passed |
+| 转交单进入待办且只对发起人/被指派老板/管理者可见 | 其他员工看到，老板本人看不到/不能回答，或被指派人越权改派 | `WorkItemRepository._handoff_select`、`founder_twin_router.update_handoff`、`_managed_twin_slugs` | repository 5 passed；workbench API 6 passed（被指派普通用户可见）；founder API 2 passed（被指派用户可回答、改派返回 403） | 去掉 uid/assigned/managed 过滤后隔离测试变红；只允许 manager 回答时被指派用户测试变红 | Passed |
 | P2/P3 页面可构建，新增 util 进入官方 test gate | 前端编译失败、util 映射错误或测试不在 CI glob | `FounderTwinView.vue`、`WorkbenchView.vue`、`founderTwin.js`、`workItem.js` | `node --test --test-concurrency=1 "test/**/*.test.js" "test/**/*.spec.js"`：480 passed；ESLint 0；`vite build` 成功；新增测试位于 `web/test/unit/` | 删除 handoff 目标 FounderTwinComp 或关闭转交动作标签后测试变红 | Passed |
 | 全量后端 unit 无回归 | P3 改动破坏既有 unit | 全仓库 | `pytest test/unit -m "not slow"`：2707 passed, 58 skipped | 无 | Passed |
 
@@ -102,9 +102,12 @@ P2 的 repository 从只投影 Run 改为 `UNION ALL`：
 
 ## 风险
 
-- **embedding 是硬依赖**：未配置时经验无法确认、检索无法工作；上线前必须把模型可用性纳入 readiness 或明确展示不可用状态。
+- **转交默认收件人是分身创建者**：创建者应代表老板本人，或由管理员通过 API 改派；页面当前没有独立改派控件，若老板不是创建者，需要先补管理入口，否则转交仍可能落到 IT 管理员。
+- **embedding 是硬依赖**：未配置时经验无法确认、检索无法工作；上线前必须把模型可用性纳入 readiness 或明确展示不可用状态。切换 embedding 模型后需要重建旧向量，否则 confirmed 条目暂时不可检索。
 - **规模上限**：2,000 条和全量进程内余弦会随条目数线性变慢；超过后需要向量索引，且要重新设计受控引用。
 - **guard 依赖工具消息格式**：如果模型返回的 ToolMessage 内容不是 JSON 或工具名变化，guard 会按失败处理；这是 fail-closed，但需要保持工具契约测试。
+- **检索和提交必须分两步**：同一 assistant 消息并行调用 retrieve 和 submit 时，submit 看不到同批次检索结果，会失败关闭；提示词和工具描述要求先检索再提交，模型重复并行会触发 guard 失败。
 - **权限计算在 service 层**：`managed_twin_slugs` 每次待办查询都会扫描 founder_twin 列表；分身数量很大时需要索引或缓存，且必须保持 repository 不复制授权规则。
+- **并发提交未进入自动测试**：advisory lock 已在真实 PostgreSQL 手工验证（两个并发提交只留一条，submit+handoff 一胜一败），但还没有纳入 CI；后续应补真实并发 integration，避免锁路径回归。
 - **转交回答不等于闭环**：老板回答后不会自动重新运行提问人的原会话，也不会通知提问人；当前依赖待办已读和页面查看。
 - **`answer_message_id` 未回填**：当前审计以 `run_id` 为主键；如果未来要求精确到消息，需要在 Run 输出持久化事务中同步更新，不能再开一条旁路写。
