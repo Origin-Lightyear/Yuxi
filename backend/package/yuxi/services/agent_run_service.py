@@ -90,6 +90,7 @@ def load_agent_run_context(agent_item, agent_backend):
     config_context = config_json.get("context") if isinstance(config_json, dict) else {}
     if isinstance(config_context, dict):
         context.update_config(config_context)
+    context.agent_kind = getattr(agent_item, "kind", "agent") or "agent"
     return context
 
 

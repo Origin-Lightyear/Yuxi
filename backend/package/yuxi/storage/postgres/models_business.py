@@ -357,6 +357,88 @@ class Agent(Base):
         }
 
 
+class ExperienceEntry(Base):
+    """老板分身的经验条目；确认后才可被咨询检索和引用。"""
+
+    __tablename__ = "experience_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    twin_slug = Column(String(80), nullable=False, index=True)
+    code = Column(String(64), nullable=False)
+    title = Column(String(200), nullable=False)
+    situation = Column(Text, nullable=False, default="")
+    judgment = Column(Text, nullable=False, default="")
+    boundary = Column(Text, nullable=False, default="")
+    source_type = Column(String(32), nullable=False, default="manual")
+    source_ref = Column(String(512), nullable=True)
+    source_excerpt = Column(Text, nullable=True)
+    status = Column(String(32), nullable=False, default="draft", index=True)
+    embedding = Column(JSON_VALUE, nullable=True)
+    embedding_model = Column(String(128), nullable=True)
+    confirmed_by = Column(String(64), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    citation_count = Column(Integer, nullable=False, default=0)
+    created_by = Column(String(64), nullable=True, index=True)
+    updated_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    __table_args__ = (
+        UniqueConstraint("twin_slug", "code", name="uq_experience_entries_twin_code"),
+        Index("ix_experience_entries_twin_status", "twin_slug", "status"),
+    )
+
+
+class HandoffRequest(Base):
+    """分身无法给出有依据答案时转给老板本人的问题。"""
+
+    __tablename__ = "handoff_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    twin_slug = Column(String(80), nullable=False, index=True)
+    uid = Column(String(64), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    assigned_to_uid = Column(String(64), nullable=True, index=True)
+    status = Column(String(32), nullable=False, default="open", index=True)
+    answer = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    answered_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'answered', 'closed')", name="ck_handoff_requests_status"),
+        Index("ix_handoff_requests_twin_status", "twin_slug", "status"),
+        Index("ix_handoff_requests_twin_uid_created", "twin_slug", "uid", "created_at"),
+    )
+
+
+class ExperienceConsultation(Base):
+    """一次分身咨询；答案、引用和转交单绑定同一 Run。"""
+
+    __tablename__ = "experience_consultations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    twin_slug = Column(String(80), nullable=False, index=True)
+    uid = Column(String(64), nullable=False, index=True)
+    thread_id = Column(String(64), nullable=False, index=True)
+    run_id = Column(String(64), nullable=False)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=False, default="")
+    answer_message_id = Column(Integer, nullable=True)
+    cited_entry_ids = Column(JSON, nullable=False, default=list)
+    confidence = Column(Float, nullable=True)
+    handoff_id = Column(
+        Integer,
+        ForeignKey("handoff_requests.id", ondelete="SET NULL", name="fk_experience_consultations_handoff"),
+        nullable=True,
+    )
+    created_at = Column(DateTime, default=utc_now_naive)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_experience_consultations_run_id"),
+        Index("ix_experience_consultations_twin_uid_created", "twin_slug", "uid", "created_at"),
+    )
+
+
 class WorkItemView(Base):
     """待办已读记录；只保存用户对投影 item_key 的已读时间。"""
 

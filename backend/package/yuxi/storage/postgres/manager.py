@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 11
+BUSINESS_SCHEMA_VERSION = 12
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -495,7 +495,7 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             if version == BUSINESS_SCHEMA_VERSION:
                 return
-            if version not in (None, 2, 7, 8, 9, 10):
+            if version not in (None, 2, 7, 8, 9, 10, 11):
                 raise RuntimeError(f"Unsupported business schema version: {version}")
             if version in (None, 2, 7, 8):
                 for name in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
@@ -1532,6 +1532,78 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             """,
             "CREATE INDEX IF NOT EXISTS ix_work_item_views_uid ON work_item_views(uid)",
+            """
+            CREATE TABLE IF NOT EXISTS handoff_requests (
+                id SERIAL PRIMARY KEY,
+                twin_slug VARCHAR(80) NOT NULL,
+                uid VARCHAR(64) NOT NULL,
+                question TEXT NOT NULL,
+                assigned_to_uid VARCHAR(64),
+                status VARCHAR(32) NOT NULL DEFAULT 'open',
+                answer TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                answered_at TIMESTAMPTZ,
+                CONSTRAINT ck_handoff_requests_status CHECK (status IN ('open', 'answered', 'closed'))
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_twin_slug ON handoff_requests(twin_slug)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_uid ON handoff_requests(uid)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_assigned_to_uid ON handoff_requests(assigned_to_uid)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_status ON handoff_requests(status)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_twin_status ON handoff_requests(twin_slug, status)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_twin_uid_created ON handoff_requests(twin_slug, uid, created_at)",
+            """
+            CREATE TABLE IF NOT EXISTS experience_entries (
+                id SERIAL PRIMARY KEY,
+                twin_slug VARCHAR(80) NOT NULL,
+                code VARCHAR(64) NOT NULL,
+                title VARCHAR(200) NOT NULL,
+                situation TEXT NOT NULL DEFAULT '',
+                judgment TEXT NOT NULL DEFAULT '',
+                boundary TEXT NOT NULL DEFAULT '',
+                source_type VARCHAR(32) NOT NULL DEFAULT 'manual',
+                source_ref VARCHAR(512),
+                source_excerpt TEXT,
+                status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                embedding JSONB,
+                embedding_model VARCHAR(128),
+                confirmed_by VARCHAR(64),
+                confirmed_at TIMESTAMPTZ,
+                citation_count INTEGER NOT NULL DEFAULT 0,
+                created_by VARCHAR(64),
+                updated_by VARCHAR(64),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_experience_entries_twin_code UNIQUE (twin_slug, code)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_experience_entries_twin_slug ON experience_entries(twin_slug)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_entries_status ON experience_entries(status)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_entries_created_by ON experience_entries(created_by)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_entries_twin_status ON experience_entries(twin_slug, status)",
+            """
+            CREATE TABLE IF NOT EXISTS experience_consultations (
+                id SERIAL PRIMARY KEY,
+                twin_slug VARCHAR(80) NOT NULL,
+                uid VARCHAR(64) NOT NULL,
+                thread_id VARCHAR(64) NOT NULL,
+                run_id VARCHAR(64) NOT NULL,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL DEFAULT '',
+                answer_message_id INTEGER,
+                cited_entry_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                confidence DOUBLE PRECISION,
+                handoff_id INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_experience_consultations_run_id UNIQUE (run_id),
+                CONSTRAINT fk_experience_consultations_handoff
+                    FOREIGN KEY (handoff_id) REFERENCES handoff_requests(id) ON DELETE SET NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_experience_consultations_twin_slug ON experience_consultations(twin_slug)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_consultations_uid ON experience_consultations(uid)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_consultations_thread_id ON experience_consultations(thread_id)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_consultations_twin_uid_created ON experience_consultations(twin_slug, uid, created_at)",
             *TASK_DURABLE_SCHEMA_STATEMENTS,
         ]
         async with self.async_engine.begin() as conn:
