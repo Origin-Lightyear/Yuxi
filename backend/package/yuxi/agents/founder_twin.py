@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt.tool_node import ToolRuntime
 
@@ -18,6 +18,8 @@ from yuxi.services.founder_twin_service import (
     validate_citations,
 )
 from yuxi.storage.postgres.manager import pg_manager
+
+HANDOFF_ANSWER = "已将问题转交老板本人，请等待本人回答。"
 
 
 def _json(payload: dict) -> str:
@@ -47,6 +49,35 @@ def _current_question(runtime: ToolRuntime) -> str:
             content = message.content
             return content if isinstance(content, str) else str(content)
     return ""
+
+
+def _retrieved_entry_ids(runtime: ToolRuntime) -> set[int]:
+    """读取最近用户轮次内 retrieve_experience 返回过的条目 ID。"""
+    state = runtime.state or {}
+    messages = state.get("messages") if isinstance(state, dict) else None
+    if not messages:
+        return set()
+    boundary = -1
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, HumanMessage) and getattr(message, "name", None) != "founder_twin_guard":
+            boundary = index
+            break
+    retrieved: set[int] = set()
+    for message in messages[boundary + 1 :]:
+        if not isinstance(message, ToolMessage) or getattr(message, "name", None) != "retrieve_experience":
+            continue
+        content = message.content
+        if not isinstance(content, str):
+            continue
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        for entry in payload.get("entries") or []:
+            if isinstance(entry, dict) and entry.get("id") is not None:
+                retrieved.add(int(entry["id"]))
+    return retrieved
 
 
 async def _retrieve_experience(query: str, runtime: ToolRuntime) -> str:
@@ -90,6 +121,12 @@ async def _submit_answer(
         return _json({"ok": False, "error": "答案不能为空"})
     if not cited_entry_ids:
         return _json({"ok": False, "error": "没有引用依据，不能提交答案；请转交老板"})
+    retrieved_ids = _retrieved_entry_ids(runtime)
+    cited_ids = {int(value) for value in cited_entry_ids}
+    if not retrieved_ids:
+        return _json({"ok": False, "error": "必须先调用 retrieve_experience 检索经验"})
+    if not cited_ids.issubset(retrieved_ids):
+        return _json({"ok": False, "error": "引用条目必须来自本轮检索结果"})
     if not 0.0 <= float(confidence) <= 1.0:
         return _json({"ok": False, "error": "confidence 必须在 0 到 1 之间"})
     async with pg_manager.get_async_session_context() as db:
@@ -147,6 +184,7 @@ async def _create_handoff(question: str, reason: str, runtime: ToolRuntime) -> s
             "ok": True,
             "handoff_id": int(handoff.id),
             "handoff_key": f"handoff:{int(handoff.id)}",
+            "answer": HANDOFF_ANSWER,
         }
     )
 

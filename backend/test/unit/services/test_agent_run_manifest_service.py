@@ -289,6 +289,52 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_execution_preparation_carries_agent_kind(monkeypatch):
+    """真实执行准备必须把 Agent.kind 带入 Graph Context。"""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from yuxi.agents.buildin.chatbot.context import ChatBotContext
+    from yuxi.services import agent_run_manifest_service as service
+
+    agent = SimpleNamespace(backend_id="ChatbotAgent", config_json={}, kind="founder_twin")
+    monkeypatch.setattr(
+        service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
+    )
+    monkeypatch.setattr(service, "get_agent_backend", lambda name: SimpleNamespace(context_schema=ChatBotContext))
+
+    async def prepare(context):
+        context._runtime_prepared = True
+        context._skill_runtime_snapshot = {
+            "preloaded_skills": [],
+            "preloaded_skill_contents": {},
+            "skill_metadata": {},
+        }
+        return context
+
+    monkeypatch.setattr(service, "prepare_agent_runtime_context", prepare)
+    run = SimpleNamespace(
+        id="run",
+        request_id="req",
+        agent_slug="boss",
+        run_type="chat",
+        runtime_scope_id="root",
+        conversation_thread_id="thread",
+        input_payload={},
+    )
+
+    result = await service.prepare_run_execution(
+        run=run,
+        user=SimpleNamespace(uid="user"),
+        db=object(),
+        workdir_binding=SimpleNamespace(workdir_path="projects/project"),
+        worker_id="owner",
+    )
+
+    assert result.context.agent_kind == "founder_twin"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("missing", ["agent", "backend", "user", "parent"])
 async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, missing):
     """缺少执行依赖必须失败，不能固化空配置并进入执行。"""

@@ -22,9 +22,9 @@ const loading = ref(false)
 const items = ref([])
 const total = ref(0)
 const limit = 50
-const offset = ref(0)
 const statusFilter = ref('')
 const summary = ref({ counts: {}, total: 0, unread: 0 })
+const errorText = ref('')
 const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detailItem = ref(null)
@@ -59,18 +59,20 @@ const loadSummary = async () => {
 
 const loadTodos = async ({ append = false } = {}) => {
   loading.value = true
+  errorText.value = ''
+  const requestOffset = append ? items.value.length : 0
   try {
-    if (!append) offset.value = 0
     const response = await workbenchApi.listTodos({
       status: statusFilter.value,
       limit,
-      offset: offset.value
+      offset: requestOffset
     })
     const nextItems = response.items || []
     items.value = append ? [...items.value, ...nextItems] : nextItems
     total.value = response.total || 0
   } catch (error) {
-    message.error(error.message || '加载待办失败')
+    errorText.value = error.message || '加载待办失败'
+    message.error(errorText.value)
   } finally {
     loading.value = false
   }
@@ -81,7 +83,6 @@ const refresh = async () => {
 }
 
 const loadMore = async () => {
-  offset.value += limit
   await loadTodos({ append: true })
 }
 
@@ -154,8 +155,26 @@ onMounted(refresh)
       </section>
 
       <section class="todo-list" aria-label="待办列表">
+        <a-alert
+          v-if="errorText && items.length"
+          type="error"
+          show-icon
+          :message="errorText"
+          class="list-error"
+        >
+          <template #action>
+            <a-button size="small" type="text" @click="loadMore">重试</a-button>
+          </template>
+        </a-alert>
         <a-spin :spinning="loading">
-          <div v-if="!items.length && !loading" class="empty-state">
+          <div v-if="errorText && !items.length" class="empty-state error-state">
+            <Inbox :size="34" />
+            <p>待办加载失败</p>
+            <span>{{ errorText }}</span>
+            <a-button size="small" @click="loadTodos()">重试</a-button>
+          </div>
+
+          <div v-else-if="!items.length && !loading" class="empty-state">
             <Inbox :size="34" />
             <p>当前没有待办</p>
             <span>数字员工执行、定时任务和审批中断会出现在这里。</span>
@@ -426,6 +445,14 @@ onMounted(refresh)
   color: var(--gray-700);
   font-size: 13px;
   white-space: nowrap;
+}
+
+.error-state {
+  color: var(--error-color, #d4380d);
+}
+
+.list-error {
+  margin-bottom: 12px;
 }
 
 .empty-state {

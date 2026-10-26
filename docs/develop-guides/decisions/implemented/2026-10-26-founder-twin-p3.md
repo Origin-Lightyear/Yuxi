@@ -20,7 +20,7 @@ P3 需要把分身收敛成可验证的产品能力：经验条目有确认状�
 
 ### Agent 与权限
 
-复用 `Agent.kind='founder_twin'`，不新建分身主表；`backend/package/yuxi/agents/digital_employee.py` 增加 `FOUNDER_TWIN_KIND` 与 `MANAGED_AGENT_KINDS`。`BaseContext.agent_kind` 由 `Agent.kind` 在 `load_agent_run_context` 写入，作为运行时是否启用分身工具和 guard 的唯一开关。
+复用 `Agent.kind='founder_twin'`，不新建分身主表；`backend/package/yuxi/agents/digital_employee.py` 增加 `FOUNDER_TWIN_KIND` 与 `MANAGED_AGENT_KINDS`。`BaseContext.agent_kind` 由 `Agent.kind` 在 `load_agent_run_context` 和真实执行入口 `prepare_run_execution` 写入，作为运行时是否启用分身工具和 guard 的唯一开关。`test_agent_run_manifest_service.py` 直接穿过 `prepare_run_execution` 断言 founder 上下文，避免只测试被丢弃的配置解析路径。
 
 `/api/founder-twins` 只允许管理员创建；默认 `read_scope=global`、`manage_scope=None`，创建者通过现有 Agent 权限策略获得管理权。普通员工可以查看分身、已确认经验和自己的咨询/转交，不能创建、编辑、确认、失效经验，也不能回答转交。管理统计只返回给管理者；普通员工只看到已确认经验数，不暴露草稿数或待处理转交数。
 
@@ -32,17 +32,17 @@ P3 需要把分身收敛成可验证的产品能力：经验条目有确认状�
 - `experience_consultations`：`run_id` 唯一；保存问题、答案、引用 ID、置信度和关联转交单。
 - `handoff_requests`：`status` 只允许 `open/answered/closed`；保存问题、回答人、回答和时间。
 
-不引入 pgvector。确认经验时用现有 `select_embedding_model` 生成 embedding，存 JSONB；查询时加载本分身最多 2,000 条 confirmed 向量，在进程内计算余弦 top-k。创建经验时执行 2,000 条上限；编辑任何已确认条目会退回草稿并清空旧向量；失效条目清空向量，避免被后续检索误用。确认失败时返回 503 且不写入 `confirmed`，不把未就绪伪装成成功。
+不引入 pgvector。确认经验时用现有 `select_embedding_model` 生成 embedding，存 JSONB；查询时加载本分身最多 2,000 条 confirmed 向量，在进程内计算余弦 top-k。创建经验时执行 2,000 条上限；编辑任何已确认条目会退回草稿并清空旧向量；`invalid` 是终态，不能重新确认或编辑，失效条目清空向量，避免被后续检索误用。检索只比较 `embedding_model` 与本次查询模型一致的条目，模型切换后旧向量不会被错误混算。确认失败时返回 503 且不写入 `confirmed`，不把未就绪伪装成成功。
 
 ### 工具与 guard
 
 `FounderTwinMiddleware` 只在 `agent_kind=founder_twin` 时注册三个工具并追加系统提示：
 
 - `retrieve_experience`：检索当前分身的已确认经验。
-- `submit_consultation_answer`：引用不能为空；逐条校验条目属于当前分身、状态 confirmed 且有 embedding；成功后按 `run_id` 新建或更新唯一咨询记录，只对新增引用累加 `citation_count`。
-- `create_handoff_request`：写 `open` 转交单，并把本次咨询记录指向它；`assigned_to_uid` 取分身创建者。
+- `submit_consultation_answer`：引用不能为空，且必须是本轮 `retrieve_experience` 实际返回的条目；逐条校验条目属于当前分身、状态 confirmed 且有 embedding；成功后按 `run_id` 新建或更新唯一咨询记录，只对新增引用累加 `citation_count`。`record_consultation_answer` 在 PostgreSQL 按 `run_id` 取事务级 advisory lock，避免并发重复提交双写。
+- `create_handoff_request`：写 `open` 转交单，并把本次咨询记录指向它；`assigned_to_uid` 取分身创建者。同一 Run 的提交答案和转交互斥：已转交后不能再提交答案，已提交带引用答案后不能转交。转交工具返回固定 `answer`（“已将问题转交老板本人，请等待本人回答。”）。
 
-`FounderTwinAnswerGuardMiddleware` 在 `aafter_model` 检查当前用户轮次之后的工具消息。模型带 tool calls 时先放行等待工具执行；最终文本必须与成功 `submit_consultation_answer` 的 `answer` 归一化后一致，或已经成功 `create_handoff_request`。首次违规注入一条 `founder_twin_guard` 纠正消息并跳回模型；同一轮再次违规抛 `RuntimeError`，让 Run 显式失败。不能靠提示词或 HTTP 200 证明约束生效。
+`FounderTwinAnswerGuardMiddleware` 在 `aafter_model` 检查当前用户轮次之后的工具消息。模型带 tool calls 时先放行等待工具执行；最终文本必须与成功 `submit_consultation_answer` 的 `answer` 或成功 `create_handoff_request` 返回的固定 `answer` 归一化后一致。转交后不能输出实质性结论，必须复述转交确认。首次违规注入一条 `founder_twin_guard` 纠正消息并跳回模型；同一轮再次违规抛 `RuntimeError`，让 Run 显式失败。不能靠提示词或 HTTP 200 证明约束生效。
 
 ### 转交单接入待办
 
@@ -51,7 +51,7 @@ P2 的 repository 从只投影 Run 改为 `UNION ALL`：
 - Run：仍取每线程最新顶层 Run，排除 subagent/agent_call/agent_evaluation。
 - Handoff：`open -> running`、`answered -> completed`、`closed -> cancelled`；`approval_kind=None`。
 - 统一 key：`run:<id>` / `handoff:<id>`；DTO 对转交返回 `source_type=handoff`、`thread_id=None`、`run_id=None`，发起人是提问员工，不是当前查看的管理者。
-- 可见范围：转交单对发起人可见；对能管理该分身的用户也可见。管理范围在 service 中由 `Agent.kind='founder_twin'` 和 `user_can_manage_agent` 计算，再作为已授权 slug 列表传给 repository，避免在 SQL 中复制权限规则。
+- 可见范围：转交单对发起人、`assigned_to_uid` 指定的老板本人和能管理该分身的用户可见；老板本人即使没有 manage 权限也可以回答自己名下的转交单。管理范围在 service 中由 `Agent.kind='founder_twin'` 和 `user_can_manage_agent` 计算，再作为已授权 slug 列表传给 repository，避免在 SQL 中复制权限规则。
 - summary、未读数和详情使用同一 union；排序和分页在 union 后执行，不能先分别分页再合并。
 
 ### 前端
@@ -73,7 +73,7 @@ P2 的 repository 从只投影 Run 改为 `UNION ALL`：
 - 2,000 条上限和进程内余弦限制单分身规模和查询吞吐；超过后需要独立向量索引和迁移决策。
 - guard 只检查当前 LangGraph 状态中最近用户轮次之后的工具消息；它不能证明模型内部「理解」了经验，只能证明最终答案与成功提交的引用答案一致。
 - `citation_count` 是提交次数近似值；同一 Run 重复提交只对新增引用累加。若模型先成功提交答案后又转交，已累加计数不会回滚；正常 guard 流程下不会发生。
-- `answer_message_id` 当前为空；咨询记录以 `run_id` 绑定 Run，消息级定位需要后续回填。
+- `answer_message_id` 当前为空；咨询记录以 `run_id` 绑定 Run，消息级定位需要后续回填。提交答案在工具调用时落库，guard 仍可能在最终文本不一致时让 Run 失败；该记录应视为“已提交但未确认交付”的审计事实。
 - 转交回答不会自动恢复原会话或通知提问人；当前通过待办状态和分身页面查看结果。
 - 普通员工能看到管理者的公开分身说明和已确认经验，但看不到内部 prompt、embedding、草稿或全部转交。
 
@@ -81,18 +81,18 @@ P2 的 repository 从只投影 Run 改为 `UNION ALL`：
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
-| `founder_twin` 进入 Context，普通 Agent 不启用分身逻辑 | 所有 Agent 都被注入工具 | `load_agent_run_context`、`BaseContext.agent_kind`、`ChatbotAgent._build_middlewares` | `test_agent_run_context.py` 2 passed；guard 非 founder 直接放行 | 删除 `agent_kind` 赋值后 context 测试变红；删除条件后 guard 测试变红 | Passed |
+| `founder_twin` 进入真实执行 Context，普通 Agent 不启用分身逻辑 | 所有 Agent 都被注入工具，或真实 worker 上下文仍是 `agent` | `prepare_run_execution`、`BaseContext.agent_kind`、`ChatbotAgent._build_middlewares` | `test_agent_run_context.py` 2 passed；`test_agent_run_manifest_service.py` 21 passed，其中真实执行入口断言 `agent_kind=founder_twin`；guard 非 founder 直接放行 | 删除 `prepare_run_execution` 的 `agent_kind` 赋值后新增测试变红 | Passed |
 | v11→v12 三表、唯一约束和外键幂等 | 旧库缺表或重复升级失败 | `models_business.py`、`manager.py`、`storage_migration.py` | `test_founder_twin_migration.py` 1 passed；schema 版本测试 13 passed | 删除 DDL/唯一约束/外键断言后迁移测试变红 | Passed |
 | 管理员可创建、编辑、失效经验；普通员工只读 | 员工通过 API 改经验或看到草稿 | `founder_twin_router.py`、`founder_twin_service.py` | `test_founder_twin_api.py` 2 passed | 员工 POST entry/confirm 返回 403；普通入口只返回 confirmed | Passed |
-| 确认失败不写 confirmed | embedding 失败被伪装成功 | `confirm_experience`、`confirm_entry` | `test_founder_twin_service.py::test_confirm_generates_embedding_and_failure_keeps_draft` | mock embed 抛错后状态仍 draft、embedding 仍 None | Passed |
-| 引用必须非空、同分身、confirmed 且有向量 | 引用别的分身/失效条目也能通过 | `validate_citations`、submit 工具 | `test_founder_twin_tools.py` 4 passed：空引用、其他分身、invalid、不存在 ID 均失败 | 去掉 twin/status/embedding 条件后测试变红 | Passed |
-| 同一 Run 重复提交只保留一条咨询 | 重复插入导致唯一约束错误或双计数 | `record_consultation_answer`、`run_id` 唯一 | tools 测试同一 run 提交两次，count=1，新增引用只加一次 | 删除 run_id 唯一或不做 upsert 后测试变红 | Passed |
-| guard 首次纠正、第二次失败，成功提交/转交放行 | 模型直接回答无引用答案 | `FounderTwinAnswerGuardMiddleware` | `test_founder_twin_guard.py` 4 passed：无工具、答案不一致、答案一致、handoff | 删除 guard 后测试变红；第二次仍不抛错则测试变红 | Passed |
-| 转交单进入待办且只对本人/管理者可见 | 其他员工看到或管理者看不到 | `WorkItemRepository._handoff_select`、`workbench_service._managed_twin_slugs` | repository 4 passed；workbench API 6 passed；43 个 P2/P3 相关测试 passed | 去掉 uid/managed 过滤后隔离测试变红；不加入 handoff select 时列表测试变红 | Passed |
-| P2 页面和 P3 页面可构建 | 前端编译失败或 util 映射错误 | `FounderTwinView.vue`、`founderTwin.js`、`workItem.js` | `node --test`：484 passed；ESLint 0；`vite build` 成功 | 删除 handoff 目标的 FounderTwinComp 后 util 测试变红 | Passed |
-| 全量后端 unit 无回归 | P3 改动破坏既有 unit | 全仓库 | `pytest test/unit -m "not slow"`：2701 passed, 58 skipped | 无 | Passed |
+| 确认失败不写 confirmed，invalid 是终态 | embedding 失败被伪装成功，失效条目被重新激活 | `confirm_experience`、`update_experience_entry`、`confirm_entry` | `test_founder_twin_service.py` 6 passed：embedding 抛错仍 draft；invalid 不可确认/编辑；API invalid confirm 返回 422 | 删除状态门后 invalid 测试变红 | Passed |
+| 引用必须来自本轮检索、同分身、confirmed 且有向量 | 引用别的分身/失效条目/未检索 ID 也能通过 | `_retrieved_entry_ids`、`validate_citations`、submit 工具 | `test_founder_twin_tools.py` 5 passed：空引用、其他分身、invalid、不存在 ID、未检索 ID 均失败 | 去掉检索集合或 twin/status/embedding 条件后测试变红 | Passed |
+| 同一 Run 重复提交/转交保持幂等，转交/答案互斥 | 重复插入、双计数或同 Run 同时转交和回答 | `record_consultation_answer`、`record_handoff`、`run_id` 唯一、advisory lock | tools 同一 run 两次提交 count=1 且新增引用只加一次；service 互斥与 handoff 幂等测试 passed | 删除 run_id 唯一、互斥检查或锁后测试/并发场景变红 | Passed（串行）+ 并发未压测 |
+| guard 首次纠正、第二次失败，提交/转交都必须匹配工具答案 | 模型直接回答无引用答案，或转交后输出实质性结论 | `FounderTwinAnswerGuardMiddleware` | `test_founder_twin_guard.py` 4 passed：无工具、答案不一致、答案一致、handoff 规范答案/非规范答案 | 删除 guard 或去掉 handoff 文本比较后测试变红 | Passed |
+| 转交单进入待办且只对发起人/被指派老板/管理者可见 | 其他员工看到，或老板本人看不到/不能回答 | `WorkItemRepository._handoff_select`、`founder_twin_router.update_handoff`、`_managed_twin_slugs` | repository 5 passed；workbench API 6 passed；founder API 2 passed（普通被指派用户可回答） | 去掉 uid/assigned/managed 过滤后隔离测试变红；只允许 manager 回答时被指派用户测试变红 | Passed |
+| P2/P3 页面可构建，新增 util 进入官方 test gate | 前端编译失败、util 映射错误或测试不在 CI glob | `FounderTwinView.vue`、`WorkbenchView.vue`、`founderTwin.js`、`workItem.js` | `node --test --test-concurrency=1 "test/**/*.test.js" "test/**/*.spec.js"`：480 passed；ESLint 0；`vite build` 成功；新增测试位于 `web/test/unit/` | 删除 handoff 目标 FounderTwinComp 或关闭转交动作标签后测试变红 | Passed |
+| 全量后端 unit 无回归 | P3 改动破坏既有 unit | 全仓库 | `pytest test/unit -m "not slow"`：2707 passed, 58 skipped | 无 | Passed |
 
-最低证据：真实 PostgreSQL v12 迁移；真实 HTTP 覆盖管理员/员工权限、分身列表、待办双源和转交可见性；agent guard/tool/graph unit；前端 unit/lint/build 全量通过。
+最低证据：真实 PostgreSQL v12 迁移；真实 HTTP 覆盖管理员/员工权限、分身列表、待办双源、被指派老板回答和转交可见性；agent guard/tool/真实执行准备 unit；前端官方 unit/lint/build 全量通过。相关 P2/P3 测试 69 passed。
 
 未运行：
 - 确定性 E2E：replay 网关 `http://localhost:8765/health` 不可达。

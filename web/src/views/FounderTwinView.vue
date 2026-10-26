@@ -49,6 +49,8 @@ const handoffDrafts = ref({})
 
 const canManage = computed(() => founderTwinCanManage(selectedTwin.value))
 const canCreateTwin = computed(() => userStore.isAdmin)
+const canAnswerHandoff = (item) =>
+  canManage.value || (!!userStore.uid && item.assigned_to_uid === userStore.uid)
 
 const formatTime = (value) => {
   if (!value) return '—'
@@ -407,9 +409,16 @@ onMounted(loadTwins)
                       </p>
                     </div>
                     <div v-if="canManage" class="entry-actions">
-                      <a-button size="small" type="text" @click="openEditEntry(entry)">编辑</a-button>
                       <a-button
-                        v-if="entry.status !== 'confirmed'"
+                        v-if="entry.status !== 'invalid'"
+                        size="small"
+                        type="text"
+                        @click="openEditEntry(entry)"
+                      >
+                        编辑
+                      </a-button>
+                      <a-button
+                        v-if="entry.status === 'draft'"
                         size="small"
                         type="text"
                         @click="confirmEntry(entry)"
@@ -459,6 +468,12 @@ onMounted(loadTwins)
                     <template v-if="item.confidence !== null"> · 置信度 {{ item.confidence }}</template>
                     · {{ formatTime(item.created_at) }}
                   </p>
+                  <div v-if="item.cited_entries?.length" class="citation-list">
+                    <span>依据：</span>
+                    <a-tag v-for="entry in item.cited_entries" :key="entry.id">
+                      {{ entry.title }}
+                    </a-tag>
+                  </div>
                 </article>
               </section>
             </a-tab-pane>
@@ -477,10 +492,10 @@ onMounted(loadTwins)
                     </a-tag>
                   </div>
                   <p class="record-meta">
-                    发起人 {{ item.uid }} · {{ formatTime(item.created_at) }}
+                    发起人 {{ item.requester_name || '员工' }} · {{ formatTime(item.created_at) }}
                   </p>
                   <p v-if="item.answer" class="record-answer">{{ item.answer }}</p>
-                  <div v-if="canManage && item.status !== 'closed'" class="handoff-form">
+                  <div v-if="canAnswerHandoff(item) && item.status !== 'closed'" class="handoff-form">
                     <a-textarea
                       v-model:value="handoffDrafts[item.id]"
                       :rows="3"
@@ -744,6 +759,16 @@ onMounted(loadTwins)
 
 .record-meta {
   margin: 8px 0 0;
+}
+
+.citation-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--gray-500);
 }
 
 .handoff-form {

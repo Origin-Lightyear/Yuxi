@@ -40,7 +40,10 @@ export function workItemUnreadLabel(unread) {
 export function workItemAction(item) {
   if (!item) return { key: 'none', label: '不可操作' }
   if (item.source_type === 'handoff') {
-    return { key: 'open_handoff', label: '去处理转交' }
+    return {
+      key: 'open_handoff',
+      label: item.status === 'completed' || item.status === 'cancelled' ? '查看转交' : '去处理转交'
+    }
   }
   if (item.status === 'waiting_approval') {
     return { key: 'open_thread', label: '去对话处理' }

@@ -7,7 +7,7 @@ import {
   workItemStatusLabel,
   workItemTarget,
   workItemUnreadLabel
-} from './workItem.js'
+} from '../../src/utils/workItem.js'
 
 test('work item status labels normalize legacy statuses', () => {
   assert.equal(workItemStatusLabel('pending'), '排队中')
@@ -22,10 +22,13 @@ test('work item action opens the existing thread for approval', () => {
   assert.equal(action.key, 'open_thread')
 })
 
-test('work item action keeps a handoff branch', () => {
-  const action = workItemAction({ source_type: 'handoff', status: 'running' })
-  assert.equal(action.label, '去处理转交')
-  assert.equal(action.key, 'open_handoff')
+test('work item action distinguishes open and closed handoffs', () => {
+  const openAction = workItemAction({ source_type: 'handoff', status: 'running' })
+  assert.equal(openAction.label, '去处理转交')
+  assert.equal(openAction.key, 'open_handoff')
+  const closedAction = workItemAction({ source_type: 'handoff', status: 'cancelled' })
+  assert.equal(closedAction.label, '查看转交')
+  assert.equal(closedAction.key, 'open_handoff')
 })
 
 test('work item targets agent threads and founder twin handoffs', () => {

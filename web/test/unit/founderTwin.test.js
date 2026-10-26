@@ -5,8 +5,8 @@ import {
   founderTwinCanManage,
   founderTwinEntryStatusMeta,
   founderTwinHandoffStatusMeta
-} from './founderTwin.js'
-import { workItemTarget } from './workItem.js'
+} from '../../src/utils/founderTwin.js'
+import { workItemTarget } from '../../src/utils/workItem.js'
 
 test('founder twin entry statuses use product labels', () => {
   assert.equal(founderTwinEntryStatusMeta('draft').label, '草稿')

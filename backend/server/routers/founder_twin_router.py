@@ -17,6 +17,8 @@ from yuxi.services.agent_config_service import prepare_agent_config_write
 from yuxi.services.founder_twin_service import (
     EXPERIENCE_STATUSES,
     ExperienceCodeConflict,
+    ExperienceStateConflict,
+    ExperienceValidationError,
     EXPERIENCE_STATUS_CONFIRMED,
     confirm_experience,
     create_experience_entry,
@@ -67,8 +69,8 @@ class ExperienceEntryCreate(BaseModel):
     situation: str = ""
     judgment: str = Field(min_length=1)
     boundary: str = ""
-    source_type: str = "manual"
-    source_ref: str | None = None
+    source_type: str = Field("manual", max_length=32)
+    source_ref: str | None = Field(None, max_length=512)
     source_excerpt: str | None = None
 
 
@@ -78,8 +80,8 @@ class ExperienceEntryUpdate(BaseModel):
     situation: str | None = None
     judgment: str | None = Field(None, min_length=1)
     boundary: str | None = None
-    source_type: str | None = None
-    source_ref: str | None = None
+    source_type: str | None = Field(None, max_length=32)
+    source_ref: str | None = Field(None, max_length=512)
     source_excerpt: str | None = None
 
 
@@ -127,7 +129,12 @@ def _entry_payload(entry: ExperienceEntry) -> dict:
     }
 
 
-def _consultation_payload(item: ExperienceConsultation) -> dict:
+def _consultation_payload(
+    item: ExperienceConsultation,
+    *,
+    cited_entries: dict[int, ExperienceEntry] | None = None,
+) -> dict:
+    entries = cited_entries or {}
     return {
         "id": item.id,
         "twin_slug": item.twin_slug,
@@ -137,18 +144,27 @@ def _consultation_payload(item: ExperienceConsultation) -> dict:
         "question": item.question,
         "answer": item.answer,
         "cited_entry_ids": item.cited_entry_ids or [],
+        "cited_entries": [
+            {
+                "id": entry.id,
+                "title": entry.title,
+                "status": entry.status,
+            }
+            for entry_id in (item.cited_entry_ids or [])
+            if (entry := entries.get(int(entry_id))) is not None
+        ],
         "confidence": item.confidence,
         "handoff_id": item.handoff_id,
         "created_at": format_utc_datetime(item.created_at),
     }
 
 
-def _handoff_payload(item: HandoffRequest) -> dict:
+def _handoff_payload(item: HandoffRequest, *, requester_name: str | None = None) -> dict:
     return {
         "id": item.id,
         "twin_slug": item.twin_slug,
-        "uid": item.uid,
         "question": item.question,
+        "requester_name": requester_name or "员工",
         "assigned_to_uid": item.assigned_to_uid,
         "status": item.status,
         "answer": item.answer,
@@ -373,6 +389,9 @@ async def confirm_entry(
         entry = await confirm_experience(db, entry, actor_uid=str(current_user.uid))
         await db.commit()
         await db.refresh(entry)
+    except (ExperienceStateConflict, ExperienceValidationError) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(
@@ -407,8 +426,17 @@ async def list_consultations(
     """列出咨询；普通员工只看自己的，管理者看全部。"""
     agent = await get_visible_twin(db, slug=slug, user=current_user)
     uid = None if user_can_manage_agent(current_user, agent) else str(current_user.uid)
-    items = await FounderTwinRepository(db).list_consultations(agent.slug, uid=uid)
-    return {"consultations": [_consultation_payload(item) for item in items]}
+    repo = FounderTwinRepository(db)
+    items = await repo.list_consultations(agent.slug, uid=uid)
+    cited_ids = {int(entry_id) for item in items for entry_id in (item.cited_entry_ids or [])}
+    cited_entries = {
+        entry.id: entry for entry in await repo.get_entries_by_ids(sorted(cited_ids))
+    }
+    return {
+        "consultations": [
+            _consultation_payload(item, cited_entries=cited_entries) for item in items
+        ]
+    }
 
 
 @founder_twin_router.get("/{slug}/handoffs")
@@ -420,8 +448,14 @@ async def list_handoffs(
     """列出转交单；普通员工只看自己的，管理者看全部。"""
     agent = await get_visible_twin(db, slug=slug, user=current_user)
     uid = None if user_can_manage_agent(current_user, agent) else str(current_user.uid)
-    items = await FounderTwinRepository(db).list_handoffs(agent.slug, uid=uid)
-    return {"handoffs": [_handoff_payload(item) for item in items]}
+    repo = FounderTwinRepository(db)
+    items = await repo.list_handoffs(agent.slug, uid=uid)
+    names = await repo.get_user_names([item.uid for item in items])
+    return {
+        "handoffs": [
+            _handoff_payload(item, requester_name=names.get(item.uid)) for item in items
+        ]
+    }
 
 
 @founder_twin_router.put("/{slug}/handoffs/{handoff_id}")
@@ -433,10 +467,13 @@ async def update_handoff(
     db: AsyncSession = Depends(get_db),
 ):
     """由分身管理者回答或关闭转交单。"""
-    agent = await get_manageable_twin(db, slug=slug, user=current_user)
-    handoff = await FounderTwinRepository(db).get_handoff(handoff_id)
+    agent = await get_visible_twin(db, slug=slug, user=current_user)
+    repo = FounderTwinRepository(db)
+    handoff = await repo.get_handoff(handoff_id)
     if handoff is None or handoff.twin_slug != agent.slug:
         raise HTTPException(status_code=404, detail="转交单不存在")
+    if not user_can_manage_agent(current_user, agent) and handoff.assigned_to_uid != str(current_user.uid):
+        raise HTTPException(status_code=403, detail="无权处理该转交单")
     if payload.status is not None:
         handoff.status = payload.status
     if payload.assigned_to_uid is not None:
@@ -450,4 +487,5 @@ async def update_handoff(
         handoff.answered_at = utc_now_naive()
     await db.commit()
     await db.refresh(handoff)
-    return {"handoff": _handoff_payload(handoff)}
+    names = await repo.get_user_names([handoff.uid])
+    return {"handoff": _handoff_payload(handoff, requester_name=names.get(handoff.uid))}

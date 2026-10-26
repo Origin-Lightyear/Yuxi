@@ -85,16 +85,27 @@ async def test_guard_corrects_mismatched_submitted_answer() -> None:
     assert result["messages"][0].name == "founder_twin_guard"
 
 
-async def test_guard_allows_handoff_and_ignores_non_founder() -> None:
+async def test_guard_requires_canonical_handoff_answer_and_ignores_non_founder() -> None:
     guard = FounderTwinAnswerGuardMiddleware()
-    handoff_state = {
-        "messages": [
-            HumanMessage("组织架构怎么调整"),
-            AIMessage(content="", tool_calls=[{"id": "call-1", "name": "create_handoff_request", "args": {}}]),
-            _tool("create_handoff_request", '{"ok": true, "handoff_id": 7, "handoff_key": "handoff:7"}'),
-            AIMessage("这个问题需要老板本人判断。"),
-        ]
-    }
+    base_messages = [
+        HumanMessage("组织架构怎么调整"),
+        AIMessage(content="", tool_calls=[{"id": "call-1", "name": "create_handoff_request", "args": {}}]),
+        _tool(
+            "create_handoff_request",
+            '{"ok": true, "handoff_id": 7, "handoff_key": "handoff:7", "answer": "已将问题转交老板本人，请等待本人回答。"}',
+        ),
+    ]
 
-    assert await guard.aafter_model(handoff_state, _runtime()) is None
+    assert (
+        await guard.aafter_model(
+            {"messages": [*base_messages, AIMessage("已将问题转交老板本人，请等待本人回答。")]},
+            _runtime(),
+        )
+        is None
+    )
+    correction = await guard.aafter_model(
+        {"messages": [*base_messages, AIMessage("结论是裁员 20%。")]},
+        _runtime(),
+    )
+    assert correction is not None
     assert await guard.aafter_model({"messages": [HumanMessage("问题"), AIMessage("直接结论")]}, _runtime(kind="agent")) is None

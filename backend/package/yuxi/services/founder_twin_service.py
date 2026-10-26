@@ -7,6 +7,7 @@ import uuid
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.digital_employee import FOUNDER_TWIN_KIND
@@ -31,6 +32,14 @@ EXPERIENCE_STATUSES = (EXPERIENCE_STATUS_DRAFT, EXPERIENCE_STATUS_CONFIRMED, EXP
 
 class ExperienceCodeConflict(ValueError):
     """同一分身下的经验编码冲突。"""
+
+
+class ExperienceStateConflict(ValueError):
+    """经验状态不允许当前动作。"""
+
+
+class ExperienceValidationError(ValueError):
+    """经验内容不满足确认条件。"""
 
 MAX_EXPERIENCES_PER_TWIN = 2000
 DEFAULT_RETRIEVAL_LIMIT = 5
@@ -74,9 +83,11 @@ async def embed_text(text: str, *, model_spec: str | None = None) -> tuple[list[
 
 async def confirm_experience(db: AsyncSession, entry: ExperienceEntry, *, actor_uid: str) -> ExperienceEntry:
     """生成 embedding 后把经验置为 confirmed；失败不改变原状态。"""
+    if entry.status != EXPERIENCE_STATUS_DRAFT:
+        raise ExperienceStateConflict("只有草稿经验可以确认")
     text = experience_embedding_text(entry)
     if not text:
-        raise ValueError("经验内容为空，无法确认")
+        raise ExperienceValidationError("经验内容为空，无法确认")
     vector, model_spec = await embed_text(text)
     now = utc_now_naive()
     entry.embedding = vector
@@ -101,8 +112,12 @@ async def retrieve_experiences(
     normalized = str(query or "").strip()
     if not normalized:
         raise ValueError("检索问题为空")
-    query_vector, _model_spec = await embed_text(normalized)
-    entries = await FounderTwinRepository(db).list_retrievable(twin_slug, limit=MAX_EXPERIENCES_PER_TWIN)
+    query_vector, model_spec = await embed_text(normalized)
+    entries = await FounderTwinRepository(db).list_retrievable(
+        twin_slug,
+        limit=MAX_EXPERIENCES_PER_TWIN,
+        embedding_model=model_spec,
+    )
     scored: list[tuple[ExperienceEntry, float]] = []
     for entry in entries:
         vector = entry.embedding if isinstance(entry.embedding, list) else []
@@ -197,7 +212,9 @@ async def update_experience_entry(
     data: dict,
     actor_uid: str,
 ) -> ExperienceEntry:
-    """编辑经验；一旦内容变化就退回草稿并清空旧 embedding。"""
+    """编辑草稿/已确认经验；内容变化后退回草稿并清空旧 embedding。"""
+    if entry.status == EXPERIENCE_STATUS_INVALID:
+        raise ExperienceStateConflict("已失效经验不能编辑，请新建条目")
     for field_name in (
         "code",
         "title",
@@ -251,6 +268,15 @@ async def get_twin_stats(db: AsyncSession, twin_slug: str) -> dict[str, int]:
     }
 
 
+async def _lock_run(db: AsyncSession, run_id: str) -> None:
+    """PostgreSQL 下按 Run 串行化工具写入，SQLite 测试不需要。"""
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": f"founder_twin_run:{run_id}"},
+        )
+
+
 async def record_consultation_answer(
     db: AsyncSession,
     *,
@@ -264,8 +290,11 @@ async def record_consultation_answer(
     confidence: float | None,
 ) -> ExperienceConsultation:
     """把已校验答案写入本次 Run 的唯一咨询记录，并只对新增引用累加计数。"""
+    await _lock_run(db, run_id)
     repo = FounderTwinRepository(db)
     consultation = await repo.get_consultation_by_run(run_id)
+    if consultation is not None and consultation.handoff_id is not None:
+        raise ValueError("已转交的问题不能直接提交答案")
     previous_ids: set[int] = set()
     if consultation is None:
         consultation = ExperienceConsultation(
@@ -305,6 +334,15 @@ async def record_handoff(
     assigned_to_uid: str | None,
 ) -> HandoffRequest:
     """创建转交单，并让本次 Run 的咨询记录指向它。"""
+    await _lock_run(db, run_id)
+    repo = FounderTwinRepository(db)
+    existing = await repo.get_consultation_by_run(run_id)
+    if existing is not None and existing.cited_entry_ids:
+        raise ValueError("已提交答案的问题不能转交")
+    if existing is not None and existing.handoff_id is not None:
+        handoff = await repo.get_handoff(int(existing.handoff_id))
+        if handoff is not None:
+            return handoff
     handoff = HandoffRequest(
         twin_slug=twin_slug,
         uid=uid,
@@ -314,8 +352,7 @@ async def record_handoff(
     )
     db.add(handoff)
     await db.flush()
-    repo = FounderTwinRepository(db)
-    consultation = await repo.get_consultation_by_run(run_id)
+    consultation = existing
     if consultation is None:
         consultation = ExperienceConsultation(
             twin_slug=twin_slug,

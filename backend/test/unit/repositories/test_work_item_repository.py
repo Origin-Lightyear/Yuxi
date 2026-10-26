@@ -278,3 +278,43 @@ async def test_handoff_items_are_visible_to_requester_and_managed_twin(session):
     ).source_id == rows[0].source_id
     assert await repo.summary("user-1", managed_twin_slugs=[]) == {"running": 1}
     assert await repo.unread_count("manager", managed_twin_slugs=["boss"]) == 1
+
+
+async def test_assigned_handoff_is_visible_without_manage_scope(session):
+    session.add_all(
+        [
+            Agent(
+                slug="boss",
+                backend_id="ChatbotAgent",
+                name="老板分身",
+                description="",
+                pics=[],
+                config_json={},
+                share_config={},
+                kind="founder_twin",
+                created_by="other-manager",
+            ),
+            User(uid="asker", username="提问员工", password_hash="x", role="user"),
+            User(uid="boss-user", username="老板本人", password_hash="x", role="user"),
+        ]
+    )
+    await session.flush()
+    session.add(
+        HandoffRequest(
+            twin_slug="boss",
+            uid="asker",
+            assigned_to_uid="boss-user",
+            question="需要老板判断",
+            status="open",
+        )
+    )
+    await session.commit()
+    repo = WorkItemRepository(session)
+
+    rows, total = await repo.list_items(
+        "boss-user", managed_twin_slugs=[], status=None, limit=50, offset=0
+    )
+
+    assert total == 1
+    assert rows[0].source_type == "handoff"
+    assert rows[0].initiator_name == "提问员工"

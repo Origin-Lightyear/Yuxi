@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.storage.postgres.models_business import ExperienceConsultation, ExperienceEntry, HandoffRequest
+from yuxi.storage.postgres.models_business import (
+    ExperienceConsultation,
+    ExperienceEntry,
+    HandoffRequest,
+    User,
+)
 
 
 class FounderTwinRepository:
@@ -26,14 +31,17 @@ class FounderTwinRepository:
         stmt = stmt.order_by(ExperienceEntry.created_at.desc(), ExperienceEntry.id.desc())
         return list((await self.db.scalars(stmt)).all())
 
-    async def list_retrievable(self, twin_slug: str, *, limit: int) -> list[ExperienceEntry]:
-        """只取已确认且有 embedding 的条目。"""
+    async def list_retrievable(
+        self, twin_slug: str, *, limit: int, embedding_model: str
+    ) -> list[ExperienceEntry]:
+        """只取已确认、有 embedding 且与当前查询模型同空间的条目。"""
         stmt = (
             select(ExperienceEntry)
             .where(
                 ExperienceEntry.twin_slug == twin_slug,
                 ExperienceEntry.status == "confirmed",
                 ExperienceEntry.embedding.is_not(None),
+                ExperienceEntry.embedding_model == embedding_model,
             )
             .order_by(ExperienceEntry.id.asc())
             .limit(limit)
@@ -80,13 +88,22 @@ class FounderTwinRepository:
         """列出转交单；uid 为空时返回分身全部记录。"""
         stmt = select(HandoffRequest).where(HandoffRequest.twin_slug == twin_slug)
         if uid is not None:
-            stmt = stmt.where(HandoffRequest.uid == uid)
+            stmt = stmt.where(
+                or_(HandoffRequest.uid == uid, HandoffRequest.assigned_to_uid == uid)
+            )
         stmt = stmt.order_by(HandoffRequest.created_at.desc(), HandoffRequest.id.desc())
         return list((await self.db.scalars(stmt)).all())
 
     async def get_handoff(self, handoff_id: int) -> HandoffRequest | None:
         """按主键读取转交单。"""
         return await self.db.get(HandoffRequest, handoff_id)
+
+    async def get_user_names(self, uids: list[str]) -> dict[str, str]:
+        """批量读取转交发起人的展示名。"""
+        if not uids:
+            return {}
+        stmt = select(User.uid, User.username).where(User.uid.in_(uids))
+        return {str(uid): str(username) for uid, username in (await self.db.execute(stmt)).all()}
 
     async def handoff_status_counts(self, twin_slug: str) -> dict[str, int]:
         """按状态统计分身转交单。"""

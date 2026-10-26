@@ -221,13 +221,25 @@ async def test_founder_twin_consultations_and_handoffs_respect_owner_scope(
     founder_twin,
 ):
     slug = founder_twin["slug"]
+    cited_entry = await test_client.post(
+        f"/api/founder-twins/{slug}/entries",
+        headers=local_admin_headers,
+        json={"title": "引用经验", "judgment": "先确认边界"},
+    )
+    assert cited_entry.status_code == 200, cited_entry.text
+    cited_entry_id = cited_entry.json()["entry"]["id"]
+    await _set_confirmed(cited_entry_id)
     first_handoff = await _db(
         """
-        INSERT INTO handoff_requests (twin_slug, uid, question, status)
-        VALUES (:slug, :uid, '第一个转交问题', 'open')
+        INSERT INTO handoff_requests (twin_slug, uid, assigned_to_uid, question, status)
+        VALUES (:slug, :uid, :assigned_to_uid, '第一个转交问题', 'open')
         RETURNING id
         """,
-        {"slug": slug, "uid": twin_user["uid"]},
+        {
+            "slug": slug,
+            "uid": twin_user["uid"],
+            "assigned_to_uid": other_twin_user["uid"],
+        },
     )
     second_handoff = await _db(
         """
@@ -242,9 +254,9 @@ async def test_founder_twin_consultations_and_handoffs_respect_owner_scope(
         INSERT INTO experience_consultations (
             twin_slug, uid, thread_id, run_id, question, answer, cited_entry_ids, confidence
         )
-        VALUES (:slug, :uid, 'thread-a', 'run-a', '问题 A', '答案 A', '[]'::jsonb, 0.8)
+        VALUES (:slug, :uid, 'thread-a', 'run-a', '问题 A', '答案 A', CAST(:cited AS jsonb), 0.8)
         """,
-        {"slug": slug, "uid": twin_user["uid"]},
+        {"slug": slug, "uid": twin_user["uid"], "cited": f"[{cited_entry_id}]"},
     )
     await _db(
         """
@@ -269,6 +281,9 @@ async def test_founder_twin_consultations_and_handoffs_respect_owner_scope(
     )
     assert own_consultations.status_code == 200, own_consultations.text
     assert [item["question"] for item in own_consultations.json()["consultations"]] == ["问题 A"]
+    assert own_consultations.json()["consultations"][0]["cited_entries"] == [
+        {"id": cited_entry_id, "title": "引用经验", "status": "confirmed"}
+    ]
 
     forbidden_update = await test_client.put(
         f"/api/founder-twins/{slug}/handoffs/{first_handoff.id}",
@@ -277,10 +292,20 @@ async def test_founder_twin_consultations_and_handoffs_respect_owner_scope(
     )
     assert forbidden_update.status_code == 403
 
+    assigned_handoffs = await test_client.get(
+        f"/api/founder-twins/{slug}/handoffs",
+        headers=other_twin_user["headers"],
+    )
+    assert assigned_handoffs.status_code == 200, assigned_handoffs.text
+    assert {item["id"] for item in assigned_handoffs.json()["handoffs"]} == {
+        first_handoff.id,
+        second_handoff.id,
+    }
+
     answered = await test_client.put(
         f"/api/founder-twins/{slug}/handoffs/{first_handoff.id}",
-        headers=local_admin_headers,
-        json={"answer": "老板本人的回答", "assigned_to_uid": twin_user["uid"]},
+        headers=other_twin_user["headers"],
+        json={"answer": "老板本人的回答"},
     )
     assert answered.status_code == 200, answered.text
     assert answered.json()["handoff"]["status"] == "answered"

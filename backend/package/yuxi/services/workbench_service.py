@@ -63,7 +63,7 @@ def work_item_to_dto(row: WorkItemRow, *, viewer: User, unread: bool) -> dict[st
     key = handoff_work_item_key(row.source_id) if is_handoff else run_work_item_key(row.source_id)
     if is_handoff:
         initiator_type = "human"
-        initiator_name = row.initiator_name or row.owner_uid
+        initiator_name = row.initiator_name or "未知用户"
     elif is_digital_employee:
         initiator_type = "digital_employee"
         initiator_name = row.agent_name or row.agent_slug

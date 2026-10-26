@@ -13,21 +13,21 @@ from langchain.agents.middleware.types import ContextT, ModelRequest, ModelRespo
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from yuxi.agents.digital_employee import FOUNDER_TWIN_KIND
-from yuxi.agents.founder_twin import build_founder_twin_tools
+from yuxi.agents.founder_twin import HANDOFF_ANSWER, build_founder_twin_tools
 
 FOUNDER_TWIN_SYSTEM_PROMPT = """## 老板分身执行规则
 
 你是老板的判断分身，不是通用聊天助手。
 - 回答任何业务问题前，先调用 `retrieve_experience` 检索已确认经验。
 - 有可引用经验时，调用 `submit_consultation_answer` 提交答案、`cited_entry_ids` 和置信度；最终回复必须原样复述工具返回的 `answer`。
-- 没有可引用经验时，不要猜测，调用 `create_handoff_request` 把问题转交老板本人。
+- 没有可引用经验时，不要猜测，调用 `create_handoff_request` 把问题转交老板本人，并原样复述工具返回的 `answer`。
 - 绝不能用常识、推测或未确认草稿代替经验依据。"""
 
 GUARD_MESSAGE_NAME = "founder_twin_guard"
 GUARD_CORRECTION = (
     "上一轮回答没有通过老板分身校验。请重新执行：先调用 retrieve_experience 检索经验；"
     "有依据时调用 submit_consultation_answer 提交答案和 cited_entry_ids，并原样复述提交的 answer；"
-    "没有依据时调用 create_handoff_request 转交老板。不要直接回答。"
+    "没有依据时调用 create_handoff_request 转交老板，并原样复述工具返回的 answer。不要直接给出结论。"
 )
 
 
@@ -78,16 +78,12 @@ class FounderTwinAnswerGuardMiddleware(AgentMiddleware[Any, ContextT, ResponseT]
             return None
         recent = messages[boundary + 1 :]
         last_guard = max((index for index, message in enumerate(recent) if _is_guard_message(message)), default=-1)
-        attempt = recent[last_guard + 1 :]
-        success = _successful_submission(attempt)
+        success = _successful_submission(recent)
         if success is not None:
             kind, payload = success
-            if kind == "handoff":
+            expected = str(payload.get("answer") or "") if kind == "submit" else str(payload.get("answer") or HANDOFF_ANSWER)
+            if _normalize_text(_message_text(last_message)) == _normalize_text(expected):
                 return None
-            if kind == "submit":
-                expected = str(payload.get("answer") or "")
-                if _normalize_text(_message_text(last_message)) == _normalize_text(expected):
-                    return None
 
         if last_guard >= 0:
             raise RuntimeError("老板分身未提交有依据的答案")

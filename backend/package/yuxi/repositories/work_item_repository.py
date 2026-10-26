@@ -129,7 +129,7 @@ class WorkItemRepository:
 
     @staticmethod
     def _handoff_select(uid: str, managed_twin_slugs: list[str]):
-        visibility = [HandoffRequest.uid == uid]
+        visibility = [HandoffRequest.uid == uid, HandoffRequest.assigned_to_uid == uid]
         if managed_twin_slugs:
             visibility.append(HandoffRequest.twin_slug.in_(managed_twin_slugs))
         work_status = case(

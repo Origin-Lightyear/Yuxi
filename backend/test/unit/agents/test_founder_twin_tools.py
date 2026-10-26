@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -40,7 +40,16 @@ async def founder_tools(session, monkeypatch):
     yield tools
 
 
-def _runtime(*, run_id: str = "run-1", uid: str = "u1"):
+def _runtime(*, run_id: str = "run-1", uid: str = "u1", retrieved_ids=()):
+    messages = [HumanMessage("怎么定价")]
+    if retrieved_ids:
+        messages.append(
+            ToolMessage(
+                content=json.dumps({"ok": True, "entries": [{"id": entry_id} for entry_id in retrieved_ids]}),
+                name="retrieve_experience",
+                tool_call_id="retrieve-1",
+            )
+        )
     return SimpleNamespace(
         context=SimpleNamespace(
             agent_kind="founder_twin",
@@ -49,7 +58,7 @@ def _runtime(*, run_id: str = "run-1", uid: str = "u1"):
             thread_id="thread-1",
             run_id=run_id,
         ),
-        state={"messages": [HumanMessage("怎么定价")]},
+        state={"messages": messages},
     )
 
 
@@ -108,7 +117,7 @@ async def test_submit_tool_requires_citations_and_records_once(session, founder_
 
     first_result = json.loads(
         await founder_tools["submit_consultation_answer"].coroutine(
-            answer="先看成本再报价", cited_entry_ids=[first_id], confidence=0.8, runtime=_runtime()
+            answer="先看成本再报价", cited_entry_ids=[first_id], confidence=0.8, runtime=_runtime(retrieved_ids=[first_id])
         )
     )
     assert first_result["ok"] is True
@@ -116,7 +125,10 @@ async def test_submit_tool_requires_citations_and_records_once(session, founder_
 
     second_result = json.loads(
         await founder_tools["submit_consultation_answer"].coroutine(
-            answer="先看成本再报价", cited_entry_ids=[first_id, second_id], confidence=0.9, runtime=_runtime()
+            answer="先看成本再报价",
+            cited_entry_ids=[first_id, second_id],
+            confidence=0.9,
+            runtime=_runtime(retrieved_ids=[first_id, second_id]),
         )
     )
     assert second_result["ok"] is True
@@ -181,16 +193,37 @@ async def test_submit_rejects_empty_other_twin_and_invalid_citations(session, fo
     )
 
     other_twin_id, invalid_id = other_twin.id, invalid.id
-    cases = [([], "run-empty"), ([other_twin_id], "run-other"), ([invalid_id], "run-invalid")]
-    for cited_entry_ids, run_id in cases:
+    cases = [
+        ([], "run-empty", []),
+        ([other_twin_id], "run-other", [other_twin_id]),
+        ([invalid_id], "run-invalid", [invalid_id]),
+    ]
+    for cited_entry_ids, run_id, retrieved_ids in cases:
         result = json.loads(
             await founder_tools["submit_consultation_answer"].coroutine(
                 answer="没有依据的答案",
                 cited_entry_ids=cited_entry_ids,
                 confidence=0.5,
-                runtime=_runtime(run_id=run_id),
+                runtime=_runtime(run_id=run_id, retrieved_ids=retrieved_ids),
             )
         )
         assert result["ok"] is False
 
     assert await session.scalar(select(func.count()).select_from(ExperienceConsultation)) == 0
+
+
+async def test_submit_rejects_citation_not_returned_by_retrieve(session, founder_tools):
+    entry = await _seed_entry(session, code="pricing", title="定价经验", vector=[1.0, 0.0])
+    entry_id = entry.id
+
+    result = json.loads(
+        await founder_tools["submit_consultation_answer"].coroutine(
+            answer="没有检索就引用",
+            cited_entry_ids=[entry_id],
+            confidence=0.5,
+            runtime=_runtime(retrieved_ids=[]),
+        )
+    )
+
+    assert result["ok"] is False
+    assert "retrieve_experience" in result["error"]

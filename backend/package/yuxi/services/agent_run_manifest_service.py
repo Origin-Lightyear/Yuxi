@@ -157,6 +157,7 @@ async def prepare_run_execution(
             "uid": str(user.uid),
             "run_id": run.id,
             "agent_slug": run.agent_slug,
+            "agent_kind": getattr(agent_item, "kind", "agent") or "agent",
             "request_id": run.request_id,
             "worker_id": worker_id,
             "runtime_scope_id": run.runtime_scope_id or run.conversation_thread_id,
