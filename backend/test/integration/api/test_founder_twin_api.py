@@ -190,6 +190,12 @@ async def test_founder_twin_admin_lifecycle_and_employee_read_only(
     assert invalidated.status_code == 200, invalidated.text
     assert invalidated.json()["entry"]["status"] == "invalid"
 
+    invalid_confirm = await test_client.post(
+        f"/api/founder-twins/{slug}/entries/{first_entry['id']}/confirm",
+        headers=local_admin_headers,
+    )
+    assert invalid_confirm.status_code == 422
+
     agent_list = await test_client.get(
         "/api/agent?kind=founder_twin",
         headers=twin_user["headers"],
