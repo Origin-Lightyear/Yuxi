@@ -13,7 +13,13 @@ from yuxi.config import config as app_config
 from yuxi.models.embed import select_embedding_model
 from yuxi.repositories.agent_repository import AgentRepository, user_can_manage_agent
 from yuxi.repositories.founder_twin_repository import FounderTwinRepository
-from yuxi.storage.postgres.models_business import Agent, ExperienceEntry, User
+from yuxi.storage.postgres.models_business import (
+    Agent,
+    ExperienceConsultation,
+    ExperienceEntry,
+    HandoffRequest,
+    User,
+)
 from yuxi.utils.datetime_utils import utc_now_naive
 
 EXPERIENCE_STATUS_DRAFT = "draft"
@@ -231,6 +237,92 @@ async def get_twin_stats(db: AsyncSession, twin_slug: str) -> dict[str, int]:
         "draft_entries": entry_counts.get(EXPERIENCE_STATUS_DRAFT, 0),
         "open_handoffs": handoff_counts.get("open", 0),
     }
+
+
+async def record_consultation_answer(
+    db: AsyncSession,
+    *,
+    twin_slug: str,
+    uid: str,
+    thread_id: str,
+    run_id: str,
+    question: str,
+    answer: str,
+    cited_entries: list[ExperienceEntry],
+    confidence: float | None,
+) -> ExperienceConsultation:
+    """把已校验答案写入本次 Run 的唯一咨询记录，并只对新增引用累加计数。"""
+    repo = FounderTwinRepository(db)
+    consultation = await repo.get_consultation_by_run(run_id)
+    previous_ids: set[int] = set()
+    if consultation is None:
+        consultation = ExperienceConsultation(
+            twin_slug=twin_slug,
+            uid=uid,
+            thread_id=thread_id,
+            run_id=run_id,
+            question=question,
+            answer=answer,
+            cited_entry_ids=[],
+        )
+        db.add(consultation)
+    else:
+        previous_ids = {int(value) for value in (consultation.cited_entry_ids or [])}
+        consultation.question = question
+        consultation.answer = answer
+    cited_ids = [int(entry.id) for entry in cited_entries]
+    consultation.cited_entry_ids = cited_ids
+    consultation.confidence = confidence
+    consultation.handoff_id = None
+    for entry in cited_entries:
+        if int(entry.id) not in previous_ids:
+            entry.citation_count = int(entry.citation_count or 0) + 1
+    await db.flush()
+    return consultation
+
+
+async def record_handoff(
+    db: AsyncSession,
+    *,
+    twin_slug: str,
+    uid: str,
+    thread_id: str,
+    run_id: str,
+    question: str,
+    reason: str,
+    assigned_to_uid: str | None,
+) -> HandoffRequest:
+    """创建转交单，并让本次 Run 的咨询记录指向它。"""
+    handoff = HandoffRequest(
+        twin_slug=twin_slug,
+        uid=uid,
+        question=question,
+        assigned_to_uid=assigned_to_uid,
+        status="open",
+    )
+    db.add(handoff)
+    await db.flush()
+    repo = FounderTwinRepository(db)
+    consultation = await repo.get_consultation_by_run(run_id)
+    if consultation is None:
+        consultation = ExperienceConsultation(
+            twin_slug=twin_slug,
+            uid=uid,
+            thread_id=thread_id,
+            run_id=run_id,
+            question=question,
+            answer=reason,
+            cited_entry_ids=[],
+        )
+        db.add(consultation)
+    else:
+        consultation.question = question
+        consultation.answer = reason
+        consultation.cited_entry_ids = []
+        consultation.confidence = None
+    consultation.handoff_id = int(handoff.id)
+    await db.flush()
+    return handoff
 
 
 async def get_visible_twin(db: AsyncSession, *, slug: str, user: User) -> Agent:

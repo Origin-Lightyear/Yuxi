@@ -61,6 +61,11 @@ class FounderTwinRepository:
         )
         return {str(status): int(count) for status, count in (await self.db.execute(stmt)).all()}
 
+    async def get_consultation_by_run(self, run_id: str) -> ExperienceConsultation | None:
+        """按 Run 读取唯一咨询记录。"""
+        stmt = select(ExperienceConsultation).where(ExperienceConsultation.run_id == run_id)
+        return (await self.db.scalars(stmt)).one_or_none()
+
     async def list_consultations(
         self, twin_slug: str, *, uid: str | None = None, limit: int = 100
     ) -> list[ExperienceConsultation]:

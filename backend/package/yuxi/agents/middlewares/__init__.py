@@ -1,6 +1,7 @@
 from .agent_memory import create_agent_memory_middleware
 from .context import context_aware_prompt, context_based_model
 from .dynamic_tool import DynamicToolMiddleware
+from .founder_twin import FounderTwinAnswerGuardMiddleware, FounderTwinMiddleware
 from .memory import create_memory_middleware
 from .model_input import ImageInputCompatibilityMiddleware
 from .network_retry import NetworkRetryMiddleware
@@ -11,6 +12,8 @@ from .tool_error_guard import ToolErrorGuardMiddleware
 
 __all__ = [
     "DynamicToolMiddleware",
+    "FounderTwinAnswerGuardMiddleware",
+    "FounderTwinMiddleware",
     "ImageInputCompatibilityMiddleware",
     "NetworkRetryMiddleware",
     "SteerMiddleware",
