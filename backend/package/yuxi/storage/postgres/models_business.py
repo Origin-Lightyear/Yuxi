@@ -357,6 +357,19 @@ class Agent(Base):
         }
 
 
+class WorkItemView(Base):
+    """待办已读记录；只保存用户对投影 item_key 的已读时间。"""
+
+    __tablename__ = "work_item_views"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    uid = Column(String(64), nullable=False, index=True)
+    item_key = Column(String(96), nullable=False)
+    viewed_at = Column(DateTime, nullable=False, default=utc_now_naive)
+
+    __table_args__ = (UniqueConstraint("uid", "item_key", name="uq_work_item_views_uid_item_key"),)
+
+
 class Skill(Base):
     """Skill 元数据模型（内容存文件系统，索引存数据库）"""
 

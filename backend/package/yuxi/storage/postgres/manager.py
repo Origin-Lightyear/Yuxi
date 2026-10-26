@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 10
+BUSINESS_SCHEMA_VERSION = 11
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -495,7 +495,7 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             if version == BUSINESS_SCHEMA_VERSION:
                 return
-            if version not in (None, 2, 7, 8, 9):
+            if version not in (None, 2, 7, 8, 9, 10):
                 raise RuntimeError(f"Unsupported business schema version: {version}")
             if version in (None, 2, 7, 8):
                 for name in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
@@ -1522,6 +1522,16 @@ class PostgresManager(metaclass=SingletonMeta):
             ON agent_run_requests(uid, agent_slug, conversation_thread_id, status, created_at, id)
             """,
             "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_dispatched_run_id ON agent_run_requests(dispatched_run_id)",  # noqa: E501
+            """
+            CREATE TABLE IF NOT EXISTS work_item_views (
+                id SERIAL PRIMARY KEY,
+                uid VARCHAR(64) NOT NULL,
+                item_key VARCHAR(96) NOT NULL,
+                viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_work_item_views_uid_item_key UNIQUE (uid, item_key)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_work_item_views_uid ON work_item_views(uid)",
             *TASK_DURABLE_SCHEMA_STATEMENTS,
         ]
         async with self.async_engine.begin() as conn:
