@@ -4,6 +4,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   BarChart3,
+  Brain,
   ClipboardList,
   LibraryBig,
   Box,
@@ -197,6 +198,13 @@ const mainList = computed(() => {
     icon: ListChecks,
     activeIcon: ListChecks,
     badgeCount: workbenchUnread.value
+  })
+
+  items.push({
+    name: '老板分身',
+    path: '/founder-twin',
+    icon: Brain,
+    activeIcon: Brain
   })
 
   items.push({

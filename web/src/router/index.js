@@ -129,6 +129,19 @@ const router = createRouter({
       ]
     },
     {
+      path: '/founder-twin',
+      name: 'founder-twin',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'FounderTwinComp',
+          component: () => import('../views/FounderTwinView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
       path: '/extensions',
       name: 'extensions',
       component: AppLayout,
