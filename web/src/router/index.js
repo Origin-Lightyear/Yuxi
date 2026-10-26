@@ -116,6 +116,19 @@ const router = createRouter({
       ]
     },
     {
+      path: '/workbench',
+      name: 'workbench',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'WorkbenchComp',
+          component: () => import('../views/WorkbenchView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
       path: '/extensions',
       name: 'extensions',
       component: AppLayout,

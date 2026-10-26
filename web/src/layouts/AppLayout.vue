@@ -10,6 +10,7 @@ import {
   HardDrive,
   PanelLeft,
   PanelLeftOpen,
+  ListChecks,
   MessageCirclePlus,
   Search,
   Users
@@ -32,6 +33,7 @@ import ConversationNavSection from '@/components/ConversationNavSection.vue'
 import GlobalSearchModal from '@/components/GlobalSearchModal.vue'
 import { searchWorkspaceFiles } from '@/apis/workspace_api'
 import { projectApi } from '@/apis/project_api'
+import { workbenchApi } from '@/apis/workbench_api'
 
 const configStore = useConfigStore()
 const agentStore = useAgentStore()
@@ -98,6 +100,8 @@ onMounted(() => {
   if (userStore.isAdmin) {
     taskerStore.loadTasks()
   }
+  void loadWorkbenchSummary()
+  startWorkbenchSummarySync()
   startThreadStatusSync()
 })
 
@@ -124,12 +128,35 @@ onUnmounted(() => {
     clearInterval(threadStatusSyncTimer)
     threadStatusSyncTimer = null
   }
+  if (workbenchSummaryTimer) {
+    clearInterval(workbenchSummaryTimer)
+    workbenchSummaryTimer = null
+  }
 })
 
 const route = useRoute()
 const router = useRouter()
 
 const activeTaskCount = computed(() => activeCountRef.value || 0)
+const workbenchUnread = ref(0)
+let workbenchSummaryTimer = null
+
+const loadWorkbenchSummary = async () => {
+  try {
+    const summary = await workbenchApi.getSummary()
+    workbenchUnread.value = Number(summary.unread || 0)
+  } catch (error) {
+    console.warn('加载待办未读数失败:', error)
+  }
+}
+
+const startWorkbenchSummarySync = () => {
+  if (workbenchSummaryTimer) return
+  workbenchSummaryTimer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+    void loadWorkbenchSummary()
+  }, 30 * 1000)
+}
 const activeConversationThreadId = computed(() => {
   return route.path.startsWith('/agent') ? currentThreadId.value : null
 })
@@ -162,6 +189,14 @@ const mainList = computed(() => {
     path: '/digital-employees',
     icon: Users,
     activeIcon: Users
+  })
+
+  items.push({
+    name: '待办',
+    path: '/workbench',
+    icon: ListChecks,
+    activeIcon: ListChecks,
+    badgeCount: workbenchUnread.value
   })
 
   items.push({
@@ -436,11 +471,18 @@ provide('settingsModal', {
         >
           <a-tooltip placement="right" :open="sidebarCollapsed ? undefined : false">
             <template #title>{{ item.name }}</template>
-            <component
-              class="icon"
-              :is="isNavItemActive(item) ? item.activeIcon : item.icon"
-              size="18"
-            />
+            <a-badge
+              :count="item.badgeCount || 0"
+              :overflow-count="99"
+              size="small"
+              class="nav-badge"
+            >
+              <component
+                class="icon"
+                :is="isNavItemActive(item) ? item.activeIcon : item.icon"
+                size="18"
+              />
+            </a-badge>
           </a-tooltip>
           <span class="nav-text">{{ item.name }}</span>
         </RouterLink>
@@ -729,6 +771,17 @@ div.header,
       flex: 0 0 @sidebar-icon-size;
       width: @sidebar-icon-size;
       height: @sidebar-icon-size;
+    }
+
+    .nav-badge {
+      display: inline-flex;
+      flex: 0 0 @sidebar-icon-size;
+      align-items: center;
+
+      :deep(.ant-badge-count) {
+        transform: translate(22%, -42%) scale(0.82);
+        transform-origin: right top;
+      }
     }
 
     .nav-text {
