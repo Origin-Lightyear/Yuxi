@@ -186,6 +186,10 @@ async def test_list_latest_filters_by_derived_status_and_summary(session):
     assert [row.run_id for row in rows] == ["run-new"]
     assert total == 1
     assert await repo.summary("user-1") == {"queued": 1, "waiting_approval": 1}
+    assert await repo.unread_count("user-1") == 2
+    await repo.mark_viewed("user-1", "run:run-new")
+    await session.commit()
+    assert await repo.unread_count("user-1") == 1
 
 
 async def test_mark_viewed_is_idempotent_and_isolated_by_user(session):

@@ -28,6 +28,7 @@ from server.routers.system_task_router import tasks
 from server.routers.tenant_knowledge_router import tenant_knowledge
 from server.routers.tool_router import tools
 from server.routers.user_router import user_router
+from server.routers.workbench_router import workbench_router
 from server.routers.workspace_router import workspace, workspace_knowledge
 
 router = APIRouter()
@@ -38,6 +39,7 @@ router.include_router(auth)  # /api/auth/* 登录、用户信息与 CLI 浏览�
 router.include_router(agent_memory_router)  # /api/agent/{slug}/memories 用户×Agent 记忆条目
 router.include_router(agent_router)  # /api/agent/* 智能体管理与运行态
 router.include_router(digital_employee_router)  # /api/digital-employees/* 数字员工配置与生命周期
+router.include_router(workbench_router)  # /api/workbench/* 统一待办收件箱
 router.include_router(agent_invocation_call_router)  # /api/agent-invocation/agent-call/*
 router.include_router(agent_invocation_channel_router)  # /api/agent-invocation/channel/*
 router.include_router(agent_invocation_eval_router)  # /api/agent-invocation/eval/*

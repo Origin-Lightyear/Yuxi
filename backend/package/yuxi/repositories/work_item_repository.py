@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -168,6 +168,23 @@ class WorkItemRepository:
         )
         result = await self.db.execute(stmt)
         return {str(status): int(count) for status, count in result.all()}
+
+    async def unread_count(self, uid: str) -> int:
+        """统计当前用户尚未标记已读的待办数量。"""
+        latest = self._latest_subquery(uid)
+        stmt = (
+            select(func.count())
+            .select_from(latest)
+            .outerjoin(
+                WorkItemView,
+                and_(
+                    WorkItemView.uid == uid,
+                    WorkItemView.item_key == literal("run:") + latest.c.run_id,
+                ),
+            )
+            .where(latest.c.rn == 1, WorkItemView.id.is_(None))
+        )
+        return int((await self.db.scalar(stmt)) or 0)
 
     async def viewed_keys(self, uid: str, keys: list[str]) -> set[str]:
         """一次查询返回给定待办 key 中已读的集合。"""
