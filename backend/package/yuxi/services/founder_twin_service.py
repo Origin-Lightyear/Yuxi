@@ -1,0 +1,157 @@
+"""老板分身的经验确认、向量检索与引用校验。"""
+
+from __future__ import annotations
+
+import math
+
+from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.agents.digital_employee import FOUNDER_TWIN_KIND
+from yuxi.config import config as app_config
+from yuxi.models.embed import select_embedding_model
+from yuxi.repositories.agent_repository import AgentRepository, user_can_manage_agent
+from yuxi.repositories.founder_twin_repository import FounderTwinRepository
+from yuxi.storage.postgres.models_business import Agent, ExperienceEntry, User
+from yuxi.utils.datetime_utils import utc_now_naive
+
+EXPERIENCE_STATUS_DRAFT = "draft"
+EXPERIENCE_STATUS_CONFIRMED = "confirmed"
+EXPERIENCE_STATUS_INVALID = "invalid"
+EXPERIENCE_STATUSES = (EXPERIENCE_STATUS_DRAFT, EXPERIENCE_STATUS_CONFIRMED, EXPERIENCE_STATUS_INVALID)
+MAX_EXPERIENCES_PER_TWIN = 2000
+DEFAULT_RETRIEVAL_LIMIT = 5
+
+
+def experience_embedding_text(entry: ExperienceEntry) -> str:
+    """拼接参与语义检索的字段，空白字段不产生空段。"""
+    parts = (
+        entry.title,
+        entry.situation,
+        entry.judgment,
+        entry.boundary,
+        entry.source_excerpt,
+    )
+    return "\n\n".join(str(part).strip() for part in parts if part and str(part).strip())
+
+
+def cosine_similarity(left: list[float], right: list[float]) -> float:
+    """计算余弦相似度；零向量返回 0，维度不一致显式失败。"""
+    if len(left) != len(right):
+        raise ValueError("embedding 维度不一致")
+    dot = sum(float(a) * float(b) for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(float(value) ** 2 for value in left))
+    right_norm = math.sqrt(sum(float(value) ** 2 for value in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return dot / (left_norm * right_norm)
+
+
+async def embed_text(text: str, *, model_spec: str | None = None) -> tuple[list[float], str]:
+    """用当前 embedding 模型生成单条向量，返回向量和实际模型 spec。"""
+    normalized = str(text or "").strip()
+    if not normalized:
+        raise ValueError("待检索文本为空")
+    model = select_embedding_model(model_spec or app_config.embed_model)
+    vectors = await model.abatch_encode([normalized])
+    if not vectors or not vectors[0]:
+        raise ValueError("Embedding 模型未返回向量")
+    return [float(value) for value in vectors[0]], model.spec
+
+
+async def confirm_experience(db: AsyncSession, entry: ExperienceEntry, *, actor_uid: str) -> ExperienceEntry:
+    """生成 embedding 后把经验置为 confirmed；失败不改变原状态。"""
+    text = experience_embedding_text(entry)
+    if not text:
+        raise ValueError("经验内容为空，无法确认")
+    vector, model_spec = await embed_text(text)
+    now = utc_now_naive()
+    entry.embedding = vector
+    entry.embedding_model = model_spec
+    entry.status = EXPERIENCE_STATUS_CONFIRMED
+    entry.confirmed_by = actor_uid
+    entry.confirmed_at = now
+    entry.updated_by = actor_uid
+    entry.updated_at = now
+    await db.flush()
+    return entry
+
+
+async def retrieve_experiences(
+    db: AsyncSession,
+    *,
+    twin_slug: str,
+    query: str,
+    limit: int = DEFAULT_RETRIEVAL_LIMIT,
+) -> list[tuple[ExperienceEntry, float]]:
+    """按余弦相似度返回同分身已确认经验 top-k。"""
+    normalized = str(query or "").strip()
+    if not normalized:
+        raise ValueError("检索问题为空")
+    query_vector, _model_spec = await embed_text(normalized)
+    entries = await FounderTwinRepository(db).list_retrievable(twin_slug, limit=MAX_EXPERIENCES_PER_TWIN)
+    scored: list[tuple[ExperienceEntry, float]] = []
+    for entry in entries:
+        vector = entry.embedding if isinstance(entry.embedding, list) else []
+        if not vector:
+            continue
+        try:
+            score = cosine_similarity(query_vector, vector)
+        except ValueError:
+            continue
+        scored.append((entry, score))
+    scored.sort(key=lambda item: item[1], reverse=True)
+    return scored[: max(1, min(int(limit), 10))]
+
+
+async def validate_citations(
+    db: AsyncSession,
+    *,
+    twin_slug: str,
+    cited_entry_ids: list[int],
+) -> list[ExperienceEntry]:
+    """校验引用去重后全部属于该分身、已确认且有 embedding。"""
+    unique_ids: list[int] = []
+    seen: set[int] = set()
+    for value in cited_entry_ids or []:
+        try:
+            entry_id = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("引用条目 ID 无效") from exc
+        if entry_id <= 0:
+            raise ValueError("引用条目 ID 无效")
+        if entry_id not in seen:
+            seen.add(entry_id)
+            unique_ids.append(entry_id)
+    if not unique_ids:
+        return []
+
+    entries = await FounderTwinRepository(db).get_entries_by_ids(unique_ids)
+    by_id = {
+        entry.id: entry
+        for entry in entries
+        if entry.twin_slug == twin_slug
+        and entry.status == EXPERIENCE_STATUS_CONFIRMED
+        and bool(entry.embedding)
+    }
+    if len(by_id) != len(unique_ids):
+        raise ValueError("引用条目不存在、未确认或不属于该分身")
+    return [by_id[entry_id] for entry_id in unique_ids]
+
+
+async def get_visible_twin(db: AsyncSession, *, slug: str, user: User) -> Agent:
+    """读取用户可见的老板分身，非分身或不可见统一 404。"""
+    agent = await AgentRepository(db).get_visible_by_slug(slug=slug, user=user, kind="any")
+    if agent is None or getattr(agent, "kind", "agent") != FOUNDER_TWIN_KIND:
+        raise HTTPException(status_code=404, detail="老板分身不存在")
+    return agent
+
+
+async def get_manageable_twin(db: AsyncSession, *, slug: str, user: User) -> Agent:
+    """读取用户可管理的老板分身；可见但无管理权限返回 403。"""
+    agent = await AgentRepository(db).get_by_slug(slug)
+    if agent is None or getattr(agent, "kind", "agent") != FOUNDER_TWIN_KIND:
+        raise HTTPException(status_code=404, detail="老板分身不存在")
+    if not user_can_manage_agent(user, agent):
+        raise HTTPException(status_code=403, detail="无权管理该老板分身")
+    return agent
