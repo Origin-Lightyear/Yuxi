@@ -44,11 +44,14 @@ async def e2e_headers(e2e_client) -> dict[str, str]:
     response = await e2e_client.get("/api/auth/check-first-run")
     if response.status_code != 200:
         pytest.skip("local API is not ready for E2E")
-    async with asyncpg.connect(postgres_dsn()) as conn:
+    conn = await asyncpg.connect(postgres_dsn())
+    try:
         user_id = await conn.fetchval(
             "SELECT id FROM users WHERE uid = $1 AND is_deleted = 0",
             ADMIN_UID,
         )
+    finally:
+        await conn.close()
     if user_id is None:
         pytest.skip(f"local E2E admin {ADMIN_UID} is not provisioned")
     token = AuthUtils.create_access_token({"sub": str(user_id)})
@@ -165,5 +168,8 @@ async def test_digital_employee_runs_through_real_worker(e2e_client, e2e_headers
         if thread_id:
             await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
         await _delete_provider(e2e_client, e2e_headers)
-        async with asyncpg.connect(postgres_dsn()) as conn:
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
             await conn.execute("DELETE FROM agents WHERE slug = $1", slug)
+        finally:
+            await conn.close()

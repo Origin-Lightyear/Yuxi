@@ -90,15 +90,16 @@ P2 的 repository 从只投影 Run 改为 `UNION ALL`：
 | guard 首次纠正、第二次失败，提交/转交都必须匹配工具答案 | 模型直接回答无引用答案，或转交后输出实质性结论 | `FounderTwinAnswerGuardMiddleware` | `test_founder_twin_guard.py` 4 passed：无工具、答案不一致、答案一致、handoff 规范答案/非规范答案 | 删除 guard 或去掉 handoff 文本比较后测试变红 | Passed |
 | 转交单进入待办且只对发起人/被指派老板/管理者可见 | 其他员工看到，老板本人看不到/不能回答，或被指派人越权改派 | `WorkItemRepository._handoff_select`、`founder_twin_router.update_handoff`、`_managed_twin_slugs` | repository 5 passed；workbench API 6 passed（被指派普通用户可见）；founder API 2 passed（被指派用户可回答、改派返回 403） | 去掉 uid/assigned/managed 过滤后隔离测试变红；只允许 manager 回答时被指派用户测试变红 | Passed |
 | P2/P3 页面可构建，新增 util 进入官方 test gate | 前端编译失败、util 映射错误或测试不在 CI glob | `FounderTwinView.vue`、`WorkbenchView.vue`、`founderTwin.js`、`workItem.js` | `node --test --test-concurrency=1 "test/**/*.test.js" "test/**/*.spec.js"`：480 passed；ESLint 0；`vite build` 成功；新增测试位于 `web/test/unit/` | 删除 handoff 目标 FounderTwinComp 或关闭转交动作标签后测试变红 | Passed |
+| 真实 API + worker + replay 链路 | 只在 unit 中证明 Run 生命周期 | shipping API、worker、Redis、PostgreSQL | replay 网关启动后 `pytest test/e2e/test_digital_employee_e2e.py -m e2e`：1 passed；修复 asyncpg 连接上下文后真实 `prepare_run_execution` 路径可执行 | 网关不可达时测试显式 skip；修复前 fixture 报 `coroutine` 错误 | Passed（P1 数字员工链路）|
 | 全量后端 unit 无回归 | P3 改动破坏既有 unit | 全仓库 | `pytest test/unit -m "not slow"`：2707 passed, 58 skipped | 无 | Passed |
 
 最低证据：真实 PostgreSQL v12 迁移；真实 HTTP 覆盖管理员/员工权限、分身列表、待办双源、被指派老板回答和转交可见性；agent guard/tool/真实执行准备 unit；前端官方 unit/lint/build 全量通过。相关 P2/P3 测试 69 passed。
 
-未运行：
-- 确定性 E2E：replay 网关 `http://localhost:8765/health` 不可达。
+未运行 / 部分运行：
+- 通用 deterministic agent path E2E：replay 网关已启动，但 `test_deterministic_agent_path_e2e.py` 12 项全部 skip；当前实例运行在 SaaS 模式，缺少测试租户的 `E2E_USERNAME`/`E2E_PASSWORD`。`test_digital_employee_e2e.py` 使用本地测试管理员 JWT，1 passed。
 - 真实浏览器页面验证和截图：当前环境没有可用的登录会话和浏览器自动化；只完成 `vite build` 与前端全量测试。
 - 真实 embedding 成功路径：本地 SiliconFlow 401、Ollama 不可用；成功 confirm 由 service unit mock 覆盖，live API 只验证了员工 confirm 403。
-- 真实模型驱动的工具调用链路：需要可用 chat/embedding 模型与 deterministic replay；guard 和工具通过构造消息验证。
+- 真实模型驱动的 P3 工具调用链路：需要可用 chat/embedding 模型与 P3 专用 replay 剧本；guard 和工具通过构造消息验证。
 
 ## 风险
 
