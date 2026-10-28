@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-26-enterprise-workbench-design.md`
 
-**执行状态（2026-10-26）：** Tasks 1–10 已实现并提交。unit 2678 passed / 58 skipped；数字员工 integration + migration 10 passed；前端 eslint 0 warning、unit 471 passed、vite build 通过；工程契约与 unittest 通过。差异：本机 pnpm 包装器损坏，前端改用 `node_modules/.bin/eslint`、`node --test`、`vite build` 等价执行；deterministic E2E 因 replay 网关不可用未运行；真实浏览器创建/编辑/发布/停用/去对话未执行。Review 后补充了编辑 ID、停用队列派发、锁刷新、草稿 memories 和三类引用守卫测试。详见决策记录 `docs/develop-guides/decisions/implemented/2026-10-26-digital-employee-workbench.md`。
+**执行状态（2026-10-26）：** Tasks 1–10 已实现并提交。unit 2678 passed / 58 skipped；数字员工 integration + migration 10 passed；前端 eslint 0 warning、unit 471 passed、vite build 通过；工程契约与 unittest 通过。差异：本机 pnpm 包装器损坏，前端改用 `node_modules/.bin/eslint`、`node --test`、`vite build` 等价执行；deterministic E2E 已启动 replay 网关并通过（1 passed，2026-10-28）；真实浏览器创建/编辑/发布/停用/去对话未执行。Review 后补充了编辑 ID、停用队列派发、锁刷新、草稿 memories 和三类引用守卫测试。详见决策记录 `docs/develop-guides/decisions/implemented/2026-10-26-digital-employee-workbench.md`。
 
 ## Global Constraints
 

@@ -56,7 +56,7 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 | 既有 Agent 迁移后仍为普通智能体，迁移可重复执行 | 既有行被改成员工，或迁移重复执行失败 | `models_business.py`、`manager.py` | `docker compose exec -T api uv run --no-sync --group test pytest test/integration/api/test_digital_employee_migration.py -q -p no:cacheprovider`：1 passed；回读既有行 `kind='agent'` | 迁移后既有行 `kind != 'agent'` 时测试变红 | Passed |
 | 管理员创建草稿后，普通员工不可见，管理者可见 | 草稿泄露或管理者看不到 | `digital_employee_service.list_digital_employees`、`digital_employee_is_visible` | `test_digital_employee_api.py`：普通用户列表/详情/线程 404，管理者详情 200、管理者建线程 409；7 passed | 移除状态过滤后普通用户可见则变红 | Passed |
 | 发布后共享范围内员工可见 | 发布后仍 404，或越权用户可见 | `publish_digital_employee`、`share_config` | 同一 integration：发布后普通用户列表/详情 200，`can_manage=false`；`GET /api/agent?kind=agent` 不含员工，`kind=digital_employee` 含员工 | 把共享范围改成 user 精确列表后越权用户仍可见则变红 | Passed |
-| 发布后的员工能通过真实 worker 完成 Run | 员工只能建线程，Run 不返回员工配置的输出 | `digital_employee_is_runnable`、`Agent` 配置解析、worker | E2E `test_digital_employee_e2e.py` 已写，但 replay 网关 `http://localhost:8765/health` 不可用，pytest 明确 skip | 网关可用时跑同一 E2E；若 Run 未 completed 或 output 不等于 `DETERMINISTIC_AGENT_E2E_OK` 则失败 | Not run |
+| 发布后的员工能通过真实 worker 完成 Run | 员工只能建线程，Run 不返回员工配置的输出 | `digital_employee_is_runnable`、`Agent` 配置解析、worker | 启动 replay 网关后 `pytest test/e2e/test_digital_employee_e2e.py -m e2e`：1 passed；Run completed 且 output 为 `DETERMINISTIC_AGENT_E2E_OK` | 网关不可达时测试显式 skip；Run 未 completed 或 output 不匹配则失败 | Passed（2026-10-28） |
 | 停用后新 Run/新线程/排队派发被拒绝，历史仍可读 | 停用员工仍能执行，或历史丢失 | `digital_employee_is_runnable`、`agent_request_service`、`agent_run_service`、`agent_request_queue_service` | integration：停用→新 Run 409、新线程 409、人工 continue 409；直接造 queued 请求后 `dispatch_next_request` 返回 None，请求变 `rejected` 且无 Run；`GET /api/agent/{slug}` 200、历史 GET 200 | 移除 guard 后新请求或排队派发成功则变红 | Passed |
 | 非管理员不能创建/发布/停用；无 manage 权限的管理员也不能 | 前端隐藏被绕过，后端放行 | `digital_employee_router`、`user_can_manage_agent` | integration：普通用户创建 403；只有 read 权限的 admin 对更新/发布/停用/删除全部 403 | 去掉角色/权限检查后测试变红 | Passed |
 | 通用 Agent 接口不能修改/删除/复制员工 | `PUT/DELETE/duplicate /api/agent/{employee}` 成功 | `agent_router` 隔离规则 | integration 三项均 400 | 移除隔离后员工被通用接口改名/删除则变红 | Passed |
@@ -67,7 +67,7 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 | 前端页面只展示真实数据，管理员操作后状态同步 | 页面仍显示静态卡片或状态不刷新 | `DigitalEmployeeView.vue`、`AgentEditModal.vue`、`AgentView.vue`、`utils/digitalEmployee.js` | `eslint . --max-warnings=0` 通过；`node --test` 471 passed；`vite build` 通过；`normalizeDigitalEmployee` 用真实 `{id: 7, slug}` 和缺 slug payload 断言规范 ID | 非管理者点击编辑后仍打开通用弹窗、或员工保存仍请求数字 id、或页面不刷新则失败；浏览器级检查未执行 | Partially passed：构建/单测通过，真实浏览器交互未执行 |
 | 工程契约与格式 | 文档/路由/契约清单失配或空白错误 | `scripts/verify_engineering_contracts.py`、`.gitignore` | 工程契约脚本通过（55 decisions / 5 workflows / 4 agents files / 207 docs / 30 routers / 268 web sources）；`unittest` 63 passed；`git diff --check` 通过 | 新增未登记路由或不可解析文档链接时脚本变红 | Passed |
 
-最低证据：unit 覆盖档案/状态/可见性/运行守卫纯逻辑（`test/unit` 2678 passed, 58 skipped）；integration 覆盖真实 PostgreSQL、真实 HTTP、权限、迁移、草稿引用、队列派发、锁刷新与序列化剥离（10 passed）；E2E 已写但当前环境未运行；前端 lint/unit（471 passed）/build 通过，真实页面手工交互未执行；工程契约脚本与 `git diff --check` 通过。
+最低证据：unit 覆盖档案/状态/可见性/运行守卫纯逻辑（`test/unit` 2678 passed, 58 skipped）；integration 覆盖真实 PostgreSQL、真实 HTTP、权限、迁移、草稿引用、队列派发、锁刷新与序列化剥离（10 passed）；E2E 真实 API + worker + replay 链路 1 passed；前端 lint/unit（471 passed）/build 通过，真实页面手工交互未执行；工程契约脚本与 `git diff --check` 通过。
 
 ## 风险
 
