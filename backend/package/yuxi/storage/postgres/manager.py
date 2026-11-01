@@ -1245,8 +1245,8 @@ class PostgresManager(metaclass=SingletonMeta):
                 platform VARCHAR(16) NOT NULL,
                 platform_user_id VARCHAR(128) NOT NULL,
                 bot_id INTEGER REFERENCES im_bot_configs(id) ON DELETE SET NULL,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
                 CONSTRAINT uq_im_binding_platform_user UNIQUE (platform, platform_user_id),
                 CONSTRAINT uq_im_binding_user_platform UNIQUE (user_id, platform)
             )
@@ -1259,9 +1259,9 @@ class PostgresManager(metaclass=SingletonMeta):
                 bot_id INTEGER REFERENCES im_bot_configs(id) ON DELETE SET NULL,
                 state_hash VARCHAR(64) NOT NULL UNIQUE,
                 status VARCHAR(16) NOT NULL DEFAULT 'pending',
-                expires_at TIMESTAMPTZ NOT NULL,
-                used_at TIMESTAMPTZ,
-                created_at TIMESTAMPTZ DEFAULT NOW()
+                expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                used_at TIMESTAMP WITHOUT TIME ZONE,
+                created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
             )
             """,
             """

@@ -294,6 +294,24 @@ async def test_ensure_business_schema_creates_im_binding_tables():
 
 
 @pytest.mark.asyncio
+async def test_im_binding_tables_use_naive_timestamps_matching_models():
+    """IM 绑定两张表的迁移 DDL 必须与 DateTime(naive) 模型一致，避免 aware/naive 时间比较抛错。"""
+    async with _recording_manager() as (manager, connection):
+        await manager.ensure_business_schema()
+
+    im_binding_statements = [
+        statement
+        for statement in connection.statements
+        if "CREATE TABLE IF NOT EXISTS im_account_bindings" in statement
+        or "CREATE TABLE IF NOT EXISTS im_binding_sessions" in statement
+    ]
+    assert len(im_binding_statements) == 2
+    for statement in im_binding_statements:
+        assert "TIMESTAMP WITHOUT TIME ZONE" in statement
+        assert "TIMESTAMPTZ" not in statement
+
+
+@pytest.mark.asyncio
 async def test_ensure_business_schema_creates_generic_config_options_table():
     async with _recording_manager() as (manager, connection):
         await manager.ensure_business_schema()
