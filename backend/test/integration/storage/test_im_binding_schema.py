@@ -11,7 +11,13 @@ from sqlalchemy import delete, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.storage.postgres.models_business import Base, IMAccountBinding, IMBotConfig, User
+from yuxi.storage.postgres.models_business import (
+    Base,
+    IMAccountBinding,
+    IMBindingSession,
+    IMBotConfig,
+    User,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -40,14 +46,20 @@ async def _create_user(session, uid: str) -> int:
     return user.id
 
 
+async def _delete_users(session, user_uids: list[str]) -> None:
+    """按 uid 清理临时用户，确保失败的用例不残留已提交行。"""
+    await session.execute(delete(User).where(User.uid.in_(user_uids)))
+    await session.commit()
+
+
 async def test_binding_unique_constraints(binding_engine):
     """同一 platform_user_id 只能绑定一次（跨用户唯一）。"""
     uid = uuid.uuid4().hex[:8]
     user_uids = [f"bind-{uid}-a", f"bind-{uid}-b"]
-    async with binding_engine() as session:
-        user_a_id = await _create_user(session, user_uids[0])
-        user_b_id = await _create_user(session, user_uids[1])
     try:
+        async with binding_engine() as session:
+            user_a_id = await _create_user(session, user_uids[0])
+            user_b_id = await _create_user(session, user_uids[1])
         async with binding_engine() as session:
             session.add(IMAccountBinding(user_id=user_a_id, platform="dingtalk", platform_user_id=f"u-{uid}"))
             session.add(IMAccountBinding(user_id=user_b_id, platform="dingtalk", platform_user_id=f"u-{uid}"))
@@ -56,17 +68,16 @@ async def test_binding_unique_constraints(binding_engine):
             await session.rollback()
     finally:
         async with binding_engine() as session:
-            await session.execute(delete(User).where(User.uid.in_(user_uids)))
-            await session.commit()
+            await _delete_users(session, user_uids)
 
 
 async def test_binding_same_user_same_platform_unique(binding_engine):
     """同一用户同一平台只能绑定一次。"""
     uid = uuid.uuid4().hex[:8]
     user_uid = f"bind-{uid}"
-    async with binding_engine() as session:
-        user_id = await _create_user(session, user_uid)
     try:
+        async with binding_engine() as session:
+            user_id = await _create_user(session, user_uid)
         async with binding_engine() as session:
             session.add(IMAccountBinding(user_id=user_id, platform="feishu", platform_user_id=f"f-{uid}-1"))
             session.add(IMAccountBinding(user_id=user_id, platform="feishu", platform_user_id=f"f-{uid}-2"))
@@ -75,11 +86,19 @@ async def test_binding_same_user_same_platform_unique(binding_engine):
             await session.rollback()
     finally:
         async with binding_engine() as session:
-            await session.execute(delete(User).where(User.uid == user_uid))
-            await session.commit()
+            await _delete_users(session, [user_uid])
 
 
 async def test_bot_config_require_binding_default_false():
     """require_binding 元数据默认值必须为 False（无需连库）。"""
     column = IMBotConfig.__table__.c.require_binding
     assert column.default.arg is False
+
+
+async def test_binding_unique_constraints_present_in_metadata():
+    """唯一约束必须在模型 metadata 中声明，避免建表后因已迁移而无法被负向测试发现。"""
+    binding_constraint_names = {constraint.name for constraint in IMAccountBinding.__table__.constraints}
+    assert {"uq_im_binding_platform_user", "uq_im_binding_user_platform"} <= binding_constraint_names
+
+    session_unique_indexes = {index.name: index for index in IMBindingSession.__table__.indexes}
+    assert session_unique_indexes["ix_im_binding_sessions_state_hash"].unique is True

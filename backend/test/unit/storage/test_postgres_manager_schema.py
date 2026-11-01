@@ -275,6 +275,25 @@ async def test_ensure_business_schema_creates_user_config_table():
 
 
 @pytest.mark.asyncio
+async def test_ensure_business_schema_creates_im_binding_tables():
+    """既有/已版本化业务库也必须通过 ensure_business_schema 建出 IM 账号绑定两张表。"""
+    async with _recording_manager() as (manager, connection):
+        await manager.ensure_business_schema()
+
+    statements = "\n".join(connection.statements)
+
+    assert "CREATE TABLE IF NOT EXISTS im_account_bindings" in statements
+    assert "CONSTRAINT uq_im_binding_platform_user UNIQUE (platform, platform_user_id)" in statements
+    assert "CONSTRAINT uq_im_binding_user_platform UNIQUE (user_id, platform)" in statements
+    assert "REFERENCES users(id) ON DELETE CASCADE" in statements
+    assert "REFERENCES im_bot_configs(id) ON DELETE SET NULL" in statements
+
+    assert "CREATE TABLE IF NOT EXISTS im_binding_sessions" in statements
+    assert "state_hash VARCHAR(64) NOT NULL UNIQUE" in statements
+    assert "status VARCHAR(16) NOT NULL DEFAULT 'pending'" in statements
+
+
+@pytest.mark.asyncio
 async def test_ensure_business_schema_creates_generic_config_options_table():
     async with _recording_manager() as (manager, connection):
         await manager.ensure_business_schema()

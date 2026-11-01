@@ -1819,7 +1819,6 @@ class IMBindingSession(Base):
             "user_id": self.user_id,
             "platform": self.platform,
             "bot_id": self.bot_id,
-            "state_hash": self.state_hash,
             "status": self.status,
             "expires_at": format_utc_datetime(self.expires_at),
             "used_at": format_utc_datetime(self.used_at),
