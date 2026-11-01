@@ -258,11 +258,23 @@ async def test_founder_twin_consultations_and_handoffs_respect_owner_scope(
     await _db(
         """
         INSERT INTO experience_consultations (
-            twin_slug, uid, thread_id, run_id, question, answer, cited_entry_ids, confidence
+            twin_slug, uid, thread_id, run_id, question, answer, cited_entry_ids,
+            external_citations, confidence
         )
-        VALUES (:slug, :uid, 'thread-a', 'run-a', '问题 A', '答案 A', CAST(:cited AS jsonb), 0.8)
+        VALUES (
+            :slug, :uid, 'thread-a', 'run-a', '问题 A', '答案 A',
+            CAST(:cited AS jsonb), CAST(:external AS jsonb), 0.8
+        )
         """,
-        {"slug": slug, "uid": twin_user["uid"], "cited": f"[{cited_entry_id}]"},
+        {
+            "slug": slug,
+            "uid": twin_user["uid"],
+            "cited": f"[{cited_entry_id}]",
+            "external": (
+                '[{"twin_slug":"missing","entry_id":"not-a-number"},'
+                '{"twin_slug":"missing","entry_id":999999},"bad"]'
+            ),
+        },
     )
     await _db(
         """
@@ -290,6 +302,10 @@ async def test_founder_twin_consultations_and_handoffs_respect_owner_scope(
     assert own_consultations.json()["consultations"][0]["cited_entries"] == [
         {"id": cited_entry_id, "title": "引用经验", "status": "confirmed"}
     ]
+    external_citations = own_consultations.json()["consultations"][0]["external_citations"]
+    assert [item["entry_id"] for item in external_citations] == [999999]
+    assert external_citations[0]["title"] is None
+    assert external_citations[0]["status"] is None
 
     forbidden_update = await test_client.put(
         f"/api/founder-twins/{slug}/handoffs/{first_handoff.id}",

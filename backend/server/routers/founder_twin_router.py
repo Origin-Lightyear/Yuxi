@@ -133,8 +133,41 @@ def _consultation_payload(
     item: ExperienceConsultation,
     *,
     cited_entries: dict[int, ExperienceEntry] | None = None,
+    external_entries: dict[int, ExperienceEntry] | None = None,
+    twin_names: dict[str, str] | None = None,
 ) -> dict:
     entries = cited_entries or {}
+    external = external_entries or {}
+    names = twin_names or {}
+    external_citations = []
+    for ref in item.external_citations or []:
+        if not isinstance(ref, dict):
+            continue
+        try:
+            entry_id = int(ref.get("entry_id"))
+        except (TypeError, ValueError):
+            continue
+        twin_slug = str(ref.get("twin_slug") or "")
+        entry = external.get(entry_id)
+        if entry is not None and entry.twin_slug != twin_slug:
+            entry = None
+        external_citations.append(
+            {
+                "twin_slug": twin_slug,
+                "twin_name": names.get(twin_slug) or twin_slug,
+                "entry_id": entry_id,
+                "title": entry.title if entry is not None else None,
+                "status": entry.status if entry is not None else None,
+            }
+        )
+    cited_entries = []
+    for entry_id in item.cited_entry_ids or []:
+        try:
+            entry = entries.get(int(entry_id))
+        except (TypeError, ValueError):
+            continue
+        if entry is not None and entry.twin_slug == item.twin_slug:
+            cited_entries.append({"id": entry.id, "title": entry.title, "status": entry.status})
     return {
         "id": item.id,
         "twin_slug": item.twin_slug,
@@ -144,15 +177,8 @@ def _consultation_payload(
         "question": item.question,
         "answer": item.answer,
         "cited_entry_ids": item.cited_entry_ids or [],
-        "cited_entries": [
-            {
-                "id": entry.id,
-                "title": entry.title,
-                "status": entry.status,
-            }
-            for entry_id in (item.cited_entry_ids or [])
-            if (entry := entries.get(int(entry_id))) is not None
-        ],
+        "cited_entries": cited_entries,
+        "external_citations": external_citations,
         "confidence": item.confidence,
         "handoff_id": item.handoff_id,
         "created_at": format_utc_datetime(item.created_at),
@@ -435,13 +461,45 @@ async def list_consultations(
     uid = None if user_can_manage_agent(current_user, agent) else str(current_user.uid)
     repo = FounderTwinRepository(db)
     items = await repo.list_consultations(agent.slug, uid=uid)
-    cited_ids = {int(entry_id) for item in items for entry_id in (item.cited_entry_ids or [])}
+    cited_ids: set[int] = set()
+    for item in items:
+        for entry_id in item.cited_entry_ids or []:
+            try:
+                cited_ids.add(int(entry_id))
+            except (TypeError, ValueError):
+                continue
+    external_refs = [
+        ref
+        for item in items
+        for ref in (item.external_citations or [])
+        if isinstance(ref, dict) and ref.get("entry_id") is not None
+    ]
+    external_ids: set[int] = set()
+    for ref in external_refs:
+        try:
+            external_ids.add(int(ref["entry_id"]))
+        except (TypeError, ValueError):
+            continue
     cited_entries = {
         entry.id: entry for entry in await repo.get_entries_by_ids(sorted(cited_ids))
     }
+    external_entries = {
+        entry.id: entry for entry in await repo.get_entries_by_ids(sorted(external_ids))
+    }
+    external_twin_slugs = {
+        str(ref.get("twin_slug") or "").strip() for ref in external_refs
+    } - {""}
+    twin_agents = await AgentRepository(db).list_by_slugs(sorted(external_twin_slugs))
+    twin_names = {item.slug: item.name for item in twin_agents}
     return {
         "consultations": [
-            _consultation_payload(item, cited_entries=cited_entries) for item in items
+            _consultation_payload(
+                item,
+                cited_entries=cited_entries,
+                external_entries=external_entries,
+                twin_names=twin_names,
+            )
+            for item in items
         ]
     }
 

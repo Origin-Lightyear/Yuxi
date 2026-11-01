@@ -10,6 +10,7 @@ from server.routers.auth_router import auth
 from server.routers.chat_router import chat
 from server.routers.dashboard_router import dashboard
 from server.routers.digital_employee_router import digital_employee_router
+from server.routers.employee_skill_router import employee_skill_router
 from server.routers.external_kb_router import external_kb
 from server.routers.founder_twin_router import founder_twin_router
 from server.routers.filesystem_router import filesystem_router
@@ -19,6 +20,7 @@ from server.routers.knowledge_dashboard_router import knowledge_dashboard
 from server.routers.knowledge_eval_router import evaluation
 from server.routers.knowledge_router import knowledge
 from server.routers.mcp_router import mcp
+from server.routers.meeting_router import meeting_router
 from server.routers.mention_router import mention_router
 from server.routers.model_provider_router import model_providers
 from server.routers.project_router import projects
@@ -41,6 +43,8 @@ router.include_router(agent_memory_router)  # /api/agent/{slug}/memories 用户�
 router.include_router(agent_router)  # /api/agent/* 智能体管理与运行态
 router.include_router(digital_employee_router)  # /api/digital-employees/* 数字员工配置与生命周期
 router.include_router(founder_twin_router)  # /api/founder-twins/* 老板分身、经验与转交
+router.include_router(meeting_router)  # /api/meetings/* 分身会议与数字员工会议
+router.include_router(employee_skill_router)  # /api/employee-skills/* 员工技能卡与交接
 router.include_router(workbench_router)  # /api/workbench/* 统一待办收件箱
 router.include_router(agent_invocation_call_router)  # /api/agent-invocation/agent-call/*
 router.include_router(agent_invocation_channel_router)  # /api/agent-invocation/channel/*

@@ -46,6 +46,28 @@ test('work item displays source and unread labels', () => {
   assert.equal(workItemSourceLabel({ source_type: 'agent_run', initiator_type: 'digital_employee' }), '数字员工')
   assert.equal(workItemSourceLabel({ source_type: 'agent_run', initiator_type: 'human' }), '人工发起')
   assert.equal(workItemSourceLabel({ source_type: 'handoff' }), '老板分身转交')
+  assert.equal(workItemSourceLabel({ source_type: 'decision' }), '会议决议')
   assert.equal(workItemUnreadLabel(true), '未读')
   assert.equal(workItemUnreadLabel(false), '已读')
+})
+
+test('work item action asks signers to sign pending meeting decisions', () => {
+  const pending = workItemAction({ source_type: 'decision', status: 'waiting_approval' })
+  assert.equal(pending.label, '去签字')
+  assert.equal(pending.key, 'open_decision')
+
+  const done = workItemAction({ source_type: 'decision', status: 'completed' })
+  assert.equal(done.label, '查看决议')
+  assert.equal(done.key, 'open_decision')
+})
+
+test('work item targets the owning meeting for decisions', () => {
+  assert.deepEqual(
+    workItemTarget({ source_type: 'decision', source: 'twin_meeting_decision', meeting_id: 22 }),
+    { name: 'FounderTwinComp', query: { meeting: '22' } }
+  )
+  assert.deepEqual(
+    workItemTarget({ source_type: 'decision', source: 'ai_meeting_decision', meeting_id: 31 }),
+    { name: 'MeetingComp', query: { meeting: '31' } }
+  )
 })

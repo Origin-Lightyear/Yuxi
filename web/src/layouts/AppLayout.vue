@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed, provide, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
+  Award,
   BarChart3,
   Brain,
   ClipboardList,
@@ -14,7 +15,8 @@ import {
   ListChecks,
   MessageCirclePlus,
   Search,
-  Users
+  Users,
+  Video
 } from '@lucide/vue'
 
 import { useConfigStore } from '@/stores/config'
@@ -205,6 +207,20 @@ const mainList = computed(() => {
     path: '/founder-twin',
     icon: Brain,
     activeIcon: Brain
+  })
+
+  items.push({
+    name: 'AI 会议',
+    path: '/meetings',
+    icon: Video,
+    activeIcon: Video
+  })
+
+  items.push({
+    name: '技能管理',
+    path: '/employee-skills',
+    icon: Award,
+    activeIcon: Award
   })
 
   items.push({

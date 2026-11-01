@@ -14,7 +14,7 @@ from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import format_utc_datetime
 
 WORK_ITEM_STATUSES = ("queued", "running", "waiting_approval", "completed", "failed", "cancelled")
-SOURCE_TYPES = ("run", "handoff")
+SOURCE_TYPES = ("run", "handoff", "decision")
 MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 50
 
@@ -27,6 +27,11 @@ def run_work_item_key(run_id: str) -> str:
 def handoff_work_item_key(handoff_id: int | str) -> str:
     """生成稳定的分身转交待办 key。"""
     return f"handoff:{handoff_id}"
+
+
+def decision_work_item_key(decision_id: int | str) -> str:
+    """生成稳定的会议决议签字待办 key。"""
+    return f"decision:{decision_id}"
 
 
 def parse_work_item_key(key: str) -> tuple[str, str]:
@@ -55,15 +60,28 @@ def _approval_kind(error_type: str | None) -> str | None:
     return None
 
 
+def _work_item_key(row: WorkItemRow) -> str:
+    """按来源选择待办 key 前缀。"""
+    if row.source_type == "handoff":
+        return handoff_work_item_key(row.source_id)
+    if row.source_type == "decision":
+        return decision_work_item_key(row.source_id)
+    return run_work_item_key(row.source_id)
+
+
 def work_item_to_dto(row: WorkItemRow, *, viewer: User, unread: bool) -> dict[str, Any]:
     """把统一投影行转换成前后端共享的 WorkItem DTO。"""
     is_handoff = row.source_type == "handoff"
-    approval_kind = None if is_handoff else _approval_kind(row.error_type)
+    is_decision = row.source_type == "decision"
+    approval_kind = None if is_handoff or is_decision else _approval_kind(row.error_type)
     is_digital_employee = row.source == "scheduled_agent"
-    key = handoff_work_item_key(row.source_id) if is_handoff else run_work_item_key(row.source_id)
+    key = _work_item_key(row)
     if is_handoff:
         initiator_type = "human"
         initiator_name = row.initiator_name or "未知用户"
+    elif is_decision:
+        initiator_type = "human"
+        initiator_name = row.initiator_name or "会议发起人"
     elif is_digital_employee:
         initiator_type = "digital_employee"
         initiator_name = row.agent_name or row.agent_slug
@@ -73,21 +91,24 @@ def work_item_to_dto(row: WorkItemRow, *, viewer: User, unread: bool) -> dict[st
     return {
         "key": key,
         "source_type": row.source_type,
+        "source": row.source,
         "source_id": row.source_id,
         "title": _title(row),
         "agent_slug": row.agent_slug,
         "agent_name": row.agent_name or row.agent_slug,
         "initiator_type": initiator_type,
-        "initiator_uid": row.owner_uid,
+        "initiator_uid": row.initiator_uid,
         "initiator_name": initiator_name,
         "status": row.work_status,
         "approval_kind": approval_kind,
-        "approval_summary": {
-            "tool": "等待工具审批",
-            "question": "等待回答执行问题",
-        }.get(approval_kind),
+        "approval_summary": (
+            "等待负责人签字"
+            if is_decision and row.work_status == "waiting_approval"
+            else {"tool": "等待工具审批", "question": "等待回答执行问题"}.get(approval_kind)
+        ),
         "thread_id": row.thread_id,
         "run_id": row.run_id,
+        "meeting_id": row.meeting_id,
         "created_at": format_utc_datetime(row.created_at),
         "updated_at": format_utc_datetime(row.updated_at),
         "unread": unread,
@@ -122,10 +143,7 @@ async def list_work_items(
         limit=limit,
         offset=offset,
     )
-    keys = [
-        handoff_work_item_key(row.source_id) if row.source_type == "handoff" else run_work_item_key(row.source_id)
-        for row in rows
-    ]
+    keys = [_work_item_key(row) for row in rows]
     viewed = await repo.viewed_keys(user.uid, keys)
     return {
         "items": [work_item_to_dto(row, viewer=user, unread=key not in viewed) for row, key in zip(rows, keys)],
@@ -141,7 +159,7 @@ async def get_work_item(db: AsyncSession, user: User, key: str) -> dict[str, Any
         source_type, source_id = parse_work_item_key(key)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="待办不存在") from exc
-    row_source_type = "agent_run" if source_type == "run" else "handoff"
+    row_source_type = "agent_run" if source_type == "run" else source_type
     repo = WorkItemRepository(db)
     row = await repo.get_item(
         user.uid,

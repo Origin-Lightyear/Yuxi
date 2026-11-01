@@ -2,9 +2,10 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { BookOpen, ListChecks, MessageCirclePlus, Plus, RefreshCw } from '@lucide/vue'
+import { BookOpen, ListChecks, MessageCirclePlus, Plus, RefreshCw, Video } from '@lucide/vue'
 
 import { founderTwinApi } from '@/apis/founderTwinApi'
+import MeetingWorkspace from '@/components/meeting/MeetingWorkspace.vue'
 import { useUserStore } from '@/stores/user'
 import {
   founderTwinCanManage,
@@ -21,7 +22,7 @@ const errorText = ref('')
 const twins = ref([])
 const selectedSlug = ref('')
 const selectedTwin = ref(null)
-const activeTab = ref('entries')
+const activeTab = ref(route.query.meeting ? 'meetings' : 'entries')
 const entries = ref([])
 const consultations = ref([])
 const handoffs = ref([])
@@ -294,6 +295,13 @@ watch(
   }
 )
 
+watch(
+  () => route.query.meeting,
+  (meetingId) => {
+    if (meetingId) activeTab.value = 'meetings'
+  }
+)
+
 onMounted(loadTwins)
 </script>
 
@@ -452,6 +460,13 @@ onMounted(loadTwins)
               </section>
             </a-tab-pane>
 
+            <a-tab-pane key="meetings">
+              <template #tab>
+                <span class="tab-label"><Video :size="15" />分身会议</span>
+              </template>
+              <MeetingWorkspace kind="twin" embedded />
+            </a-tab-pane>
+
             <a-tab-pane key="consultations">
               <template #tab>
                 <span class="tab-label"><MessageCirclePlus :size="15" />咨询记录</span>
@@ -470,6 +485,16 @@ onMounted(loadTwins)
                     <span>依据：</span>
                     <a-tag v-for="entry in item.cited_entries" :key="entry.id">
                       {{ entry.title }}
+                    </a-tag>
+                  </div>
+                  <div v-if="item.external_citations?.length" class="citation-list">
+                    <span>其他分口径（本人未复核）：</span>
+                    <a-tag
+                      v-for="citation in item.external_citations"
+                      :key="`${citation.twin_slug}-${citation.entry_id}`"
+                      color="orange"
+                    >
+                      {{ citation.twin_name }} · {{ citation.title || `经验 #${citation.entry_id}` }}
                     </a-tag>
                   </div>
                 </article>
@@ -515,6 +540,7 @@ onMounted(loadTwins)
         </a-spin>
       </template>
 
+      <MeetingWorkspace v-else-if="route.query.meeting" kind="twin" embedded />
       <a-empty v-else description="请选择一个老板分身" />
     </main>
 

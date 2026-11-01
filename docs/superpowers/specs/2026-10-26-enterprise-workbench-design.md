@@ -1,10 +1,10 @@
 # 企业智能工作台：数字员工、待办与老板分身
 
-状态：P1/P2/P3 implemented（2026-10-26）
+状态：P1–P6 implemented（2026-10-30）
 
 日期：2026-10-26
 
-范围：P1「数字员工」、P2「待办事项」、P3「老板分身」均已实现；实现决策和验证见对应决策记录。
+范围：P1「数字员工」、P2「待办事项」、P3「老板分身」、P4「分身协作」、P5「技能管理」、P6「AI 会议」均已实现；实现决策和验证见对应决策记录。
 
 部署形态：单企业自建（一个 Yuxi 部署服务一个企业）。SaaS 多租户共享实例不在 P1。
 
@@ -26,15 +26,20 @@ P1 先交付「数字员工」：管理员能配置、发布、停用；员工�
 - P1：管理员创建草稿、发布、停用；普通员工只看到在岗且在自己共享范围内的数字员工。
 - P1：数字员工复用现有 Agent 对话、知识库、Skills、MCP、模型和 Run 链路，不新建执行后端。
 - P1：停用后不能再发起新 Run，但历史对话仍可读；权限判断在后端完成。
-- P2（边界）：待办是 `AgentRun` / `ScheduledAgentRun` / 转交单的运行时投影，不是第二套任务事实表。
+- P2（边界）：待办是 `AgentRun` / `ScheduledAgentRun` / 转交单 / 会议决议的运行时投影，不是第二套任务事实表。
 - P3（边界）：老板分身的经验条目、确认状态、引用和转交必须可持久化、可校验；不能只靠提示词。
+- P4：分身可以只读请教其他分身，并组织分身会议形成可签字决议；外部口径必须标记「本人未复核」。
+- P5：员工可以沉淀带步骤、规则、边界和验收的技能卡，并完成送审、确认、交接和接手。
+- P6：数字员工可以多轮开会，人可入会，待拍板事项进入待办，历史会议和签字结果可查。
 
 ### 非目标
 
 - 不做员工之间的任务创建、指派、截止时间和通知（待办只做 AI 执行收件箱）。
 - 不做数字员工的独立服务账号或越权数据访问；运行时数据权限仍跟随调用身份。
-- 不做会议录音转写、审批意见自动抽取；P3 MVP 只支持手工/文本导入经验。
+- 不做会议录音转写、审批意见自动抽取；会议输入仍是手工主题和模型生成纪要。
 - 不做多租户共享实例、移动端、KPI 或绩效。
+- 不把员工技能卡接入 Agent Skills 运行时；P5 只做员工经验沉淀和交接。
+- 不做跨企业会议、外部参会人或日历集成；P6 的参与者是当前部署内的数字员工和登录用户。
 - 不把老板分身放进 P1；P1 只预留 `kind` 的扩展空间。
 - 不改造现有 Agent 管理页为工作台，也不重排全局导航。
 
@@ -63,7 +68,7 @@ P1 先交付「数字员工」：管理员能配置、发布、停用；员工�
 - 数字员工由管理员配置和发布；普通员工只消费。部门经理自助创建不在 P1。
 - 「部门」在员工档案里是展示字段；真正的可见范围仍由 `share_config` 拥有。两者可以不一致，UI 必须避免让用户误以为档案部门就是授权部门。
 - 数字员工运行时的知识库/Skills/工具可见性按调用身份解析；P1 不引入服务账号或权限提升。
-- P2/P3 的实现决策和验证分别记录在 `implemented/2026-10-26-workbench-todos-p2.md` 和 `implemented/2026-10-26-founder-twin-p3.md`。
+- P2–P6 的实现决策和验证分别记录在 `implemented/2026-10-26-workbench-todos-p2.md`、`implemented/2026-10-26-founder-twin-p3.md`、`implemented/2026-10-29-twin-collaboration.md`、`implemented/2026-10-29-employee-skill-management.md` 和 `implemented/2026-10-29-ai-meeting.md`。
 
 ## 4. 方案与取舍
 
@@ -400,8 +405,8 @@ P2 已实现，不改变 P1 的员工模型。它新增一个运行时投影：
 
 ```text
 WorkItem
-  key: "run:<run_id>" | "handoff:<id>"
-  source_type: "agent_run" | "handoff"
+  key: "run:<run_id>" | "handoff:<id>" | "decision:<id>"
+  source_type: "agent_run" | "handoff" | "decision"
   source_id
   title
   agent_slug / agent_name
@@ -410,7 +415,7 @@ WorkItem
   status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled"
   approval_kind: "tool" | "question" | null
   approval_summary: string | null
-  thread_id / run_id
+  thread_id / run_id / meeting_id
   created_at / updated_at
   unread: bool
 ```
@@ -420,7 +425,7 @@ WorkItem
 - 审批动作不在待办页复制：详情抽屉提供「去对话处理」，跳转现有会话，由 `HumanApprovalModal` 完成 resume。
 - 新增 `work_item_views(uid, item_key, viewed_at)` 已读表，`(uid,item_key)` 唯一；不新增待办状态表。
 - P2 API：`GET /api/workbench/todos`、`GET /api/workbench/todos/{key}`、`POST /api/workbench/todos/{key}/viewed`、`GET /api/workbench/todos/summary`。
-- P3 的转交单以 `source_type=handoff` 接入同一 DTO；P2 已预留 key 解析、DTO 和前端动作，但尚未产生 handoff 记录。
+- P3 的转交单以 `source_type=handoff` 接入同一 DTO；P4/P6 的待签决议以 `source_type=decision` 接入，签完映射为完成或失败。
 - P2 实现决策、状态映射、已读粒度和验证见 [待办收件箱接入企业智能工作台](../../develop-guides/decisions/implemented/2026-10-26-workbench-todos-p2.md)。
 
 ### 6.2 P3 老板分身
@@ -435,7 +440,46 @@ P3 已实现，复用 P1 的 `kind` 扩展点，增加 `founder_twin`：
 - 页面：`/founder-twin`，包含咨询、经验库、待确认条目、来源和转交；普通员工只读咨询和自己的记录，老板/管理员管理条目。
 - 实现决策、状态机、guard、转交可见范围和验证见 [老板分身与经验引用约束](../../develop-guides/decisions/implemented/2026-10-26-founder-twin-p3.md)。
 
-## 7. 交给实现者的部分
+## 7. P4 / P5 / P6 接口边界
+
+### 7.1 P4 分身协作
+
+P4 复用 P3 会话和咨询记录，不启动第二个 Agent：
+
+- `ask_another_twin` 只读检索目标分身已确认经验，返回 `review_status=unreviewed`；不能向自己请教，同一轮最多向两个目标分身请教。
+- `submit_consultation_answer` 的 `external_citations` 只能引用本轮 `ask_another_twin` 实际返回的 `(twin_slug, entry_id)` 对；外部引用写入 `experience_consultations.external_citations`，与本分身引用分开校验和展示。
+- 会议事实：`meetings`、`meeting_messages`、`meeting_decisions`、`meeting_decision_signers`。`meeting.kind` 区分 `twin` / `digital_employee`。
+- 会议 API：`GET/POST /api/meetings`、`GET /api/meetings/{id}`、`POST /api/meetings/{id}/run`、`POST /api/meetings/{id}/messages`、`POST /api/meetings/{id}/decisions/{decision_id}/sign`。
+- 会议只对管理员、创建人、参与者归属人、人工参会人和指定签字人可见；生成和推进要求管理员或参与者负责人；签字只允许指定签字人。
+- 默认签字人取参与者 `Agent.created_by` 去重；没有归属人时回落到会议创建人；创建请求可显式传 `signer_uids`。
+- 生效决议按 `proposer_slug` 回写一条 `draft` 经验，`source_type='meeting'`；拒绝不回写。
+- 待签决议进入 P2 待办，`item_key='decision:<id>'`，按签字人投影；签完进入完成/失败。
+- 实现决策和验证见 [跨分身请教与分身会议](../../develop-guides/decisions/implemented/2026-10-29-twin-collaboration.md)。
+
+### 7.2 P5 技能管理
+
+P5 新建独立事实，不复用 Agent `skills`：
+
+- `employee_skills`：`code`、`title`、`department`、`owner_uid`、`capture_method`、`status`、`steps`、`rules`、`boundary`、`acceptance`、`successor_uid`、`handover_status`、`source_ref`、`created_by/updated_by`。
+- 状态机：`draft -> needs_review -> ready -> needs_review/archived`；已就绪内容修改后退回送审。
+- 交接状态：`unassigned -> assigned -> accepted`；只有已就绪技能能进入交接。
+- 可见性：`ready` 对所有登录员工可见；其他状态只对归属人、接手人和管理员可见；不可见统一 404。
+- API：`GET/POST /api/employee-skills`、`GET/PUT/DELETE /api/employee-skills/{id}`、`POST .../submit|verify|archive|handover|accept`、`GET .../handover-candidates`。
+- 实现决策和验证见 [员工技能卡与交接看板](../../develop-guides/decisions/implemented/2026-10-29-employee-skill-management.md)。
+
+### 7.3 P6 AI 会议
+
+P6 复用 P4 会议事实，只以 `kind='digital_employee'` 区分：
+
+- 参与者必须是当前用户可见且在岗的数字员工；普通 Agent、停用员工和不可见员工不能入会。
+- 生成输入包含每位员工的岗位、职责、能力、边界和验收；使用系统默认聊天模型，输出结构校验后落库。
+- 生成失败保留 `draft`、写 `generation_error`、返回 502；不写空纪要。
+- 人入会写入 `meeting_messages.speaker_type='human'`，轮次默认为当前会议轮次；`can_join` 由后端返回。
+- 会议不创建 AgentRun，不占用 FIFO、worker lease 或 SSE Run 链路。
+- 页面：`/meetings` 使用共享 `MeetingWorkspace`；`/founder-twin` 增加「分身会议」页签；侧边导航增加「AI 会议」和「技能管理」。
+- 实现决策和验证见 [数字员工 AI 会议](../../develop-guides/decisions/implemented/2026-10-29-ai-meeting.md)。
+
+## 8. 交给实现者的部分
 
 - 前端视觉细节、响应式断点、卡片/抽屉的具体布局和文案。
 - 测试 fixture 的具体构造；E2E 复用哪条 deterministic 模型路径。
@@ -444,7 +488,7 @@ P3 已实现，复用 P1 的 `kind` 扩展点，增加 `founder_twin`：
 - P2/P3 的详细设计、迁移和索引。
 - 是否在 P1 提供「草稿预览对话」；当前设计为不提供，先发布再对话。
 
-## 8. Builder 检查决议
+## 9. Builder 检查决议
 
 - **内部命名**：使用 `digital_employee`，避免和 SaaS 人类员工冲突。
 - **停用历史**：`GET /api/agent/{slug}` 对 active/disabled 可读；列表只出现 active；新 Run 409。
@@ -454,7 +498,7 @@ P3 已实现，复用 P1 的 `kind` 扩展点，增加 `founder_twin`：
 - **资源摘要**：非管理者不显示配置的 KB/Skills 名称，避免泄露私有资源。
 - **部署形态**：已确认为 A 单企业自建；SaaS 共享实例另行提案。
 
-## 9. 风险与待确认
+## 10. 风险与待确认
 
 1. **数据权限语义（产品文案必须承认）**：数字员工跟随调用身份的数据权限，不提供独立服务账号。如果产品要求「财务核查官」能看财务数据而调用者看不到，P1 的模型不成立，需要单独设计服务身份、授权和审计。
 2. **单企业假设已确认，但仍是发布边界**：默认 `global` 共享只在单企业自建成立；如果未来改为 SaaS 共享实例，必须新增 `Agent.tenant_id`、租户管理身份和租户范围，不能直接复用 P1。

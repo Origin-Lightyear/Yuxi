@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import String, and_, case, cast, func, literal, or_, select
+from sqlalchemy import Integer, String, and_, case, cast, func, literal, or_, select, union_all
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,9 @@ from yuxi.storage.postgres.models_business import (
     AgentRun,
     Conversation,
     HandoffRequest,
+    Meeting,
+    MeetingDecision,
+    MeetingDecisionSigner,
     Message,
     User,
     WorkItemView,
@@ -23,6 +26,9 @@ from yuxi.utils.datetime_utils import utc_now_naive
 TOP_LEVEL_RUN_TYPES = ("chat", "resume")
 EXCLUDED_SOURCES = ("agent_call", "agent_evaluation")
 APPROVAL_ERROR_TYPES = ("human_approval_required", "ask_user_question_required")
+DECISION_SOURCE = "decision"
+
+
 @dataclass(frozen=True)
 class WorkItemRow:
     """投影后的统一待办行；work_status 是面向待办页的派生状态。"""
@@ -32,6 +38,7 @@ class WorkItemRow:
     run_id: str | None
     thread_id: str | None
     conversation_id: int | None
+    meeting_id: int | None
     agent_slug: str | None
     agent_name: str | None
     title: str | None
@@ -41,6 +48,7 @@ class WorkItemRow:
     work_status: str
     error_type: str | None
     owner_uid: str
+    initiator_uid: str
     initiator_name: str | None
     created_at: datetime
     updated_at: datetime
@@ -106,6 +114,7 @@ class WorkItemRepository:
                 latest.c.run_id,
                 latest.c.thread_id,
                 latest.c.conversation_id,
+                cast(literal(None), Integer).label("meeting_id"),
                 latest.c.agent_slug,
                 Agent.name.label("agent_name"),
                 Conversation.title.label("title"),
@@ -115,6 +124,7 @@ class WorkItemRepository:
                 latest.c.work_status,
                 latest.c.error_type,
                 latest.c.uid.label("owner_uid"),
+                latest.c.uid.label("initiator_uid"),
                 literal(None, String).label("initiator_name"),
                 latest.c.created_at,
                 latest.c.updated_at,
@@ -146,6 +156,7 @@ class WorkItemRepository:
                 literal(None, String).label("run_id"),
                 literal(None, String).label("thread_id"),
                 literal(None).label("conversation_id"),
+                cast(literal(None), Integer).label("meeting_id"),
                 HandoffRequest.twin_slug.label("agent_slug"),
                 Agent.name.label("agent_name"),
                 HandoffRequest.question.label("title"),
@@ -155,6 +166,7 @@ class WorkItemRepository:
                 work_status.label("work_status"),
                 literal(None, String).label("error_type"),
                 HandoffRequest.uid.label("owner_uid"),
+                HandoffRequest.uid.label("initiator_uid"),
                 User.username.label("initiator_name"),
                 HandoffRequest.created_at,
                 updated_at.label("updated_at"),
@@ -166,8 +178,57 @@ class WorkItemRepository:
             .where(or_(*visibility))
         )
 
+    @staticmethod
+    def _decision_select(uid: str):
+        """把待签决议投影成签字人的待办；每名签字人只看到自己的那一行。"""
+        work_status = case(
+            (MeetingDecisionSigner.status == "pending", "waiting_approval"),
+            (MeetingDecisionSigner.status == "approved", "completed"),
+            (MeetingDecisionSigner.status == "rejected", "failed"),
+            else_=MeetingDecisionSigner.status,
+        )
+        updated_at = func.coalesce(MeetingDecisionSigner.signed_at, MeetingDecision.updated_at)
+        source = case(
+            (Meeting.kind == "twin", "twin_meeting_decision"),
+            else_="ai_meeting_decision",
+        )
+        return (
+            select(
+                literal(DECISION_SOURCE).label("source_type"),
+                cast(MeetingDecision.id, String).label("source_id"),
+                literal(None, String).label("run_id"),
+                literal(None, String).label("thread_id"),
+                literal(None).label("conversation_id"),
+                Meeting.id.label("meeting_id"),
+                MeetingDecision.proposer_slug.label("agent_slug"),
+                Agent.name.label("agent_name"),
+                MeetingDecision.title.label("title"),
+                Meeting.topic.label("input_text"),
+                source.label("source"),
+                MeetingDecisionSigner.status.label("run_status"),
+                work_status.label("work_status"),
+                literal(None, String).label("error_type"),
+                MeetingDecisionSigner.uid.label("owner_uid"),
+                Meeting.created_by.label("initiator_uid"),
+                User.username.label("initiator_name"),
+                MeetingDecision.created_at,
+                updated_at.label("updated_at"),
+                (literal("decision:") + cast(MeetingDecision.id, String)).label("item_key"),
+            )
+            .select_from(MeetingDecisionSigner)
+            .join(MeetingDecision, MeetingDecision.id == MeetingDecisionSigner.decision_id)
+            .join(Meeting, Meeting.id == MeetingDecision.meeting_id)
+            .outerjoin(Agent, Agent.slug == MeetingDecision.proposer_slug)
+            .outerjoin(User, User.uid == Meeting.created_by)
+            .where(MeetingDecisionSigner.uid == uid)
+        )
+
     def _items_subquery(self, uid: str, managed_twin_slugs: list[str]):
-        return self._run_select(uid).union_all(self._handoff_select(uid, managed_twin_slugs)).subquery("work_items")
+        return union_all(
+            self._run_select(uid),
+            self._handoff_select(uid, managed_twin_slugs),
+            self._decision_select(uid),
+        ).subquery("work_items")
 
     @staticmethod
     def _to_row(row) -> WorkItemRow:
@@ -178,6 +239,7 @@ class WorkItemRepository:
             run_id=row.run_id,
             thread_id=row.thread_id,
             conversation_id=row.conversation_id,
+            meeting_id=row.meeting_id,
             agent_slug=row.agent_slug,
             agent_name=row.agent_name,
             title=row.title,
@@ -187,6 +249,7 @@ class WorkItemRepository:
             work_status=row.work_status,
             error_type=row.error_type,
             owner_uid=row.owner_uid,
+            initiator_uid=row.initiator_uid,
             initiator_name=row.initiator_name,
             created_at=created_at,
             updated_at=row.updated_at or created_at,

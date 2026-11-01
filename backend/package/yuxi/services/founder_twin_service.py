@@ -167,6 +167,46 @@ async def validate_citations(
     return [by_id[entry_id] for entry_id in unique_ids]
 
 
+async def validate_external_citations(
+    db: AsyncSession,
+    *,
+    external_citations: list[dict] | None,
+) -> list[tuple[str, ExperienceEntry]]:
+    """校验跨分身引用去重后属于目标分身、已确认且有 embedding。"""
+    normalized: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for item in external_citations or []:
+        if not isinstance(item, dict):
+            raise ValueError("跨分身引用格式无效")
+        twin_slug = str(item.get("twin_slug") or "").strip()
+        try:
+            entry_id = int(item.get("entry_id"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("跨分身引用条目 ID 无效") from exc
+        if not twin_slug or entry_id <= 0:
+            raise ValueError("跨分身引用格式无效")
+        key = (twin_slug, entry_id)
+        if key not in seen:
+            seen.add(key)
+            normalized.append(key)
+    if not normalized:
+        return []
+
+    entries = await FounderTwinRepository(db).get_entries_by_ids([entry_id for _, entry_id in normalized])
+    by_id = {
+        entry.id: entry
+        for entry in entries
+        if entry.status == EXPERIENCE_STATUS_CONFIRMED and bool(entry.embedding)
+    }
+    result: list[tuple[str, ExperienceEntry]] = []
+    for twin_slug, entry_id in normalized:
+        entry = by_id.get(entry_id)
+        if entry is None or entry.twin_slug != twin_slug:
+            raise ValueError("跨分身引用条目不存在、未确认或不属于目标分身")
+        result.append((twin_slug, entry))
+    return result
+
+
 async def create_experience_entry(
     db: AsyncSession,
     *,
@@ -288,14 +328,17 @@ async def record_consultation_answer(
     answer: str,
     cited_entries: list[ExperienceEntry],
     confidence: float | None,
+    external_citations: list[dict] | None = None,
 ) -> ExperienceConsultation:
     """把已校验答案写入本次 Run 的唯一咨询记录，并只对新增引用累加计数。"""
     await _lock_run(db, run_id)
+    validated_external = await validate_external_citations(db, external_citations=external_citations)
     repo = FounderTwinRepository(db)
     consultation = await repo.get_consultation_by_run(run_id)
     if consultation is not None and consultation.handoff_id is not None:
         raise ValueError("已转交的问题不能直接提交答案")
     previous_ids: set[int] = set()
+    previous_external: set[tuple[str, int]] = set()
     if consultation is None:
         consultation = ExperienceConsultation(
             twin_slug=twin_slug,
@@ -305,18 +348,41 @@ async def record_consultation_answer(
             question=question,
             answer=answer,
             cited_entry_ids=[],
+            external_citations=[],
         )
         db.add(consultation)
     else:
-        previous_ids = {int(value) for value in (consultation.cited_entry_ids or [])}
+        for value in consultation.cited_entry_ids or []:
+            try:
+                previous_ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        for item in consultation.external_citations or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                entry_id = int(item.get("entry_id"))
+            except (TypeError, ValueError):
+                continue
+            external_twin_slug = str(item.get("twin_slug") or "").strip()
+            if external_twin_slug and entry_id > 0:
+                previous_external.add((external_twin_slug, entry_id))
         consultation.question = question
         consultation.answer = answer
     cited_ids = [int(entry.id) for entry in cited_entries]
+    external_refs = [
+        {"twin_slug": external_twin, "entry_id": int(entry.id)}
+        for external_twin, entry in validated_external
+    ]
     consultation.cited_entry_ids = cited_ids
+    consultation.external_citations = external_refs
     consultation.confidence = confidence
     consultation.handoff_id = None
     for entry in cited_entries:
         if int(entry.id) not in previous_ids:
+            entry.citation_count = int(entry.citation_count or 0) + 1
+    for external_twin, entry in validated_external:
+        if (external_twin, int(entry.id)) not in previous_external:
             entry.citation_count = int(entry.citation_count or 0) + 1
     await db.flush()
     return consultation
@@ -368,6 +434,7 @@ async def record_handoff(
         consultation.question = question
         consultation.answer = reason
         consultation.cited_entry_ids = []
+        consultation.external_citations = []
         consultation.confidence = None
     consultation.handoff_id = int(handoff.id)
     await db.flush()

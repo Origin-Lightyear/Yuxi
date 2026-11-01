@@ -29,6 +29,7 @@ export function workItemStatusColor(status) {
 
 export function workItemSourceLabel(item) {
   if (item?.source_type === 'handoff') return '老板分身转交'
+  if (item?.source_type === 'decision') return '会议决议'
   if (item?.initiator_type === 'digital_employee') return '数字员工'
   return '人工发起'
 }
@@ -45,6 +46,12 @@ export function workItemAction(item) {
       label: item.status === 'completed' || item.status === 'cancelled' ? '查看转交' : '去处理转交'
     }
   }
+  if (item.source_type === 'decision') {
+    return {
+      key: 'open_decision',
+      label: item.status === 'waiting_approval' ? '去签字' : '查看决议'
+    }
+  }
   if (item.status === 'waiting_approval') {
     return { key: 'open_thread', label: '去对话处理' }
   }
@@ -56,6 +63,12 @@ export function workItemTarget(item) {
     return {
       name: 'FounderTwinComp',
       query: item.agent_slug ? { twin: item.agent_slug } : {}
+    }
+  }
+  if (item?.source_type === 'decision') {
+    return {
+      name: item.source === 'twin_meeting_decision' ? 'FounderTwinComp' : 'MeetingComp',
+      query: item.meeting_id ? { meeting: String(item.meeting_id) } : {}
     }
   }
   return {

@@ -7,6 +7,7 @@ import pytest
 
 from yuxi.repositories.work_item_repository import WorkItemRow
 from yuxi.services.workbench_service import (
+    decision_work_item_key,
     parse_work_item_key,
     run_work_item_key,
     work_item_to_dto,
@@ -22,6 +23,7 @@ def _row(**overrides) -> WorkItemRow:
         "run_id": "run-1",
         "thread_id": "thread-1",
         "conversation_id": 1,
+        "meeting_id": None,
         "agent_slug": "assistant",
         "agent_name": "执行助手",
         "title": "季度复盘",
@@ -31,6 +33,7 @@ def _row(**overrides) -> WorkItemRow:
         "work_status": "completed",
         "error_type": None,
         "owner_uid": "u1",
+        "initiator_uid": "u1",
         "initiator_name": None,
         "created_at": datetime(2026, 1, 1, 9, 0, 0),
         "updated_at": datetime(2026, 1, 1, 9, 1, 0),
@@ -96,6 +99,40 @@ def test_work_item_key_round_trip_and_rejects_unknown_source() -> None:
         parse_work_item_key("run:")
 
 
+def test_decision_dto_uses_signer_and_waiting_approval() -> None:
+    item = work_item_to_dto(
+        _row(
+            source_type="decision",
+            source_id="9",
+            run_id=None,
+            thread_id=None,
+            conversation_id=None,
+            meeting_id=22,
+            source="twin_meeting_decision",
+            run_status="pending",
+            work_status="waiting_approval",
+            title="报价前置确认预算",
+            input_text="大客户报价流程",
+            owner_uid="boss",
+            initiator_uid="admin",
+            initiator_name="管理员",
+        ),
+        viewer=SimpleNamespace(uid="boss", username="老板"),
+        unread=True,
+    )
+
+    assert item["key"] == "decision:9"
+    assert item["source_type"] == "decision"
+    assert item["source"] == "twin_meeting_decision"
+    assert item["status"] == "waiting_approval"
+    assert item["approval_kind"] is None
+    assert item["approval_summary"] == "等待负责人签字"
+    assert item["meeting_id"] == 22
+    assert item["initiator_uid"] == "admin"
+    assert item["initiator_name"] == "管理员"
+    assert parse_work_item_key(decision_work_item_key(9)) == ("decision", "9")
+
+
 def test_handoff_dto_keeps_requester_as_initiator() -> None:
     item = work_item_to_dto(
         _row(
@@ -110,6 +147,7 @@ def test_handoff_dto_keeps_requester_as_initiator() -> None:
             title="组织架构怎么调整",
             input_text=None,
             owner_uid="u2",
+            initiator_uid="u2",
             initiator_name="李四",
         ),
         viewer=SimpleNamespace(uid="boss", username="老板"),
