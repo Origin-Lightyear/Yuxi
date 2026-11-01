@@ -199,7 +199,11 @@ async def create_binding_session(db: AsyncSession, *, user: User, platform: str,
 
 
 async def complete_binding(db: AsyncSession, *, platform: str, code: str, state: str) -> str:
-    """校验 state、换取平台身份并写入绑定，返回前端回调路径。"""
+    """校验 state、换取平台身份并写入绑定，返回前端回调路径。
+
+    state 单次可用的持久化顺序：先 COMMIT 置 used_at，再换取平台身份，最后写绑定并再次
+    COMMIT。代价是换取失败会烧掉该 state，用户需重新生成二维码。
+    """
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
         raise ValueError("platform 只支持 feishu 或 dingtalk")
@@ -208,15 +212,30 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话无效或已过期"})
+    if session.platform != platform:
+        raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话平台不匹配"})
     if session.status != "pending" or session.used_at is not None:
         raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话已被使用"})
     if session.expires_at <= utc_now_naive():
         raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话已过期"})
 
-    # state 一次性消费：先标记已用，后续任何失败都不允许重放。
+    # 同平台已有绑定须提前拒绝，避免触发 (user_id, platform) 唯一约束的 IntegrityError。
+    bound = await db.execute(
+        select(IMAccountBinding.id).where(
+            IMAccountBinding.user_id == session.user_id,
+            IMAccountBinding.platform == platform,
+        )
+    )
+    if bound.scalar_one_or_none() is not None:
+        raise HTTPException(
+            409,
+            detail={"code": "im_account_already_bound", "message": "该平台已绑定，请先解绑"},
+        )
+
+    # state 一次性消费：先置 used_at 并 COMMIT，使重放保证不依赖调用方事务。
     session.status = "used"
     session.used_at = utc_now_naive()
-    await db.flush()
+    await db.commit()
 
     bot = await get_im_bot(db, session.bot_id)
     if bot is None:
@@ -241,7 +260,7 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
             bot_id=session.bot_id,
         )
     )
-    await db.flush()
+    await db.commit()
     return FRONTEND_BINDING_RESULT_PATH
 
 

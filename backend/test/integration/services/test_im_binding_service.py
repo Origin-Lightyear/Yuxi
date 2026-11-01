@@ -240,6 +240,115 @@ async def test_complete_binding_rejects_expired_state(binding_engine, monkeypatc
             await _cleanup(session, [user_uid])
 
 
+async def test_complete_binding_rejects_platform_mismatch(binding_engine, monkeypatch):
+    """state 平台与回调平台不一致时须拒绝，且不触碰平台换取。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = f"state-{uuid.uuid4().hex}"
+            await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=state,
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+
+            async def no_exchange(platform, credentials, code, redirect_uri):
+                raise AssertionError("平台不匹配时不应触达换取")
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", no_exchange)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await complete_binding(session, platform="feishu", code="code", state=state)
+            assert exc_info.value.status_code == 400
+            assert exc_info.value.detail["code"] == "invalid_binding_state"
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+
+
+async def test_complete_binding_rejects_rebinding_same_platform(binding_engine, monkeypatch):
+    """同一用户同平台已有绑定时返回 409，不触发唯一约束 IntegrityError。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            session.add(IMAccountBinding(user_id=user.id, platform="dingtalk", platform_user_id="already-bound"))
+            await session.commit()
+            state = f"state-{uuid.uuid4().hex}"
+            await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=state,
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+
+            async def no_exchange(platform, credentials, code, redirect_uri):
+                raise AssertionError("已绑定同平台时不应触达换取")
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", no_exchange)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await complete_binding(session, platform="dingtalk", code="code", state=state)
+            assert exc_info.value.status_code == 409
+            assert exc_info.value.detail["code"] == "im_account_already_bound"
+            assert exc_info.value.detail["message"] == "该平台已绑定，请先解绑"
+
+            bindings = (
+                await session.execute(select(IMAccountBinding).where(IMAccountBinding.user_id == user.id))
+            ).scalars().all()
+            assert len(bindings) == 1
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+
+
+async def test_complete_binding_commits_used_state_before_exchange(binding_engine, monkeypatch):
+    """换取失败也必须把 state 置 used 并提交，使重放不能复用。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = f"state-{uuid.uuid4().hex}"
+            await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=state,
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+
+            async def failing_exchange(platform, credentials, code, redirect_uri):
+                raise ValueError("平台换取失败")
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", failing_exchange)
+
+            with pytest.raises(ValueError, match="平台换取失败"):
+                await complete_binding(session, platform="dingtalk", code="code", state=state)
+
+            # 用独立会话确认 used_at 已提交，排除未提交的脏读。
+            async with binding_engine() as verify:
+                row = (
+                    await verify.execute(
+                        select(IMBindingSession).where(IMBindingSession.state_hash == _hash_state(state))
+                    )
+                ).scalar_one()
+                assert row.status == "used"
+                assert row.used_at is not None
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+
+
 async def test_resolve_channel_identity_falls_back_to_owner_when_not_required(binding_engine):
     """未绑定时按 require_binding 分流：关闭回退归属人，打开抛 409。"""
     uid = uuid.uuid4().hex[:10]
