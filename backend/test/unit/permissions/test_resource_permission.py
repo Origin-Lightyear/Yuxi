@@ -236,3 +236,35 @@ def test_empty_user_scope_expresses_no_employee_permission():
         }
     )
     assert resolve_knowledge_base_permission(_user(uid="user-9"), resource) == ResourcePermission.NONE
+
+
+def test_agent_tenant_scope_hides_cross_tenant_resource():
+    resource = SimpleNamespace(
+        created_by="owner",
+        tenant_id=100,
+        share_config={
+            "version": 2,
+            "read_scope": {"access_level": "global"},
+            "manage_scope": None,
+        },
+    )
+    user = _user(uid="employee", role="user")
+    user.tenant_id = 100
+    other = _user(uid="other", role="admin")
+    other.tenant_id = 200
+
+    assert resolve_agent_permission(user, resource) == ResourcePermission.READ
+    assert resolve_agent_permission(other, resource) == ResourcePermission.NONE
+    assert resolve_agent_permission(_user(role="superadmin"), resource) == ResourcePermission.MANAGE
+
+
+def test_agent_null_tenant_stays_visible_to_saas_employee():
+    resource = SimpleNamespace(
+        created_by="system",
+        tenant_id=None,
+        share_config={"version": 2, "read_scope": {"access_level": "global"}},
+    )
+    user = _user(uid="employee", role="user")
+    user.tenant_id = 100
+
+    assert resolve_agent_permission(user, resource) == ResourcePermission.READ

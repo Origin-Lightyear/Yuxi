@@ -721,7 +721,7 @@ curl http://<host>/api/knowledge/databases/kb_xxx/graph-build/status \
 
 ## 租户知识库管理 API（Tenant 平台对接指南）
 
-Tenant 服务（租户后台界面）通过本组 API 接管知识库的**目录管理、文档管理与权限控制**。前缀 `/api/tenant/knowledge`。
+Tenant 服务（租户后台界面）通过本组 API 接管知识库的**目录管理、文档管理与权限控制**。前缀 `/api/tenant/knowledge`。数字员工与老板分身的管理接口见[租户数字员工与老板分身管理 API](./advanced/tenant-agent-management-api.md)。
 
 ### 鉴权与响应约定
 

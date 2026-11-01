@@ -415,6 +415,8 @@ class KnowledgeBaseManager:
                 "uid": user.uid,
                 "role": user.role,
                 "department_id": user.department_id,
+                "tenant_id": getattr(user, "tenant_id", None),
+                "tenant_department_id": getattr(user, "tenant_department_id", None),
             }
 
         user_role = user_info.get("role")

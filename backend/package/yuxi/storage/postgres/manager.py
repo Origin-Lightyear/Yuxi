@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 13
+BUSINESS_SCHEMA_VERSION = 14
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -495,7 +495,7 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             if version == BUSINESS_SCHEMA_VERSION:
                 return
-            if version not in (None, 2, 7, 8, 9, 10, 11, 12):
+            if version not in (None, 2, 7, 8, 9, 10, 11, 12, 13):
                 raise RuntimeError(f"Unsupported business schema version: {version}")
             if version in (None, 2, 7, 8):
                 for name in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
@@ -1042,11 +1042,13 @@ class PostgresManager(metaclass=SingletonMeta):
             ),
             "ALTER TABLE IF EXISTS agents ALTER COLUMN share_config DROP DEFAULT",
             "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS kind VARCHAR(32) NOT NULL DEFAULT 'agent'",
+            "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS tenant_id INTEGER",
             (
                 "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS "
                 "digital_employee_profile JSONB NOT NULL DEFAULT '{}'::jsonb"
             ),
             "CREATE INDEX IF NOT EXISTS ix_agents_kind ON agents (kind)",
+            "CREATE INDEX IF NOT EXISTS ix_agents_tenant_id ON agents (tenant_id)",
             "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS is_subagent BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS enable_memory BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS tenant_id INTEGER",

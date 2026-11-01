@@ -28,6 +28,7 @@ from server.routers.scheduled_agent_router import scheduled_agents
 from server.routers.skill_router import skills, user_skills
 from server.routers.system_router import system
 from server.routers.system_task_router import tasks
+from server.routers.tenant_agent_router import tenant_digital_employee_router, tenant_founder_twin_router
 from server.routers.tenant_knowledge_router import tenant_knowledge
 from server.routers.tool_router import tools
 from server.routers.user_router import user_router
@@ -73,6 +74,8 @@ router.include_router(knowledge_dashboard)  # /api/dashboard/stats/knowledge 知
 router.include_router(external_kb)  # /api/knowledge/databases/external* CLI 与外部 Agent 调用
 router.include_router(knowledge)  # /api/knowledge/* 知识库管理与检索
 router.include_router(tenant_knowledge)  # /api/tenant/knowledge/* 租户知识库管理（Tenant 服务调用）
+router.include_router(tenant_digital_employee_router)  # /api/tenant/digital-employees/* 租户数字员工管理
+router.include_router(tenant_founder_twin_router)  # /api/tenant/founder-twins/* 租户老板分身管理
 router.include_router(evaluation)  # /api/evaluation/* 知识库评估
 router.include_router(graph)  # /api/graph/* 图谱查询与管理
 router.include_router(workspace_knowledge)  # /api/workspace/knowledge/* 工作区知识文件只读视图

@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
 from yuxi.agents.buildin.chatbot.context import ChatBotContext
 
 from yuxi.agents.presets.subagents.general_purpose import PRESET as GENERAL_PURPOSE
@@ -16,7 +18,7 @@ from yuxi.repositories.agent_repository import (
     user_can_access_agent,
     user_can_manage_agent,
 )
-from yuxi.storage.postgres.models_business import Agent, User
+from yuxi.storage.postgres.models_business import Agent, Base, User
 
 
 class FakeDb:
@@ -458,3 +460,56 @@ async def test_get_by_slug_for_update_refreshes_identity_map_snapshot():
     await AgentRepository(db).get_by_slug_for_update(slug="employee")
 
     assert db.statement.get_execution_options().get("populate_existing") is True
+
+
+@pytest.mark.asyncio
+async def test_agent_repository_scopes_queries_by_tenant():
+    """Repository 层按租户过滤列表和 slug，跨租户不返回资源。"""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as db:
+            db.add_all(
+                [
+                    Agent(
+                        slug="tenant-100",
+                        backend_id="ChatbotAgent",
+                        name="租户 100 员工",
+                        config_json={},
+                        share_config={},
+                        kind="digital_employee",
+                        tenant_id=100,
+                    ),
+                    Agent(
+                        slug="tenant-200",
+                        backend_id="ChatbotAgent",
+                        name="租户 200 员工",
+                        config_json={},
+                        share_config={},
+                        kind="digital_employee",
+                        tenant_id=200,
+                    ),
+                    Agent(
+                        slug="platform",
+                        backend_id="ChatbotAgent",
+                        name="平台员工",
+                        config_json={},
+                        share_config={},
+                        kind="digital_employee",
+                        tenant_id=None,
+                    ),
+                ]
+            )
+            await db.commit()
+
+        async with factory() as db:
+            repo = AgentRepository(db)
+            rows = await repo.list_by_kind(kind="digital_employee", tenant_id=100)
+            assert [row.slug for row in rows] == ["tenant-100"]
+            assert await repo.get_by_slug_for_tenant(slug="tenant-100", tenant_id=100) is not None
+            assert await repo.get_by_slug_for_tenant(slug="tenant-100", tenant_id=200) is None
+            assert await repo.get_by_slug_for_tenant(slug="platform", tenant_id=100) is None
+    finally:
+        await engine.dispose()

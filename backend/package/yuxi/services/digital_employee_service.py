@@ -165,10 +165,14 @@ async def list_digital_employees(
     db: AsyncSession,
     status: str | None = None,
     q: str | None = None,
+    tenant_id: int | None = None,
 ) -> tuple[list[Agent], dict[str, int]]:
     """列出可见员工，并在筛选前计算管理者需要的人数摘要。"""
-    agents = await AgentRepository(db).list_by_kind(kind=DIGITAL_EMPLOYEE_KIND)
-    visible = [agent for agent in agents if digital_employee_is_visible(user, agent)]
+    agents = await AgentRepository(db).list_by_kind(kind=DIGITAL_EMPLOYEE_KIND, tenant_id=tenant_id)
+    if tenant_id is None:
+        visible = [agent for agent in agents if digital_employee_is_visible(user, agent)]
+    else:
+        visible = agents
     summary = {
         status_value: sum(1 for agent in visible if digital_employee_status(agent) == status_value)
         for status_value in (STATUS_ACTIVE, STATUS_DRAFT, STATUS_DISABLED)
@@ -235,6 +239,7 @@ async def create_digital_employee(
     profile: dict | None = None,
     config_json: dict | None = None,
     share_config: dict | None = None,
+    tenant_id: int | None = None,
 ) -> Agent:
     """创建草稿数字员工；创建者必须是管理员。"""
     _require_admin(user)
@@ -266,6 +271,7 @@ async def create_digital_employee(
         config_resource_access=resource_access,
         share_config=share_config or DEFAULT_SHARE_CONFIG,
         kind=DIGITAL_EMPLOYEE_KIND,
+        tenant_id=tenant_id,
         digital_employee_profile=normalized_profile,
         is_default=False,
         is_subagent=False,
@@ -389,5 +395,5 @@ async def delete_digital_employee(*, user: User, db: AsyncSession, agent: Agent)
         raise HTTPException(status_code=409, detail="只有草稿数字员工可以删除")
     counts = await AgentRepository(db).count_digital_employee_references(slug=locked.slug)
     if any(counts.values()):
-        raise HTTPException(status_code=409, detail="数字员工仍被对话、定时任务或 IM Bot 引用")
+        raise HTTPException(status_code=409, detail="数字员工仍被对话、定时任务、IM Bot 或会议引用")
     await AgentRepository(db).delete(agent=locked)

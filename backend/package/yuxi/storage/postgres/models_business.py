@@ -197,7 +197,26 @@ class User(Base):
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
 
     agent_env = relationship("AgentEnv", back_populates="user", cascade="all, delete-orphan", uselist=False)
-    user_config = relationship("UserConfig", back_populates="user", cascade="all, delete-orphan", uselist=False)
+    user_config = relationship(
+        "UserConfig",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
+
+    @property
+    def tenant_id(self) -> int | None:
+        """从登录身份读取租户归属；请求身份可覆盖为已解析值。"""
+        override = self.__dict__.get("_tenant_id_override")
+        if override is not None:
+            return override
+        config = self.user_config
+        return config.tenant_id if config is not None else None
+
+    @tenant_id.setter
+    def tenant_id(self, value: int | None) -> None:
+        self.__dict__["_tenant_id_override"] = value
 
     def to_dict(self, include_password: bool = False) -> dict[str, Any]:
         result = {
@@ -314,6 +333,7 @@ class Agent(Base):
     config_json = Column(JSON, nullable=False, default=dict)
     share_config = Column(JSON_VALUE, nullable=False)
     kind = Column(String(32), nullable=False, default="agent", index=True)
+    tenant_id = Column(Integer, nullable=True, index=True)
     digital_employee_profile = Column(JSON_VALUE, nullable=False, default=dict)
 
     is_default = Column(Boolean, nullable=False, default=False, index=True)
@@ -347,6 +367,7 @@ class Agent(Base):
             "config_json": self.config_json or {},
             "share_config": self.share_config or {},
             "kind": self.kind or "agent",
+            "tenant_id": self.tenant_id,
             "digital_employee_profile": self.digital_employee_profile or {},
             "is_default": bool(self.is_default),
             "is_subagent": bool(self.is_subagent),

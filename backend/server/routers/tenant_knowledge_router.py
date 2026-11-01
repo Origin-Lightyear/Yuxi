@@ -11,11 +11,9 @@ SaaS 未启用或 key 未配置时一律 404，不暴露路由存在性；跨租
 
 from __future__ import annotations
 
-import hmac
-from dataclasses import dataclass
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
-
+from server.utils.tenant_admin import TenantAdminContext, require_tenant_admin
 from yuxi.knowledge.base import KBNameConflictError
 from yuxi.knowledge.runtime import knowledge_base
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase
@@ -29,27 +27,6 @@ DEFAULT_TENANT_SHARE_CONFIG = {
     "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
     "manage_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
 }
-
-
-@dataclass(frozen=True, slots=True)
-class TenantAdminContext:
-    tenant_id: int
-
-
-def require_tenant_admin(
-    x_tenant_admin_key: str | None = Header(None, alias="X-Tenant-Admin-Key"),
-    x_tenant_id: int | None = Header(None, alias="X-Tenant-Id"),
-) -> TenantAdminContext:
-    """静态管理 Key + X-Tenant-Id 鉴权依赖。"""
-    from yuxi.config import config as app_config
-
-    if not app_config.is_saas_enabled or not app_config.tenant_admin_api_key:
-        raise HTTPException(status_code=404, detail="Not Found")
-    if not x_tenant_admin_key or not hmac.compare_digest(x_tenant_admin_key, app_config.tenant_admin_api_key):
-        raise HTTPException(status_code=401, detail="无效的管理 API Key")
-    if x_tenant_id is None:
-        raise HTTPException(status_code=422, detail="缺少 X-Tenant-Id 请求头")
-    return TenantAdminContext(tenant_id=x_tenant_id)
 
 
 async def _load_tenant_kb(kb_id: str, tenant_id: int) -> KnowledgeBase:

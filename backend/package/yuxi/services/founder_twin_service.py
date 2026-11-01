@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.digital_employee import FOUNDER_TWIN_KIND
 from yuxi.config import config as app_config
 from yuxi.models.embed import select_embedding_model
-from yuxi.repositories.agent_repository import AgentRepository, user_can_manage_agent
+from yuxi.repositories.agent_repository import (
+    DEFAULT_SHARE_CONFIG,
+    AgentRepository,
+    user_can_access_agent,
+    user_can_manage_agent,
+)
 from yuxi.repositories.founder_twin_repository import FounderTwinRepository
 from yuxi.storage.postgres.models_business import (
     Agent,
@@ -28,6 +33,13 @@ EXPERIENCE_STATUS_DRAFT = "draft"
 EXPERIENCE_STATUS_CONFIRMED = "confirmed"
 EXPERIENCE_STATUS_INVALID = "invalid"
 EXPERIENCE_STATUSES = (EXPERIENCE_STATUS_DRAFT, EXPERIENCE_STATUS_CONFIRMED, EXPERIENCE_STATUS_INVALID)
+
+DEFAULT_TWIN_PROMPT = (
+    "你是老板分身。先调用 retrieve_experience 检索已确认经验，再给出结论；"
+    "只有 submit_consultation_answer 成功后才能输出最终答案，且最终答案必须与提交答案一致。"
+    "没有可引用依据时，只能调用 create_handoff_request 转交老板本人。"
+)
+
 
 
 class ExperienceCodeConflict(ValueError):
@@ -441,6 +453,113 @@ async def record_handoff(
     return handoff
 
 
+async def create_founder_twin(
+    db: AsyncSession,
+    *,
+    user: User,
+    name: str,
+    slug: str | None = None,
+    description: str | None = None,
+    icon: str | None = None,
+    system_prompt: str | None = None,
+    share_config: dict | None = None,
+    tenant_id: int | None = None,
+) -> Agent:
+    """创建老板分身；租户平台传入 tenant_id，普通本地管理保持 NULL。"""
+    from yuxi.agents.buildin import get_agent_backend
+    from yuxi.services.agent_config_service import prepare_agent_config_write
+
+    backend = get_agent_backend("ChatbotAgent")
+    config_json, resource_access = await prepare_agent_config_write(
+        {"context": {"system_prompt": system_prompt or DEFAULT_TWIN_PROMPT}},
+        context_schema=backend.context_schema,
+        db=db,
+        user=user,
+    )
+    return await AgentRepository(db).create(
+        name=name,
+        slug=slug,
+        backend_id="ChatbotAgent",
+        description=description,
+        icon=icon,
+        config_json=config_json,
+        config_resource_access=resource_access,
+        share_config=share_config or DEFAULT_SHARE_CONFIG,
+        kind=FOUNDER_TWIN_KIND,
+        tenant_id=tenant_id,
+        created_by=str(user.uid),
+        creator=user,
+    )
+
+
+async def update_founder_twin(
+    db: AsyncSession,
+    *,
+    user: User,
+    agent: Agent,
+    name: str | None = None,
+    description: str | None = None,
+    icon: str | None = None,
+    system_prompt: str | None = None,
+    share_config: dict | None = None,
+) -> Agent:
+    """更新分身展示信息和系统提示词；kind 与租户归属不可变。"""
+    config_json = None
+    resource_access = None
+    if system_prompt is not None:
+        from yuxi.agents.buildin import get_agent_backend
+        from yuxi.services.agent_config_service import prepare_agent_config_write
+
+        backend = get_agent_backend(agent.backend_id)
+        config_json, resource_access = await prepare_agent_config_write(
+            {"context": {"system_prompt": system_prompt}},
+            context_schema=backend.context_schema,
+            db=db,
+            user=user,
+        )
+    return await AgentRepository(db).update(
+        agent,
+        name=name,
+        description=description,
+        icon=icon,
+        config_json=config_json,
+        config_resource_access=resource_access,
+        share_config=share_config,
+        updated_by=str(user.uid),
+        updater=user,
+    )
+
+
+async def get_tenant_twin(db: AsyncSession, *, slug: str, tenant_id: int) -> Agent:
+    """按租户归属读取老板分身；跨租户统一 404。"""
+    agent = await AgentRepository(db).get_by_slug_for_tenant(slug=slug, tenant_id=tenant_id)
+    if agent is None or getattr(agent, "kind", "agent") != FOUNDER_TWIN_KIND:
+        raise HTTPException(status_code=404, detail="老板分身不存在")
+    return agent
+
+
+async def delete_founder_twin(db: AsyncSession, *, agent: Agent) -> None:
+    """删除无经验、咨询、转交、会议或 Agent 引用的老板分身。"""
+    counts = await FounderTwinRepository(db).count_references(agent.slug)
+    labels = {
+        "experiences": "经验",
+        "consultations": "咨询",
+        "handoffs": "转交",
+        "meetings": "会议",
+        "decisions": "决议",
+        "conversations": "对话",
+        "scheduled_jobs": "定时任务",
+        "im_bots": "IM Bot",
+    }
+    active = [labels[key] for key, count in counts.items() if count]
+    if active:
+        raise HTTPException(
+            status_code=409,
+            detail=f"老板分身仍被{'、'.join(active)}引用，无法删除",
+        )
+    await AgentRepository(db).delete(agent=agent)
+
+
 async def get_visible_twin(db: AsyncSession, *, slug: str, user: User) -> Agent:
     """读取用户可见的老板分身，非分身或不可见统一 404。"""
     agent = await AgentRepository(db).get_visible_by_slug(slug=slug, user=user, kind="any")
@@ -450,9 +569,13 @@ async def get_visible_twin(db: AsyncSession, *, slug: str, user: User) -> Agent:
 
 
 async def get_manageable_twin(db: AsyncSession, *, slug: str, user: User) -> Agent:
-    """读取用户可管理的老板分身；可见但无管理权限返回 403。"""
+    """读取用户可管理的老板分身；不可见与跨租户统一 404。"""
     agent = await AgentRepository(db).get_by_slug(slug)
-    if agent is None or getattr(agent, "kind", "agent") != FOUNDER_TWIN_KIND:
+    if (
+        agent is None
+        or getattr(agent, "kind", "agent") != FOUNDER_TWIN_KIND
+        or not user_can_access_agent(user, agent)
+    ):
         raise HTTPException(status_code=404, detail="老板分身不存在")
     if not user_can_manage_agent(user, agent):
         raise HTTPException(status_code=403, detail="无权管理该老板分身")

@@ -99,6 +99,7 @@ export default defineConfig({
               { text: '知识导图与知识图谱', link: '/advanced/knowledge-base-graph' }
             ]
           },
+          { text: '租户 Agent 管理 API', link: '/advanced/tenant-agent-management-api' },
           { text: 'Langfuse 集成', link: '/advanced/langfuse-integration' },
           { text: 'API Key 外部集成', link: '/advanced/api-key-integration' },
           { text: '第三方认证', link: '/advanced/third-party-auth' },

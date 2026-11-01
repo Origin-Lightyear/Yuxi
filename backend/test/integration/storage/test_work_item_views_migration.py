@@ -73,7 +73,7 @@ async def test_work_item_views_migration_is_idempotent() -> None:
                 )
                 == 1
             )
-        assert BUSINESS_SCHEMA_VERSION == 12
+        assert BUSINESS_SCHEMA_VERSION == 14
     finally:
         await scoped_engine.dispose()
         async with admin_engine.begin() as connection:

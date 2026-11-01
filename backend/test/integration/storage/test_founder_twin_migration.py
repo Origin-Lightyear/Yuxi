@@ -156,7 +156,7 @@ async def test_founder_twin_tables_migration_is_idempotent() -> None:
                     )
                     == 1
                 ), index_name
-        assert BUSINESS_SCHEMA_VERSION == 13
+        assert BUSINESS_SCHEMA_VERSION == 14
     finally:
         await scoped_engine.dispose()
         async with admin_engine.begin() as connection:

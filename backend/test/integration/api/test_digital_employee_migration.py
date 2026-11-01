@@ -17,7 +17,12 @@ async def test_digital_employee_migration_is_idempotent_and_preserves_existing_a
             text("SELECT column_name FROM information_schema.columns WHERE table_name = 'agents'")
         )
         names = {row[0] for row in columns}
-        assert {"kind", "digital_employee_profile"} <= names
+        assert {"kind", "digital_employee_profile", "tenant_id"} <= names
+
+        indexes = await conn.execute(
+            text("SELECT indexname FROM pg_indexes WHERE tablename = 'agents'")
+        )
+        assert "ix_agents_tenant_id" in {row[0] for row in indexes}
 
         default_kind = await conn.scalar(text("SELECT kind FROM agents WHERE slug = 'default-chatbot'"))
         assert default_kind == "agent"

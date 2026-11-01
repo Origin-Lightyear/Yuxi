@@ -9,11 +9,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
-from yuxi.agents.buildin import get_agent_backend
 from yuxi.agents.digital_employee import FOUNDER_TWIN_KIND
 from yuxi.repositories.agent_repository import AgentRepository, user_can_manage_agent
 from yuxi.repositories.founder_twin_repository import FounderTwinRepository
-from yuxi.services.agent_config_service import prepare_agent_config_write
 from yuxi.services.founder_twin_service import (
     EXPERIENCE_STATUSES,
     ExperienceCodeConflict,
@@ -22,11 +20,13 @@ from yuxi.services.founder_twin_service import (
     EXPERIENCE_STATUS_CONFIRMED,
     confirm_experience,
     create_experience_entry,
+    create_founder_twin,
     get_manageable_twin,
     get_twin_stats,
     get_visible_twin,
     invalidate_experience,
     update_experience_entry,
+    update_founder_twin,
 )
 from yuxi.storage.postgres.models_business import (
     Agent,
@@ -38,12 +38,6 @@ from yuxi.storage.postgres.models_business import (
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 founder_twin_router = APIRouter(prefix="/founder-twins", tags=["founder-twin"])
-
-DEFAULT_TWIN_PROMPT = (
-    "你是老板分身。先调用 retrieve_experience 检索已确认经验，再给出结论；"
-    "只有 submit_consultation_answer 成功后才能输出最终答案，且最终答案必须与提交答案一致。"
-    "没有可引用依据时，只能调用 create_handoff_request 转交老板本人。"
-)
 
 
 class FounderTwinCreate(BaseModel):
@@ -101,6 +95,7 @@ def _twin_payload(agent: Agent, *, user: User, stats: dict[str, int]) -> dict:
         "description": agent.description,
         "icon": agent.icon,
         "kind": agent.kind,
+        "tenant_id": agent.tenant_id,
         "backend_id": agent.backend_id,
         "can_manage": can_manage,
         "stats": public_stats,
@@ -225,37 +220,22 @@ async def list_founder_twins(
 
 
 @founder_twin_router.post("")
-async def create_founder_twin(
+async def create_twin(
     payload: FounderTwinCreate,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """创建老板分身；仅管理员可操作。"""
-    backend = get_agent_backend("ChatbotAgent")
-    config_json, resource_access = await prepare_agent_config_write(
-        {"context": {"system_prompt": payload.system_prompt or DEFAULT_TWIN_PROMPT}},
-        context_schema=backend.context_schema,
-        db=db,
-        user=current_user,
-    )
-    share_config = payload.share_config or {
-        "version": 2,
-        "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
-        "manage_scope": None,
-    }
     try:
-        agent = await AgentRepository(db).create(
+        agent = await create_founder_twin(
+            db,
+            user=current_user,
             name=payload.name,
             slug=payload.slug,
-            backend_id="ChatbotAgent",
             description=payload.description,
             icon=payload.icon,
-            config_json=config_json,
-            config_resource_access=resource_access,
-            share_config=share_config,
-            kind=FOUNDER_TWIN_KIND,
-            created_by=str(current_user.uid),
-            creator=current_user,
+            system_prompt=payload.system_prompt,
+            share_config=payload.share_config,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -286,7 +266,7 @@ async def get_founder_twin(
 
 
 @founder_twin_router.put("/{slug}")
-async def update_founder_twin(
+async def update_twin(
     slug: str,
     payload: FounderTwinUpdate,
     current_user: User = Depends(get_required_user),
@@ -294,27 +274,16 @@ async def update_founder_twin(
 ):
     """更新分身展示信息和系统提示词；kind 不可变。"""
     agent = await get_manageable_twin(db, slug=slug, user=current_user)
-    config_json = None
-    resource_access = None
-    if payload.system_prompt is not None:
-        backend = get_agent_backend(agent.backend_id)
-        config_json, resource_access = await prepare_agent_config_write(
-            {"context": {"system_prompt": payload.system_prompt}},
-            context_schema=backend.context_schema,
-            db=db,
-            user=current_user,
-        )
     try:
-        updated = await AgentRepository(db).update(
-            agent,
+        updated = await update_founder_twin(
+            db,
+            user=current_user,
+            agent=agent,
             name=payload.name,
             description=payload.description,
             icon=payload.icon,
-            config_json=config_json,
-            config_resource_access=resource_access,
+            system_prompt=payload.system_prompt,
             share_config=payload.share_config,
-            updated_by=str(current_user.uid),
-            updater=current_user,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

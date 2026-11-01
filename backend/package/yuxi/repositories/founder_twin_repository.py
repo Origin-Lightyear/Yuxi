@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import (
+    Conversation,
     ExperienceConsultation,
     ExperienceEntry,
     HandoffRequest,
+    IMBotConfig,
+    Meeting,
+    MeetingDecision,
+    ScheduledAgentJob,
     User,
 )
 
@@ -120,3 +125,37 @@ class FounderTwinRepository:
             .group_by(HandoffRequest.status)
         )
         return {str(status): int(count) for status, count in (await self.db.execute(stmt)).all()}
+
+    async def count_references(self, twin_slug: str) -> dict[str, int]:
+        """统计阻止删除分身的持久引用。"""
+        counts: dict[str, int] = {}
+        for name, model, column in (
+            ("experiences", ExperienceEntry, ExperienceEntry.twin_slug),
+            ("consultations", ExperienceConsultation, ExperienceConsultation.twin_slug),
+            ("handoffs", HandoffRequest, HandoffRequest.twin_slug),
+            ("conversations", Conversation, Conversation.agent_id),
+            ("scheduled_jobs", ScheduledAgentJob, ScheduledAgentJob.agent_slug),
+            ("im_bots", IMBotConfig, IMBotConfig.agent_slug),
+        ):
+            result = await self.db.execute(select(func.count()).select_from(model).where(column == twin_slug))
+            counts[name] = int(result.scalar_one() or 0)
+
+        escaped_twin_slug = twin_slug.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        meeting_result = await self.db.execute(
+            select(func.count())
+            .select_from(Meeting)
+            .where(
+                cast(Meeting.participant_slugs, String).like(
+                    f'%"{escaped_twin_slug}"%',
+                    escape="\\",
+                )
+            )
+        )
+        counts["meetings"] = int(meeting_result.scalar_one() or 0)
+        decision_result = await self.db.execute(
+            select(func.count())
+            .select_from(MeetingDecision)
+            .where(MeetingDecision.proposer_slug == twin_slug)
+        )
+        counts["decisions"] = int(decision_result.scalar_one() or 0)
+        return counts
