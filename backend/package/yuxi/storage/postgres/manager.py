@@ -1234,6 +1234,10 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             """,
             "CREATE INDEX IF NOT EXISTS ix_im_bot_configs_owner_uid ON im_bot_configs(owner_uid)",
+            (
+                "ALTER TABLE IF EXISTS im_bot_configs "
+                "ADD COLUMN IF NOT EXISTS require_binding BOOLEAN NOT NULL DEFAULT false"
+            ),
             """
             CREATE TABLE IF NOT EXISTS subagent_threads (
                 id SERIAL PRIMARY KEY,
