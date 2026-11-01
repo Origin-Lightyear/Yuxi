@@ -102,7 +102,7 @@
 - [x] `meetingApi.js`、`employeeSkillApi.js` 和对应 utils。
 - [x] `MeetingWorkspace.vue` 共享会议界面；老板分身页增加「分身会议」页签，新增 `/meetings` AI 会议页。
 - [x] 新增 `/employee-skills` 技能管理页，包含列表、详情、编辑、交接看板。
-- [x] 路由和侧边导航增加「AI 会议」「技能管理」。
+- [x] 路由保留 `/meetings` 与 `/employee-skills`；侧边导航只展示「技能管理」，`/meetings` 作为隐藏深链保留。
 - [x] 待办来源、动作和跳转支持决议。
 - [x] 前端 unit 覆盖状态文案、跳转和 API 边界。
 

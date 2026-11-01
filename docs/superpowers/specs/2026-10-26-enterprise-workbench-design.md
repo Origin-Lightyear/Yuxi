@@ -476,7 +476,7 @@ P6 复用 P4 会议事实，只以 `kind='digital_employee'` 区分：
 - 生成失败保留 `draft`、写 `generation_error`、返回 502；不写空纪要。
 - 人入会写入 `meeting_messages.speaker_type='human'`，轮次默认为当前会议轮次；`can_join` 由后端返回。
 - 会议不创建 AgentRun，不占用 FIFO、worker lease 或 SSE Run 链路。
-- 页面：`/meetings` 使用共享 `MeetingWorkspace`；`/founder-twin` 增加「分身会议」页签；侧边导航增加「AI 会议」和「技能管理」。
+- 页面：`/meetings` 使用共享 `MeetingWorkspace`；`/founder-twin` 增加「分身会议」页签；侧边导航只增加「技能管理」，「AI 会议」页面保留为隐藏深链。
 - 实现决策和验证见 [数字员工 AI 会议](../../develop-guides/decisions/implemented/2026-10-29-ai-meeting.md)。
 
 ## 8. 交给实现者的部分

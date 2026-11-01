@@ -16,7 +16,7 @@ P6 复用 P4 的 `Meeting` / `MeetingMessage` / `MeetingDecision` / `MeetingDeci
 
 人入会通过 `meeting_messages` 写入 `speaker_type='human'` 的发言，轮次默认当前会议轮次；管理员、创建人、参与者负责人和已被加入 `human_uids` 的人可以发言。会议详情返回 `can_join` 和 `can_manage`，前端据此展示入会入口，但最终授权在 service。
 
-AI 会议不创建 `AgentRun`：会议是管理协作事实，不是聊天执行；不占用 FIFO 队列、worker lease 或 SSE Run 链路。会议页 `/meetings` 使用共享 `MeetingWorkspace`，支持创建草稿、生成纪要、查看发言、人工入会、查看待签决议和历史会议列表。
+AI 会议不创建 `AgentRun`：会议是管理协作事实，不是聊天执行；不占用 FIFO 队列、worker lease 或 SSE Run 链路。会议页 `/meetings` 使用共享 `MeetingWorkspace`，支持创建草稿、生成纪要、查看发言、人工入会、查看待签决议和历史会议列表。该页面当前作为隐藏深链保留，侧边栏不展示「AI 会议」入口；后端接口和已有深链继续可用。
 
 ### 权限、失败与数据边界
 

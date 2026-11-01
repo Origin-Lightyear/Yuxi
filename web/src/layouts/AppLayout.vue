@@ -15,8 +15,7 @@ import {
   ListChecks,
   MessageCirclePlus,
   Search,
-  Users,
-  Video
+  Users
 } from '@lucide/vue'
 
 import { useConfigStore } from '@/stores/config'
@@ -207,13 +206,6 @@ const mainList = computed(() => {
     path: '/founder-twin',
     icon: Brain,
     activeIcon: Brain
-  })
-
-  items.push({
-    name: 'AI 会议',
-    path: '/meetings',
-    icon: Video,
-    activeIcon: Video
   })
 
   items.push({
