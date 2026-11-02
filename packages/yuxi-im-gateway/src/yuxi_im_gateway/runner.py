@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 # IM 会话不提供审批交互，运行仍需审批时只能明确告知用户改走平台内对话。
 _APPROVAL_UNSUPPORTED_TEXT = "运行需要工具审批，IM 会话不支持审批，请改用平台内对话"
 _BUSY_THREAD_TEXT = "上一条消息还在执行中，请等它结束后再发。"
+_ACCOUNT_NOT_BOUND_TEXT = "请先在 Yuxi 个人设置里完成飞书/钉钉账号绑定后再试。"
+# 过渡期未绑定发送者按机器人归属人身份执行，必须在结果里说明身份来源。
+_OWNER_FALLBACK_HINT = "（提示：你还没绑定 Yuxi 账号，当前按机器人归属人身份执行，绑定后改为按本人权限执行）"
 
 
 class SessionQueue:
@@ -106,7 +109,15 @@ async def _run_and_reply(
         await adapter.send_text(reply_chat_id, f"运行失败：{outcome.error_message}")
         return
 
-    await _deliver(client, adapter, bot, reply_chat_id, str(submitted.get("thread_id") or ""), outcome)
+    await _deliver(
+        client,
+        adapter,
+        bot,
+        reply_chat_id,
+        str(submitted.get("thread_id") or ""),
+        outcome,
+        suffix=_OWNER_FALLBACK_HINT if submitted.get("identity_source") == "owner_fallback" else None,
+    )
 
 
 def _submit_error_text(exc: Exception) -> str:
@@ -119,6 +130,8 @@ def _submit_error_text(exc: Exception) -> str:
             detail = None
         if isinstance(detail, dict) and detail.get("code") == "run_active":
             return _BUSY_THREAD_TEXT
+        if isinstance(detail, dict) and detail.get("code") == "im_account_not_bound":
+            return _ACCOUNT_NOT_BOUND_TEXT
     return f"调用失败：{exc}"
 
 
@@ -135,10 +148,16 @@ async def _consume(client, stream_url: str, api_key: str, thread_id: str | None)
     return reduce_run_events(collected, thread_id=thread_id)
 
 
-async def _deliver(client, adapter, bot: BotConfig, chat_id: str, thread_id: str, outcome) -> None:
-    """发送运行正文与全部交付物；单个交付物失败不阻断其余交付物。"""
-    if outcome.text.strip():
-        await adapter.send_markdown(chat_id, outcome.text)
+async def _deliver(
+    client, adapter, bot: BotConfig, chat_id: str, thread_id: str, outcome, suffix: str | None = None
+) -> None:
+    """发送运行正文与全部交付物；suffix 非空时追加到正文末尾。
+
+    单个交付物失败不阻断其余交付物。
+    """
+    text = f"{outcome.text}\n\n{suffix}" if suffix and outcome.text.strip() else outcome.text
+    if text.strip():
+        await adapter.send_markdown(chat_id, text)
     for path in outcome.artifact_paths:
         await _send_artifact(client, adapter, bot, chat_id, thread_id, path)
 

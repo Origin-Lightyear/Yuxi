@@ -259,6 +259,58 @@ async def test_handle_inbound_delivers_markdown_and_all_artifacts():
 
 
 @pytest.mark.asyncio
+async def test_handle_inbound_appends_owner_fallback_hint_to_markdown():
+    events = [
+        _sse("messages", {"items": [{"stream_event": {"type": "message_delta", "content": "hello"}}]}),
+        _sse("end", {"status": "completed"}),
+    ]
+    client = FakeClient(
+        submitted={"thread_id": "t1", "run_id": "r1", "stream_url": "u1", "identity_source": "owner_fallback"},
+        events=events,
+    )
+    adapter = FakeAdapter()
+
+    await handle_inbound(
+        client=client,
+        adapter=adapter,
+        bot=_bot(),
+        dedupe=DedupeCache(),
+        sessions=RecordingSessions(),
+        msg=_msg(),
+    )
+
+    assert len(adapter.markdowns) == 1
+    assert adapter.texts == []
+    assert adapter.markdowns[0][1] == (
+        "hello\n\n（提示：你还没绑定 Yuxi 账号，当前按机器人归属人身份执行，绑定后改为按本人权限执行）"
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_inbound_bound_identity_has_no_fallback_hint():
+    events = [
+        _sse("messages", {"items": [{"stream_event": {"type": "message_delta", "content": "hello"}}]}),
+        _sse("end", {"status": "completed"}),
+    ]
+    client = FakeClient(
+        submitted={"thread_id": "t1", "run_id": "r1", "stream_url": "u1", "identity_source": "binding"},
+        events=events,
+    )
+    adapter = FakeAdapter()
+
+    await handle_inbound(
+        client=client,
+        adapter=adapter,
+        bot=_bot(),
+        dedupe=DedupeCache(),
+        sessions=RecordingSessions(),
+        msg=_msg(),
+    )
+
+    assert adapter.markdowns == [("c1", "hello")]
+
+
+@pytest.mark.asyncio
 async def test_artifact_failure_does_not_block_remaining_artifacts():
     events = [
         _sse("custom", {"agent_state": {"artifacts": ["/out/a.xlsx", "/out/b.xlsx"]}}),
@@ -306,7 +358,7 @@ async def test_handle_inbound_reports_approval_as_unsupported():
 
 
 class ConflictClient(FakeClient):
-    """提交时返回 409 的客户端替身，用于验证忙碌会话的提示文案。"""
+    """提交时返回 409 的客户端替身，用于验证提交冲突的提示文案。"""
 
     def __init__(self, code: str) -> None:
         super().__init__()
@@ -336,3 +388,19 @@ async def test_handle_inbound_reports_busy_thread_without_leaking_http_error():
     )
 
     assert adapter.texts == [("c1", "上一条消息还在执行中，请等它结束后再发。")]
+
+
+@pytest.mark.asyncio
+async def test_handle_inbound_reports_unbound_account():
+    adapter = FakeAdapter()
+
+    await handle_inbound(
+        client=ConflictClient("im_account_not_bound"),
+        adapter=adapter,
+        bot=_bot(),
+        dedupe=DedupeCache(),
+        sessions=RecordingSessions(),
+        msg=_msg(),
+    )
+
+    assert adapter.texts == [("c1", "请先在 Yuxi 个人设置里完成飞书/钉钉账号绑定后再试。")]
