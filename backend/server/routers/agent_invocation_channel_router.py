@@ -16,6 +16,7 @@ from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.services.agent_run_service import create_resume_run_view
 from yuxi.services.channel_command_service import parse_slash_command
 from yuxi.services.chat_service import get_agent_state_view
+from yuxi.services.im_binding_service import resolve_channel_identity
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.models_business import User
@@ -61,6 +62,16 @@ async def receive_channel_message(
     channel = _normalize_required(payload.channel, "channel")
     account_id = _normalize_required(payload.account_id, "account_id")
     agent_slug = _normalize_required(payload.agent_slug, "agent_slug")
+
+    identity = await resolve_channel_identity(
+        db,
+        transport_user=current_user,
+        account_id=account_id,
+        sender_id=payload.sender_id,
+    )
+    current_user = identity.user
+    identity_source = "binding" if not identity.owner_fallback else "owner_fallback"
+
     thread_id = _resolve_thread_id(
         uid=str(current_user.uid),
         channel=channel,
@@ -104,7 +115,13 @@ async def receive_channel_message(
                 db=db,
                 include_messages=False,
             )
-            return {"kind": "command", "command": "state", "thread_id": thread_id, "state": state}
+            return {
+                "kind": "command",
+                "command": "state",
+                "thread_id": thread_id,
+                "state": state,
+                "identity_source": identity_source,
+            }
         try:
             decision = decision_type_for_command(command.name, command.args)
         except ValueError as exc:
@@ -119,6 +136,7 @@ async def receive_channel_message(
                 channel=channel,
                 origin_metadata=origin_metadata,
                 current_user=current_user,
+                identity_source=identity_source,
                 db=db,
             )
         raise HTTPException(status_code=422, detail=f"不支持的 slash command: /{command.name}")
@@ -160,6 +178,7 @@ async def receive_channel_message(
     )
     result["kind"] = "run"
     result["channel"] = channel
+    result["identity_source"] = identity_source
     return result
 
 
@@ -173,6 +192,7 @@ async def _resolve_latest_run(
     channel: str,
     origin_metadata: dict[str, str],
     current_user: User,
+    identity_source: str,
     db: AsyncSession,
 ) -> dict:
     """审批（批准或拒绝）当前等待中的工具调用，并优先复用同 request_id 的恢复 run。"""
@@ -221,7 +241,13 @@ async def _resolve_latest_run(
         external_id=external_id,
         origin_metadata=origin_metadata,
     )
-    return {"kind": "command", "command": decision, "thread_id": thread_id, "run": result}
+    return {
+        "kind": "command",
+        "command": decision,
+        "thread_id": thread_id,
+        "run": result,
+        "identity_source": identity_source,
+    }
 
 
 _DECISION_COMMANDS = {"approve": "approve", "reject": "reject"}

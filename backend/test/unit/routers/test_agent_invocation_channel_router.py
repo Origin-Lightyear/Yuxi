@@ -10,6 +10,17 @@ from pydantic import ValidationError
 router = importlib.import_module("server.routers.agent_invocation_channel_router")
 
 
+@pytest.fixture(autouse=True)
+def _resolve_identity(monkeypatch: pytest.MonkeyPatch):
+    """把身份解析替换为透传 transport_user，使单元测试聚焦消息信封与命令分支。"""
+
+    async def fake_resolve_channel_identity(db, *, transport_user, account_id, sender_id):
+        del db, account_id, sender_id
+        return SimpleNamespace(user=transport_user, owner_fallback=False)
+
+    monkeypatch.setattr(router, "resolve_channel_identity", fake_resolve_channel_identity)
+
+
 def _payload(text: str, **kwargs):
     values = {
         "agent_slug": "default-chatbot",
@@ -141,6 +152,7 @@ async def test_state_command_does_not_submit(monkeypatch: pytest.MonkeyPatch):
         "command": "state",
         "thread_id": "thread-1",
         "state": {"agent_state": {"todos": []}},
+        "identity_source": "binding",
     }
 
 
