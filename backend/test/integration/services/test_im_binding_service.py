@@ -6,6 +6,7 @@ import os
 import uuid
 from datetime import timedelta
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
@@ -347,6 +348,35 @@ async def test_complete_binding_commits_used_state_before_exchange(binding_engin
     finally:
         async with binding_engine() as session:
             await _cleanup(session, [user_uid])
+
+
+async def test_dingtalk_token_exchange_error_redacts_query_secrets(monkeypatch):
+    """钉钉换取失败时异常消息不得包含 appsecret / access_token 等 query 凭据。"""
+    secret = "super-secret-appsecret-value"
+    captured: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(str(request.url))
+        return httpx.Response(401, json={"errcode": 40001, "errmsg": "invalid appsecret"}, request=request)
+
+    class _MockClient(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(im_binding_service.httpx, "AsyncClient", _MockClient)
+
+    with pytest.raises(ValueError) as exc_info:
+        await im_binding_service._dingtalk_enterprise_access_token(
+            {"client_id": "appkey-1", "client_secret": secret}
+        )
+
+    assert captured, "请求应已发出"
+    assert secret in captured[0], "换取应把 client_secret 作为 appsecret query 参数发出"
+    message = str(exc_info.value)
+    assert secret not in message
+    assert "appsecret" not in message
+    assert "access_token" not in message
 
 
 async def test_resolve_channel_identity_falls_back_to_owner_when_not_required(binding_engine):

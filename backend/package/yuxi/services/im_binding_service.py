@@ -74,10 +74,21 @@ def _build_authorize_url(platform: str, credentials: dict, redirect_uri: str, st
 
 
 async def _request_json(method: str, url: str, *, headers=None, json=None, params=None) -> dict:
-    """发出 JSON 请求并在非 2xx 时抛错，返回解析后的 JSON。"""
+    """发出 JSON 请求并在非 2xx 时抛错，返回解析后的 JSON。
+
+    任何 HTTP 层错误都转为只含状态码与路径（不含 query 串）的 ValueError，
+    避免 httpx 默认异常文本把 query 里的 appsecret/access_token 带进日志。
+    """
     async with httpx.AsyncClient() as client:
-        response = await client.request(method, url, headers=headers, json=json, params=params, timeout=30.0)
-        response.raise_for_status()
+        try:
+            response = await client.request(method, url, headers=headers, json=json, params=params, timeout=30.0)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            request = getattr(exc, "request", None)
+            path = request.url.path if request is not None else ""
+            if isinstance(exc, httpx.HTTPStatusError):
+                raise ValueError(f"平台请求失败：HTTP {exc.response.status_code} {path}") from exc
+            raise ValueError(f"平台请求失败：{path or '网络错误'}") from exc
         return response.json()
 
 

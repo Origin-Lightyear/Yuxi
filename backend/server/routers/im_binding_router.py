@@ -87,7 +87,7 @@ async def binding_callback(
         return _result_page(f"绑定失败：{_http_exception_reason(exc)}")
     except ValueError as exc:
         return _result_page(f"绑定失败：{exc}")
-    except Exception:  # 平台网络/协议异常等，避免向手机端泄露内部错误。
-        logger.exception("IM 绑定回调未预期异常")
+    except Exception as exc:  # 平台网络/协议异常等，避免向手机端泄露内部错误与凭据。
+        logger.error("IM 绑定回调未预期异常: %s: %s", exc.__class__.__name__, exc)
         return _result_page("绑定失败：平台授权换取失败，请稍后重试")
     return _result_page("绑定成功，可关闭此页")
