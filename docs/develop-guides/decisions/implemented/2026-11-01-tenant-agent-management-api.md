@@ -29,7 +29,7 @@ Owner：backend/server/routers/tenant_agent_router.py
 
 创建返回 `201`，其余成功返回现有资源结构。跨租户访问统一 `404`，不暴露资源存在性。删除数字员工沿用草稿和引用检查；删除老板分身在存在经验、咨询、转交、会议或 Agent 引用时返回 `409`。
 
-老板分身接受顶层 `system_prompt` 并写入 `config_json.context.system_prompt`；数字员工不提供顶层便利字段，统一通过 `config_json.context.system_prompt` 提交和回读。数字员工只提交该 context 字段更新时，其他 `config_json.context` 字段保持不变。
+数字员工与老板分身都接受顶层 `system_prompt`；服务端写入 `config_json.context.system_prompt`，显式字段优先于 `config_json` 内的同名值。数字员工只提交 `system_prompt` 更新时，其他 `config_json.context` 字段保持不变；响应不回顶层字段，回读看 `config_json.context.system_prompt`。
 
 ### 权限表达
 
@@ -64,7 +64,7 @@ Owner：backend/server/routers/tenant_agent_router.py
 | `description` | 行为说明或 Prompt | 卡片/列表短介绍，仅展示，不进入模型上下文 |
 | `digital_employee_profile.capabilities` | 可执行工具或 Skill | 自由能力标签；最多 12 项、单项 40 字符，发布前至少 1 项 |
 | `digital_employee_profile.responsibilities/boundaries/acceptance` | 自动注入的聊天 Prompt | 档案展示、搜索和会议参与者上下文；普通聊天不会自动拼接 |
-| `config_json.context.system_prompt` | 普通描述字段 | 实际行为/能力 Prompt，追加到内置系统提示词；数字员工直接使用该字段，老板分身可用顶层 `system_prompt` 便捷写入 |
+| `config_json.context.system_prompt` | 普通描述字段 | 实际行为/能力 Prompt，追加到内置系统提示词；数字员工和老板分身也可用顶层 `system_prompt` 写入 |
 | `config_json.context.knowledges` | 权限配置 | 运行时知识库选择；默认 `"all"`，`[]` 表示不使用 |
 | `config_json.context.tools/skills/mcps/subagents` | 展示标签 | 运行时工具、Skill、MCP 和子智能体选择 |
 | `share_config` | 员工内容配置 | 员工可见/可管理权限；`global` 只在租户内生效 |
@@ -84,10 +84,10 @@ Owner：backend/server/routers/tenant_agent_router.py
 | 数据库加载的 SaaS 用户保留租户上下文 | worker、定时任务、API Key 等路径读取不到租户归属 | `backend/package/yuxi/storage/postgres/models_business.py` | `pytest test/integration/api/test_tenant_agent_router.py`：7 passed；`pytest test/unit/repositories/test_agent_repository.py`：按租户过滤用例通过 | DB 加载的同租户用户可读取 Agent，切换到 200 后返回 `None` | Passed |
 | 租户上下文不破坏带锁用户查询 | `selectin`/joined 预加载与 `FOR UPDATE` 冲突 | `backend/package/yuxi/storage/postgres/models_business.py` | `pytest test/integration/services/test_api_key_user_lifecycle.py -k test_create_first`：1 passed；`pytest test/integration/services/test_scheduled_agent_repository.py::test_transient_dispatch_failure_is_recovered_exactly_once test/integration/services/test_scheduled_agent_repository.py::test_account_soft_deletion_removes_scheduled_job_history`：2 passed | 带锁用户读取、API Key 创建、定时派发恢复与账号删除均通过 | Passed |
 | 数字员工删除守卫包含会议引用 | 删除已被会议使用的员工破坏历史 | `backend/package/yuxi/repositories/agent_repository.py` | 同上租户 API 测试中的 `test_tenant_digital_employee_delete_guard_includes_meetings` | 插入会议参与记录后删除返回 409 | Passed |
-| 数字员工 Prompt 字段统一 | 接入方误以为数字员工也有顶层 `system_prompt` | `backend/package/yuxi/services/digital_employee_service.py` | `pytest test/integration/api/test_tenant_agent_router.py`：7 passed | 创建和更新写入 `config_json.context.system_prompt`，只更新 Prompt 时其他 context 字段保留 | Passed |
+| 数字员工与老板分身都支持顶层 `system_prompt` | 接入方需要记两套 Prompt 字段 | `backend/package/yuxi/services/digital_employee_service.py` | `pytest test/integration/api/test_tenant_agent_router.py`：7 passed | 创建和更新写入 `config_json.context.system_prompt`，只更新 Prompt 时其他 context 字段保留 | Passed |
 | 现有数字员工、老板分身和 Agent 路径无回归 | 租户字段改变现有管理或员工读取行为 | `backend/package/yuxi/services/founder_twin_service.py` | `pytest test/integration/api/test_tenant_agent_router.py`：7 passed；`pytest test/integration/api/test_founder_twin_api.py`：2 passed；`pytest test/integration/api/test_digital_employee_api.py`：9 passed | 原有用例覆盖草稿隐藏、发布、经验管理与转交 | Passed |
 | 知识库权限无回归 | 通用租户检查误伤知识库读取 | `backend/package/yuxi/permissions/resource_permission.py` | `pytest test/integration/api/test_tenant_knowledge_router.py test/integration/api/test_knowledge_router_employee.py test/integration/api/test_agent_config_resource_authorization.py`：40 passed, 5 skipped | 租户知识库与员工知识库用例 | Passed |
-| 全量后端 unit 无回归 | 新增租户列或权限判断破坏既有行为 | 全仓库 | `pytest test/unit -m "not slow"`：2725 passed, 58 skipped；复跑时 `test/unit/performance/test_cli.py::test_module_help_from_repository_and_backend_roots` 因容器资源波动失败，单独运行通过 | 无 | Passed |
+| 全量后端 unit 无回归 | 新增租户列或权限判断破坏既有行为 | 全仓库 | `pytest test/unit -m "not slow"`：2725 passed, 58 skipped | 无 | Passed |
 | 文档可构建 | 新页面或导航链接失效 | `docs/advanced/tenant-agent-management-api.md` | `docs/node_modules/.bin/vitepress build` | 构建包含新页面 | Passed |
 | 工程契约 | 决策记录或 Owner 引用失效 | `docs/develop-guides/decisions/implemented/2026-11-01-tenant-agent-management-api.md` | `python3 scripts/verify_engineering_contracts.py` | 非本变更的未跟踪提案文件不参与最终提交 | Passed（排除用户未跟踪提案后） |
 
