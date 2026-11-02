@@ -151,11 +151,13 @@ async def _consume(client, stream_url: str, api_key: str, thread_id: str | None)
 async def _deliver(
     client, adapter, bot: BotConfig, chat_id: str, thread_id: str, outcome, suffix: str | None = None
 ) -> None:
-    """发送运行正文与全部交付物；suffix 非空时追加到正文末尾。
+    """发送运行正文与全部交付物；suffix 非空时追加到正文末尾，正文为空则以它作为正文。
 
     单个交付物失败不阻断其余交付物。
     """
-    text = f"{outcome.text}\n\n{suffix}" if suffix and outcome.text.strip() else outcome.text
+    text = outcome.text
+    if suffix:
+        text = f"{text}\n\n{suffix}" if text.strip() else suffix
     if text.strip():
         await adapter.send_markdown(chat_id, text)
     for path in outcome.artifact_paths:

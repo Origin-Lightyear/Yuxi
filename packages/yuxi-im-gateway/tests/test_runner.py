@@ -311,6 +311,33 @@ async def test_handle_inbound_bound_identity_has_no_fallback_hint():
 
 
 @pytest.mark.asyncio
+async def test_handle_inbound_owner_fallback_hint_when_run_has_only_artifacts():
+    events = [
+        _sse("custom", {"agent_state": {"artifacts": ["/out/a.xlsx"]}}),
+        _sse("end", {"status": "completed"}),
+    ]
+    client = FakeClient(
+        submitted={"thread_id": "t1", "run_id": "r1", "stream_url": "u1", "identity_source": "owner_fallback"},
+        events=events,
+    )
+    adapter = FakeAdapter()
+
+    await handle_inbound(
+        client=client,
+        adapter=adapter,
+        bot=_bot(),
+        dedupe=DedupeCache(),
+        sessions=RecordingSessions(),
+        msg=_msg(),
+    )
+
+    assert adapter.markdowns == [
+        ("c1", "（提示：你还没绑定 Yuxi 账号，当前按机器人归属人身份执行，绑定后改为按本人权限执行）")
+    ]
+    assert adapter.files == [("c1", "a.xlsx", b"artifact")]
+
+
+@pytest.mark.asyncio
 async def test_artifact_failure_does_not_block_remaining_artifacts():
     events = [
         _sse("custom", {"agent_state": {"artifacts": ["/out/a.xlsx", "/out/b.xlsx"]}}),
@@ -404,3 +431,4 @@ async def test_handle_inbound_reports_unbound_account():
     )
 
     assert adapter.texts == [("c1", "请先在 Yuxi 个人设置里完成飞书/钉钉账号绑定后再试。")]
+    assert adapter.markdowns == []
