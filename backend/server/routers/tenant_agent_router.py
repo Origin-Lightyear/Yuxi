@@ -20,6 +20,7 @@ from yuxi.agents.digital_employee import (
     STATUS_DISABLED,
     STATUS_DRAFT,
 )
+from yuxi.knowledge.runtime import knowledge_base
 from yuxi.permissions import normalize_permission_config
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.services.digital_employee_service import (
@@ -96,6 +97,68 @@ async def _ensure_slug_available(db: AsyncSession, slug: str | None) -> None:
         raise HTTPException(status_code=409, detail="slug 已被占用")
 
 
+async def _knowledge_maps(ctx: TenantAdminContext) -> tuple[dict[str, str], dict[str, str]]:
+    """读取本租户知识库的 ID/名称映射，供租户 API 做展示层转换。"""
+    databases = [
+        database
+        for database in await knowledge_base.get_databases()
+        if (getattr(database, "tenant_id", None) or None) == ctx.tenant_id
+    ]
+    id_to_name: dict[str, str] = {}
+    name_to_id: dict[str, str] = {}
+    for database in databases:
+        kb_id = str(getattr(database, "kb_id", "") or "")
+        name = str(getattr(database, "name", "") or "")
+        if not kb_id or not name:
+            continue
+        id_to_name[kb_id] = name
+        name_to_id.setdefault(name, kb_id)
+    return id_to_name, name_to_id
+
+
+def _internalize_knowledge_config(
+    config_json: dict | None,
+    name_to_id: dict[str, str],
+) -> dict | None:
+    """把租户 API 的知识库名称转换为运行配置使用的 kb_id。"""
+    if not isinstance(config_json, dict):
+        return config_json
+    context = config_json.get("context")
+    if not isinstance(context, dict):
+        return config_json
+    knowledges = context.get("knowledges")
+    if not isinstance(knowledges, list):
+        return config_json
+    cloned = dict(config_json)
+    cloned_context = dict(context)
+    cloned_context["knowledges"] = [name_to_id.get(str(item), str(item)) for item in knowledges]
+    cloned_context.pop("knowledge_ids", None)
+    cloned["context"] = cloned_context
+    return cloned
+
+
+def _externalize_knowledge_config(
+    config_json: dict | None,
+    id_to_name: dict[str, str],
+) -> dict | None:
+    """把运行配置中的 kb_id 转成名称，并冗余返回 knowledge_ids。"""
+    if not isinstance(config_json, dict):
+        return config_json
+    context = config_json.get("context")
+    if not isinstance(context, dict):
+        return config_json
+    knowledges = context.get("knowledges")
+    if not isinstance(knowledges, list):
+        return config_json
+    ids = [str(item) for item in knowledges]
+    cloned = dict(config_json)
+    cloned_context = dict(context)
+    cloned_context["knowledges"] = [id_to_name.get(item, item) for item in ids]
+    cloned_context["knowledge_ids"] = ids
+    cloned["context"] = cloned_context
+    return cloned
+
+
 # =============================================================================
 # === 数字员工 ===
 # =============================================================================
@@ -120,10 +183,13 @@ async def list_tenant_employees(
         tenant_id=ctx.tenant_id,
     )
     repo = AgentRepository(db)
+    id_to_name, _ = await _knowledge_maps(ctx)
     items = [
         await repo.serialize(agent, user=actor, include_configurable_items=False)
         for agent in employees
     ]
+    for item in items:
+        item["config_json"] = _externalize_knowledge_config(item.get("config_json"), id_to_name)
     return {"employees": items, "summary": summary}
 
 
@@ -137,6 +203,8 @@ async def get_tenant_employee(
     agent = await _tenant_employee(db, slug=slug, tenant_id=ctx.tenant_id)
     actor = _tenant_actor(ctx)
     data = await AgentRepository(db).serialize(agent, user=actor, include_configurable_items=True)
+    id_to_name, _ = await _knowledge_maps(ctx)
+    data["config_json"] = _externalize_knowledge_config(data.get("config_json"), id_to_name)
     return {"employee": data}
 
 
@@ -149,6 +217,7 @@ async def create_tenant_employee(
     """在本租户创建数字员工草稿。"""
     await _ensure_slug_available(db, payload.slug)
     actor = _tenant_actor(ctx)
+    id_to_name, name_to_id = await _knowledge_maps(ctx)
     try:
         agent = await create_digital_employee(
             user=actor,
@@ -159,7 +228,7 @@ async def create_tenant_employee(
             description=payload.description,
             icon=payload.icon,
             profile=payload.profile.model_dump(exclude_unset=True),
-            config_json=payload.config_json,
+            config_json=_internalize_knowledge_config(payload.config_json, name_to_id),
             system_prompt=payload.system_prompt,
             share_config=payload.share_config,
             tenant_id=ctx.tenant_id,
@@ -167,6 +236,7 @@ async def create_tenant_employee(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     data = await AgentRepository(db).serialize(agent, user=actor, include_configurable_items=False)
+    data["config_json"] = _externalize_knowledge_config(data.get("config_json"), id_to_name)
     return {"employee": data}
 
 
@@ -180,14 +250,18 @@ async def update_tenant_employee(
     """更新本租户数字员工；不允许修改租户归属或 kind。"""
     agent = await _tenant_employee(db, slug=slug, tenant_id=ctx.tenant_id)
     actor = _tenant_actor(ctx)
+    id_to_name, name_to_id = await _knowledge_maps(ctx)
     changes = payload.model_dump(exclude_unset=True)
     if "profile" in payload.model_fields_set:
         changes["profile"] = payload.profile.model_dump(exclude_unset=True) if payload.profile is not None else None
+    if "config_json" in changes:
+        changes["config_json"] = _internalize_knowledge_config(changes["config_json"], name_to_id)
     try:
         updated = await update_digital_employee(user=actor, db=db, agent=agent, changes=changes)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     data = await AgentRepository(db).serialize(updated, user=actor, include_configurable_items=False)
+    data["config_json"] = _externalize_knowledge_config(data.get("config_json"), id_to_name)
     return {"employee": data}
 
 
@@ -200,11 +274,13 @@ async def publish_tenant_employee(
     """发布本租户数字员工。"""
     agent = await _tenant_employee(db, slug=slug, tenant_id=ctx.tenant_id)
     actor = _tenant_actor(ctx)
+    id_to_name, _ = await _knowledge_maps(ctx)
     try:
         updated = await publish_digital_employee(user=actor, db=db, agent=agent)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     data = await AgentRepository(db).serialize(updated, user=actor, include_configurable_items=False)
+    data["config_json"] = _externalize_knowledge_config(data.get("config_json"), id_to_name)
     return {"employee": data}
 
 
@@ -217,8 +293,10 @@ async def disable_tenant_employee(
     """停用本租户数字员工。"""
     agent = await _tenant_employee(db, slug=slug, tenant_id=ctx.tenant_id)
     actor = _tenant_actor(ctx)
+    id_to_name, _ = await _knowledge_maps(ctx)
     updated = await disable_digital_employee(user=actor, db=db, agent=agent)
     data = await AgentRepository(db).serialize(updated, user=actor, include_configurable_items=False)
+    data["config_json"] = _externalize_knowledge_config(data.get("config_json"), id_to_name)
     return {"employee": data}
 
 

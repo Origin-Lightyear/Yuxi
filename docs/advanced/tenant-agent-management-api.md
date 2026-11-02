@@ -82,7 +82,7 @@
 | --- | --- | --- |
 | `system_prompt` | `"你是经营分析官，回答必须引用数据口径。"` | **实际行为/能力 Prompt**，追加到内置系统提示词 |
 | `model` | `"provider:model"` | 员工使用的模型；留空使用系统默认模型 |
-| `knowledges` | `"all"` / `["kb_a"]` / `[]` | 知识库选择；`"all"` 是当前用户可见全部，`[]` 是明确不使用 |
+| `knowledges` | `"all"` / `["销售资料"]` / `[]` | 知识库选择；请求和响应使用名称，响应额外返回 `knowledge_ids`；`"all"` 是当前用户可见全部，`[]` 是明确不使用 |
 | `tools` | `"all"` / `["tool-a"]` / `[]` | 可用工具选择 |
 | `skills` | `"all"` / `["skill-a"]` / `[]` | 可用 Skill 选择 |
 | `mcps` | `[]` / `["mcp-a"]` | MCP 服务选择 |
@@ -96,13 +96,15 @@
   "config_json": {
     "context": {
       "system_prompt": "你是经营分析官。先确认数据口径，再输出结论。",
-      "knowledges": ["kb_xxx"],
+      "knowledges": ["销售资料"],
       "tools": "all",
       "skills": []
     }
   }
 }
 ```
+
+知识库字段是展示层适配：租户 API 的请求和响应使用知识库名称，响应在 `context.knowledge_ids` 中冗余返回 ID；Yuxi 运行配置仍保存 `kb_id`。外部系统如果直接调用租户 API，优先使用名称，回读时同时保存 `knowledge_ids` 以便需要时定位资源。
 
 也可以把 `system_prompt` 放在顶层；服务端会写入 `config_json.context.system_prompt`。两者同时提交时，顶层 `system_prompt` 优先：
 
@@ -143,7 +145,7 @@
 - `description` 不是 Prompt，只是短介绍。
 - `profile.capabilities` 是标签，不是可执行工具/Skill；实际能力在 `config_json.context.tools/skills/mcps`。
 - `profile.responsibilities` / `boundaries` / `acceptance` 是档案和会议上下文，不会自动拼进普通聊天 Prompt。
-- `config_json.context.knowledges` 默认是 `"all"`；不设置时员工可能使用当前用户可见的全部知识库，需要限制时显式传列表或 `[]`。
+- `config_json.context.knowledges` 默认是 `"all"`；不设置时员工可能使用当前用户可见的全部知识库，需要限制时显式传名称列表或 `[]`。响应中的 `knowledge_ids` 是冗余的 kb_id，用于定位资源。
 - `share_config` 是权限，不是内容配置；`global` 在租户内生效，不跨租户。
 - `tenant_id`、`kind`、`status`、`can_manage` 是服务端字段，不要作为更新目标。
 

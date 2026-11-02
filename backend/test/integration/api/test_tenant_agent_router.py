@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 
@@ -269,6 +270,59 @@ async def test_tenant_create_rejects_global_slug_conflict(test_client, tenant_ap
         assert "slug" in conflict.json()["detail"]
     finally:
         await _db("DELETE FROM agents WHERE slug = :slug", {"slug": slug})
+
+
+async def test_tenant_agent_knowledge_names_are_displayed_and_ids_stored(test_client, tenant_api):
+    """租户 API 用名称展示知识库，数据库仍保存 kb_id。"""
+    kb_name = f"pytest-kb-{uuid.uuid4().hex[:8]}"
+    slug = f"pytest-tenant-de-kb-{uuid.uuid4().hex[:8]}"
+    kb_id = None
+    try:
+        kb_response = await test_client.post(
+            "/api/tenant/knowledge/databases",
+            headers=tenant_api,
+            json={"database_name": kb_name, "description": "租户 Agent 知识库映射测试"},
+        )
+        assert kb_response.status_code == 201, kb_response.text
+        kb_id = kb_response.json()["kb_id"]
+
+        created = await test_client.post(
+            "/api/tenant/digital-employees",
+            headers=tenant_api,
+            json={
+                "name": "知识库映射员工",
+                "slug": slug,
+                "profile": _valid_profile(),
+                "config_json": {"context": {"knowledges": [kb_name]}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        employee = created.json()["employee"]
+        assert employee["config_json"]["context"]["knowledges"] == [kb_name]
+        assert employee["config_json"]["context"]["knowledge_ids"] == [kb_id]
+
+        stored = await _db(
+            "SELECT config_json FROM agents WHERE slug = :slug",
+            {"slug": slug},
+        )
+        assert stored is not None
+        stored_config = stored[0]
+        if isinstance(stored_config, str):
+            stored_config = json.loads(stored_config)
+        assert stored_config["context"]["knowledges"] == [kb_id]
+
+        updated = await test_client.put(
+            f"/api/tenant/digital-employees/{slug}",
+            headers=tenant_api,
+            json={"config_json": {"context": {"knowledges": [kb_name]}}},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["employee"]["config_json"]["context"]["knowledges"] == [kb_name]
+        assert updated.json()["employee"]["config_json"]["context"]["knowledge_ids"] == [kb_id]
+    finally:
+        await _db("DELETE FROM agents WHERE slug = :slug", {"slug": slug})
+        if kb_id:
+            await test_client.delete(f"/api/tenant/knowledge/databases/{kb_id}", headers=tenant_api)
 
 
 async def test_tenant_founder_twin_lifecycle_and_delete_guard(test_client, tenant_api):
