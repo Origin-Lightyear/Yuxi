@@ -53,6 +53,24 @@ Owner：backend/server/routers/tenant_agent_router.py
 - 静态管理 Key 是实例级共享密钥；持有者可声明任意 `X-Tenant-Id`。当前不提供按租户独立 Key，部署必须限制 Key 的分发范围和网络来源。
 - 老板分身删除会因历史引用失败，平台需要先处理引用或在 Yuxi 内保留。
 
+## 对接备注
+
+对外字段契约由 [租户数字员工与老板分身管理 API](../../../advanced/tenant-agent-management-api.md) 的“字段说明”维护，本记录不复制完整字段表。接入方最容易误解的字段如下：
+
+| 字段 | 不是 | 实际用途 |
+| --- | --- | --- |
+| `description` | 行为说明或 Prompt | 卡片/列表短介绍，仅展示，不进入模型上下文 |
+| `digital_employee_profile.capabilities` | 可执行工具或 Skill | 自由能力标签；最多 12 项、单项 40 字符，发布前至少 1 项 |
+| `digital_employee_profile.responsibilities/boundaries/acceptance` | 自动注入的聊天 Prompt | 档案展示、搜索和会议参与者上下文；普通聊天不会自动拼接 |
+| `config_json.context.system_prompt` | 普通描述字段 | 实际行为/能力 Prompt，追加到内置系统提示词 |
+| `config_json.context.knowledges` | 权限配置 | 运行时知识库选择；默认 `"all"`，`[]` 表示不使用 |
+| `config_json.context.tools/skills/mcps/subagents` | 展示标签 | 运行时工具、Skill、MCP 和子智能体选择 |
+| `share_config` | 员工内容配置 | 员工可见/可管理权限；`global` 只在租户内生效 |
+| `backend_id` | 员工类型 | Agent 执行后端；数字员工当前只接受 `ChatbotAgent` |
+| `tenant_id`/`kind`/`status`/`can_manage` | 可写字段 | 服务端注入或生命周期维护的只读字段 |
+
+接入方如果只填写 `description`，数字员工的模型行为不会改变；需要模型遵循的角色、规则和输出格式必须写入 `config_json.context.system_prompt`。如果不设置 `knowledges`，默认使用当前用户可见的全部知识库；需要限制时必须显式传知识库列表或 `[]`。
+
 ## 验证
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |

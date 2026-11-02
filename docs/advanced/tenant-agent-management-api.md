@@ -46,6 +46,92 @@
 - `manage_scope` 必须包含在 `read_scope` 内；可以为 `null`，表示没有员工管理权。
 - 不传 `share_config` 时默认租户内全局可读，`manage_scope=null`。
 
+## 字段说明
+
+接入方最容易混淆的是：`description`、`digital_employee_profile`、`config_json.context.system_prompt` 和 `share_config` 各自负责不同事情。它们不是同一份说明的不同写法。
+
+### 数字员工字段
+
+| 字段 | 是否可写 | 用途 | 注意事项 |
+| --- | --- | --- | --- |
+| `name` | 是 | 员工展示名称 | 必填 |
+| `slug` | 创建时可写 | URL 和后续更新使用的稳定标识 | 全实例唯一；冲突返回 `409`，保存响应值 |
+| `backend_id` | 创建时可写 | Agent 执行后端 | 数字员工当前只接受 `ChatbotAgent`；不能传 `SubAgentBackend` |
+| `description` | 是 | 卡片/列表的简短介绍 | **不进入模型 Prompt**，只用于展示 |
+| `icon` | 是 | 图标 URL 或资源路径 | 可选 |
+| `profile.position` | 是 | 岗位名称 | 发布前必填，最长 80 字符 |
+| `profile.department` | 是 | 展示部门 | 发布前必填，最长 80 字符；不是权限部门 |
+| `profile.responsibilities` | 是 | 岗位职责说明 | 发布前必填，最长 2000 字符；普通聊天不会自动注入 Prompt |
+| `profile.capabilities` | 是 | 能力标签 | 自由文本，最多 12 项、单项 40 字符；发布前至少 1 项；不是工具或 Skill |
+| `profile.boundaries` | 是 | 工作边界 | 发布前必填，最长 2000 字符；会议参与者上下文会使用 |
+| `profile.acceptance` | 是 | 验收标准 | 发布前必填，最长 2000 字符；会议参与者上下文会使用 |
+| `profile.status` | 否 | `draft` / `active` / `disabled` | 由创建、发布、停用接口维护 |
+| `config_json` | 是 | 运行时配置 | 见下方“运行配置字段” |
+| `share_config` | 是 | 员工可见/可管理权限 | 只控制权限，不控制员工知识或 Prompt |
+| `tenant_id` | 否 | 租户归属 | 由 `X-Tenant-Id` 注入；请求体传入会被忽略 |
+| `kind` | 否 | `digital_employee` 或 `founder_twin` | 由创建入口固定，不能修改 |
+| `can_manage` | 否 | 当前调用方是否可管理 | 响应字段 |
+| `summary` | 否 | 列表状态统计 | 响应字段，按 `active/draft/disabled` 计数 |
+
+### 运行配置字段 `config_json.context`
+
+这些字段决定员工实际怎么运行，不是展示信息。
+
+| 字段 | 示例 | 用途 |
+| --- | --- | --- |
+| `system_prompt` | `"你是经营分析官，回答必须引用数据口径。"` | **实际行为/能力 Prompt**，追加到内置系统提示词 |
+| `model` | `"provider:model"` | 员工使用的模型；留空使用系统默认模型 |
+| `knowledges` | `"all"` / `["kb_a"]` / `[]` | 知识库选择；`"all"` 是当前用户可见全部，`[]` 是明确不使用 |
+| `tools` | `"all"` / `["tool-a"]` / `[]` | 可用工具选择 |
+| `skills` | `"all"` / `["skill-a"]` / `[]` | 可用 Skill 选择 |
+| `mcps` | `[]` / `["mcp-a"]` | MCP 服务选择 |
+| `subagents` | `["general-purpose"]` / `[]` | 子智能体选择 |
+| `temperature` | `0.3` | 模型温度，按后端 Context 声明生效 |
+
+创建时可以直接提交：
+
+```json
+{
+  "config_json": {
+    "context": {
+      "system_prompt": "你是经营分析官。先确认数据口径，再输出结论。",
+      "knowledges": ["kb_xxx"],
+      "tools": "all",
+      "skills": []
+    }
+  }
+}
+```
+
+如果只写 `description`，模型行为不会改变；需要模型遵循的角色、规则、输出格式，必须写 `system_prompt`。
+
+### 老板分身字段
+
+| 字段 | 是否可写 | 用途 | 注意事项 |
+| --- | --- | --- | --- |
+| `name` | 是 | 分身展示名称 | 必填，最长 100 字符 |
+| `slug` | 创建时可写 | 稳定标识 | 全实例唯一；冲突返回 `409` |
+| `description` | 是 | 卡片/列表简介 | 不进入 Prompt |
+| `icon` | 是 | 图标 | 可选 |
+| `system_prompt` | 是 | 分身行为 Prompt | 服务端写入 `config_json.context.system_prompt`；不传使用默认分身提示词 |
+| `share_config` | 是 | 员工可见/可管理权限 | 只控制权限 |
+| `tenant_id` | 否 | 租户归属 | 由 `X-Tenant-Id` 注入 |
+| `kind` | 否 | 固定为 `founder_twin` | 不能修改 |
+| `stats.confirmed_entries` | 否 | 已确认经验数 | 响应字段 |
+| `stats.draft_entries` | 否 | 草稿经验数 | 响应字段 |
+| `stats.open_handoffs` | 否 | 打开中的转交数 | 响应字段 |
+
+老板分身的经验、咨询和转交不在本组 API 内管理；`stats` 只是只读计数。
+
+### 常见误区
+
+- `description` 不是 Prompt，只是短介绍。
+- `profile.capabilities` 是标签，不是可执行工具/Skill；实际能力在 `config_json.context.tools/skills/mcps`。
+- `profile.responsibilities` / `boundaries` / `acceptance` 是档案和会议上下文，不会自动拼进普通聊天 Prompt。
+- `config_json.context.knowledges` 默认是 `"all"`；不设置时员工可能使用当前用户可见的全部知识库，需要限制时显式传列表或 `[]`。
+- `share_config` 是权限，不是内容配置；`global` 在租户内生效，不跨租户。
+- `tenant_id`、`kind`、`status`、`can_manage` 是服务端字段，不要作为更新目标。
+
 ## 数字员工
 
 ### 接口一览
