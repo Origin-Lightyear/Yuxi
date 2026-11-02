@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 10
+BUSINESS_SCHEMA_VERSION = 14
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -495,7 +495,7 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             if version == BUSINESS_SCHEMA_VERSION:
                 return
-            if version not in (None, 2, 7, 8, 9):
+            if version not in (None, 2, 7, 8, 9, 10, 11, 12, 13):
                 raise RuntimeError(f"Unsupported business schema version: {version}")
             if version in (None, 2, 7, 8):
                 for name in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
@@ -1020,6 +1020,8 @@ class PostgresManager(metaclass=SingletonMeta):
                 pics JSONB NOT NULL DEFAULT '[]'::jsonb,
                 config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 share_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+                kind VARCHAR(32) NOT NULL DEFAULT 'agent',
+                digital_employee_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
                 is_default BOOLEAN NOT NULL DEFAULT FALSE,
                 is_subagent BOOLEAN NOT NULL DEFAULT FALSE,
                 created_by VARCHAR(64),
@@ -1039,6 +1041,14 @@ class PostgresManager(metaclass=SingletonMeta):
                 "WHERE share_config IS NOT NULL AND share_config->>'version' IS DISTINCT FROM '2'"
             ),
             "ALTER TABLE IF EXISTS agents ALTER COLUMN share_config DROP DEFAULT",
+            "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS kind VARCHAR(32) NOT NULL DEFAULT 'agent'",
+            "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS tenant_id INTEGER",
+            (
+                "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS "
+                "digital_employee_profile JSONB NOT NULL DEFAULT '{}'::jsonb"
+            ),
+            "CREATE INDEX IF NOT EXISTS ix_agents_kind ON agents (kind)",
+            "CREATE INDEX IF NOT EXISTS ix_agents_tenant_id ON agents (tenant_id)",
             "ALTER TABLE IF EXISTS agents ADD COLUMN IF NOT EXISTS is_subagent BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS enable_memory BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS user_config ADD COLUMN IF NOT EXISTS tenant_id INTEGER",
@@ -1514,6 +1524,217 @@ class PostgresManager(metaclass=SingletonMeta):
             ON agent_run_requests(uid, agent_slug, conversation_thread_id, status, created_at, id)
             """,
             "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_dispatched_run_id ON agent_run_requests(dispatched_run_id)",  # noqa: E501
+            """
+            CREATE TABLE IF NOT EXISTS work_item_views (
+                id SERIAL PRIMARY KEY,
+                uid VARCHAR(64) NOT NULL,
+                item_key VARCHAR(96) NOT NULL,
+                viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_work_item_views_uid_item_key UNIQUE (uid, item_key)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_work_item_views_uid ON work_item_views(uid)",
+            """
+            CREATE TABLE IF NOT EXISTS handoff_requests (
+                id SERIAL PRIMARY KEY,
+                twin_slug VARCHAR(80) NOT NULL,
+                uid VARCHAR(64) NOT NULL,
+                question TEXT NOT NULL,
+                assigned_to_uid VARCHAR(64),
+                status VARCHAR(32) NOT NULL DEFAULT 'open',
+                answer TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                answered_at TIMESTAMPTZ,
+                CONSTRAINT ck_handoff_requests_status CHECK (status IN ('open', 'answered', 'closed'))
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_twin_slug ON handoff_requests(twin_slug)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_uid ON handoff_requests(uid)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_assigned_to_uid ON handoff_requests(assigned_to_uid)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_status ON handoff_requests(status)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_twin_status ON handoff_requests(twin_slug, status)",
+            "CREATE INDEX IF NOT EXISTS ix_handoff_requests_twin_uid_created ON handoff_requests(twin_slug, uid, created_at)",
+            """
+            CREATE TABLE IF NOT EXISTS experience_entries (
+                id SERIAL PRIMARY KEY,
+                twin_slug VARCHAR(80) NOT NULL,
+                code VARCHAR(64) NOT NULL,
+                title VARCHAR(200) NOT NULL,
+                situation TEXT NOT NULL DEFAULT '',
+                judgment TEXT NOT NULL DEFAULT '',
+                boundary TEXT NOT NULL DEFAULT '',
+                source_type VARCHAR(32) NOT NULL DEFAULT 'manual',
+                source_ref VARCHAR(512),
+                source_excerpt TEXT,
+                status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                embedding JSONB,
+                embedding_model VARCHAR(128),
+                confirmed_by VARCHAR(64),
+                confirmed_at TIMESTAMPTZ,
+                citation_count INTEGER NOT NULL DEFAULT 0,
+                created_by VARCHAR(64),
+                updated_by VARCHAR(64),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_experience_entries_twin_code UNIQUE (twin_slug, code)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_experience_entries_twin_slug ON experience_entries(twin_slug)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_entries_status ON experience_entries(status)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_entries_created_by ON experience_entries(created_by)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_entries_twin_status ON experience_entries(twin_slug, status)",
+            """
+            CREATE TABLE IF NOT EXISTS experience_consultations (
+                id SERIAL PRIMARY KEY,
+                twin_slug VARCHAR(80) NOT NULL,
+                uid VARCHAR(64) NOT NULL,
+                thread_id VARCHAR(64) NOT NULL,
+                run_id VARCHAR(64) NOT NULL,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL DEFAULT '',
+                answer_message_id INTEGER,
+                cited_entry_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                confidence DOUBLE PRECISION,
+                handoff_id INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_experience_consultations_run_id UNIQUE (run_id),
+                CONSTRAINT fk_experience_consultations_handoff
+                    FOREIGN KEY (handoff_id) REFERENCES handoff_requests(id) ON DELETE SET NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_experience_consultations_twin_slug ON experience_consultations(twin_slug)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_consultations_uid ON experience_consultations(uid)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_consultations_thread_id ON experience_consultations(thread_id)",
+            "CREATE INDEX IF NOT EXISTS ix_experience_consultations_twin_uid_created ON experience_consultations(twin_slug, uid, created_at)",
+            "ALTER TABLE IF EXISTS experience_consultations ADD COLUMN IF NOT EXISTS external_citations JSONB NOT NULL DEFAULT '[]'::jsonb",
+            """
+            CREATE TABLE IF NOT EXISTS meetings (
+                id SERIAL PRIMARY KEY,
+                kind VARCHAR(32) NOT NULL DEFAULT 'twin',
+                topic VARCHAR(300) NOT NULL,
+                status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                participant_slugs JSONB NOT NULL DEFAULT '[]'::jsonb,
+                human_uids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                signer_uids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                rounds INTEGER NOT NULL DEFAULT 2,
+                summary TEXT NOT NULL DEFAULT '',
+                consensus JSONB NOT NULL DEFAULT '[]'::jsonb,
+                divergences JSONB NOT NULL DEFAULT '[]'::jsonb,
+                generation_error TEXT,
+                created_by VARCHAR(64) NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT ck_meetings_kind CHECK (kind IN ('twin', 'digital_employee'))
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_meetings_kind ON meetings(kind)",
+            "CREATE INDEX IF NOT EXISTS ix_meetings_status ON meetings(status)",
+            "CREATE INDEX IF NOT EXISTS ix_meetings_created_by ON meetings(created_by)",
+            "CREATE INDEX IF NOT EXISTS ix_meetings_kind_status ON meetings(kind, status)",
+            "CREATE INDEX IF NOT EXISTS ix_meetings_created_by_created ON meetings(created_by, created_at)",
+            """
+            CREATE TABLE IF NOT EXISTS meeting_messages (
+                id SERIAL PRIMARY KEY,
+                meeting_id INTEGER NOT NULL,
+                round INTEGER NOT NULL DEFAULT 1,
+                speaker_type VARCHAR(32) NOT NULL DEFAULT 'twin',
+                speaker_slug VARCHAR(80),
+                speaker_uid VARCHAR(64),
+                speaker_name VARCHAR(100),
+                content TEXT NOT NULL,
+                citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT ck_meeting_messages_speaker_type
+                    CHECK (speaker_type IN ('twin', 'digital_employee', 'human', 'system')),
+                CONSTRAINT fk_meeting_messages_meeting
+                    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_meeting_messages_meeting_id ON meeting_messages(meeting_id)",
+            "CREATE INDEX IF NOT EXISTS ix_meeting_messages_meeting_created ON meeting_messages(meeting_id, created_at)",
+            """
+            CREATE TABLE IF NOT EXISTS meeting_decisions (
+                id SERIAL PRIMARY KEY,
+                meeting_id INTEGER NOT NULL,
+                code VARCHAR(64) NOT NULL,
+                title VARCHAR(200) NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                impact TEXT NOT NULL DEFAULT '',
+                proposer_slug VARCHAR(80),
+                status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                effective_text TEXT,
+                effective_at TIMESTAMPTZ,
+                experience_entry_id INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_meeting_decisions_meeting_code UNIQUE (meeting_id, code),
+                CONSTRAINT ck_meeting_decisions_status
+                    CHECK (status IN ('pending', 'effective', 'rejected')),
+                CONSTRAINT fk_meeting_decisions_meeting
+                    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+                CONSTRAINT fk_meeting_decisions_experience
+                    FOREIGN KEY (experience_entry_id) REFERENCES experience_entries(id) ON DELETE SET NULL
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_meeting_decisions_meeting_id ON meeting_decisions(meeting_id)",
+            "CREATE INDEX IF NOT EXISTS ix_meeting_decisions_status ON meeting_decisions(status)",
+            "CREATE INDEX IF NOT EXISTS ix_meeting_decisions_meeting_status ON meeting_decisions(meeting_id, status)",
+            """
+            CREATE TABLE IF NOT EXISTS meeting_decision_signers (
+                id SERIAL PRIMARY KEY,
+                decision_id INTEGER NOT NULL,
+                uid VARCHAR(64) NOT NULL,
+                status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                action VARCHAR(32),
+                comment TEXT,
+                signed_text TEXT,
+                signed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_meeting_decision_signers_decision_uid UNIQUE (decision_id, uid),
+                CONSTRAINT ck_meeting_decision_signers_status
+                    CHECK (status IN ('pending', 'approved', 'rejected')),
+                CONSTRAINT ck_meeting_decision_signers_action
+                    CHECK (action IS NULL OR action IN ('approve', 'modify', 'reject')),
+                CONSTRAINT fk_meeting_decision_signers_decision
+                    FOREIGN KEY (decision_id) REFERENCES meeting_decisions(id) ON DELETE CASCADE
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_meeting_decision_signers_decision_id ON meeting_decision_signers(decision_id)",
+            "CREATE INDEX IF NOT EXISTS ix_meeting_decision_signers_uid ON meeting_decision_signers(uid)",
+            """
+            CREATE TABLE IF NOT EXISTS employee_skills (
+                id SERIAL PRIMARY KEY,
+                code VARCHAR(64) NOT NULL UNIQUE,
+                title VARCHAR(200) NOT NULL,
+                department VARCHAR(80) NOT NULL DEFAULT '',
+                owner_uid VARCHAR(64) NOT NULL,
+                capture_method VARCHAR(32) NOT NULL DEFAULT 'interview',
+                status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+                rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+                boundary TEXT NOT NULL DEFAULT '',
+                acceptance TEXT NOT NULL DEFAULT '',
+                successor_uid VARCHAR(64),
+                handover_status VARCHAR(32) NOT NULL DEFAULT 'unassigned',
+                source_ref VARCHAR(512),
+                created_by VARCHAR(64),
+                updated_by VARCHAR(64),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT ck_employee_skills_capture_method
+                    CHECK (capture_method IN ('interview', 'recording', 'process', 'review')),
+                CONSTRAINT ck_employee_skills_status
+                    CHECK (status IN ('draft', 'needs_review', 'ready', 'archived')),
+                CONSTRAINT ck_employee_skills_handover_status
+                    CHECK (handover_status IN ('unassigned', 'assigned', 'accepted'))
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_employee_skills_code ON employee_skills(code)",
+            "CREATE INDEX IF NOT EXISTS ix_employee_skills_owner_uid ON employee_skills(owner_uid)",
+            "CREATE INDEX IF NOT EXISTS ix_employee_skills_status ON employee_skills(status)",
+            "CREATE INDEX IF NOT EXISTS ix_employee_skills_successor_uid ON employee_skills(successor_uid)",
+            "CREATE INDEX IF NOT EXISTS ix_employee_skills_owner_status ON employee_skills(owner_uid, status)",
+            "CREATE INDEX IF NOT EXISTS ix_employee_skills_handover_status ON employee_skills(handover_status)",
             *TASK_DURABLE_SCHEMA_STATEMENTS,
         ]
         async with self.async_engine.begin() as conn:

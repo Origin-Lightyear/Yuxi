@@ -34,6 +34,7 @@ from yuxi.services.agent_request_queue_service import (
     validate_queue_policy,
 )
 from yuxi.services.agent_run_service import create_agent_run_input_message, enqueue_agent_run, resolve_agent_run_config
+from yuxi.services.digital_employee_service import ensure_digital_employee_can_start
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.project_service import create_implicit_project
 from yuxi.services.workdir_service import WorkdirBinding, resolve_conversation_workdir_binding
@@ -104,6 +105,7 @@ async def submit_agent_request(
     )
     if not agent_item:
         raise HTTPException(status_code=404, detail="智能体不存在")
+    ensure_digital_employee_can_start(current_user, agent_item)
 
     existing_request = await AgentRunRequestRepository(db).get_by_request_id(request_input.request_id)
     existing_run = (

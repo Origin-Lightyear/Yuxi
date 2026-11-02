@@ -265,6 +265,8 @@ const agentQuickSwitchOptions = computed(() =>
       label: agent.name || agent.id,
       value: agent.id,
       slug: agent.slug,
+      kind: agent.kind || 'agent',
+      canManage: Boolean(agent.can_manage),
       icon: agent.icon || '',
       defaultIcon: agent.id ? generatePixelAvatar(agent.id) : '',
       isBuiltin: isBuiltinAgent(agent)
@@ -343,6 +345,17 @@ const openAgentManagement = async () => {
   agentDropdownOpen.value = false
   if (!selectedAgentId.value) {
     message.warning('请先选择智能体')
+    return
+  }
+  if (currentAgentOption.value?.kind === 'digital_employee') {
+    if (!currentAgentOption.value.canManage) {
+      message.warning('当前数字员工不可编辑')
+      return
+    }
+    await router.push({
+      name: 'DigitalEmployeeComp',
+      query: { edit: currentAgentOption.value.slug || selectedAgentId.value }
+    })
     return
   }
   try {

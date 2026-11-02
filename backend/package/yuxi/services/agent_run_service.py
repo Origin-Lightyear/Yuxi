@@ -36,6 +36,7 @@ from yuxi.repositories.agent_run_output_repository import AgentRunOutputReposito
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services import agent_data_sync
+from yuxi.services.digital_employee_service import ensure_digital_employee_can_start
 from yuxi.services.input_message_service import (
     AgentRunInputMessage,
     build_resume_input_message,
@@ -89,6 +90,7 @@ def load_agent_run_context(agent_item, agent_backend):
     config_context = config_json.get("context") if isinstance(config_json, dict) else {}
     if isinstance(config_context, dict):
         context.update_config(config_context)
+    context.agent_kind = getattr(agent_item, "kind", "agent") or "agent"
     return context
 
 
@@ -694,6 +696,7 @@ async def prepare_agent_run_creation_scope(
     agent_item = await agent_repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind=agent_kind)
     if not agent_item:
         raise HTTPException(status_code=404, detail="智能体不存在")
+    ensure_digital_employee_can_start(current_user, agent_item)
 
     try:
         agent_backend = get_agent_backend(agent_item.backend_id)

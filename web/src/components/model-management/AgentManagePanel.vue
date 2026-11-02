@@ -90,7 +90,7 @@ const loadAgentBackends = async () => {
 const loadAgents = async () => {
   agentLoading.value = true
   try {
-    const response = await agentApi.getAgents({ includeSubagents: true })
+    const response = await agentApi.getAgents({ includeSubagents: true, kind: 'agent' })
     managedAgents.value = (response.agents || []).map(normalizeAgent)
   } finally {
     agentLoading.value = false

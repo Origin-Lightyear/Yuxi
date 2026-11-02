@@ -7,6 +7,7 @@ from typing import Any, Final
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import get_agent_backend
+from yuxi.agents.digital_employee import DIGITAL_EMPLOYEE_KIND, FOUNDER_TWIN_KIND
 from yuxi.agents.context import (
     BaseContext,
     filter_config_by_role,
@@ -62,6 +63,10 @@ async def duplicate_agent(agent_slug: str, *, user: User, db: AsyncSession) -> d
         raise HTTPException(status_code=404, detail="智能体不存在")
     if source.is_subagent:
         raise HTTPException(status_code=400, detail="子智能体不能另存为副本")
+    if getattr(source, "kind", "agent") == DIGITAL_EMPLOYEE_KIND:
+        raise HTTPException(status_code=400, detail="数字员工不能另存为普通智能体")
+    if getattr(source, "kind", "agent") == FOUNDER_TWIN_KIND:
+        raise HTTPException(status_code=400, detail="老板分身不能另存为普通智能体")
 
     backend = get_agent_backend(source.backend_id)
     config_json, config_resource_access = await prepare_agent_config_write(

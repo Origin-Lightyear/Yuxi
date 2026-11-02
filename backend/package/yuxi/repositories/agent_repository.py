@@ -6,14 +6,24 @@ import uuid
 from collections.abc import Collection
 from typing import Any, Literal
 
-from sqlalchemy import select, update
+from sqlalchemy import String, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.context import BaseContext, validate_resource_selection
+from yuxi.agents.digital_employee import AGENT_KIND
 from yuxi.agents.presets import AgentPreset, preset_slug_set
 from yuxi.agents.presets.default_chatbot import PRESET as DEFAULT_AGENT
 from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_agent_permission
-from yuxi.storage.postgres.models_business import Agent, User
+from yuxi.storage.postgres.models_business import (
+    Agent,
+    Conversation,
+    IMBotConfig,
+    Meeting,
+    MeetingDecision,
+    MeetingMessage,
+    ScheduledAgentJob,
+    User,
+)
 from yuxi.utils.datetime_utils import utc_now_naive
 
 DEFAULT_AGENT_SLUG = DEFAULT_AGENT.slug
@@ -175,6 +185,52 @@ class AgentRepository:
         result = await self.db.execute(select(Agent).where(Agent.slug == slug))
         return result.scalar_one_or_none()
 
+    async def get_by_slug_for_tenant(self, *, slug: str, tenant_id: int) -> Agent | None:
+        """按租户归属读取 Agent；跨租户与不存在同样返回 None。"""
+        result = await self.db.execute(
+            select(Agent).where(Agent.slug == slug, Agent.tenant_id == tenant_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_slug_for_update(self, *, slug: str) -> Agent | None:
+        """锁定单个智能体，并用数据库最新行刷新 identity map 中的旧快照。"""
+        result = await self.db.execute(
+            select(Agent)
+            .where(Agent.slug == slug)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_by_kind(self, *, kind: str, tenant_id: int | None = None) -> list[Agent]:
+        """按产品类型列出智能体；指定租户时只返回该租户的精确归属。"""
+        stmt = select(Agent).where(Agent.kind == kind)
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
+        result = await self.db.execute(stmt.order_by(Agent.id.asc()))
+        return list(result.scalars().all())
+
+    async def count_digital_employee_references(self, *, slug: str) -> dict[str, int]:
+        """统计阻止删除数字员工的持久引用。"""
+        counts = {}
+        for name, model, column in (
+            ("conversations", Conversation, Conversation.agent_id),
+            ("scheduled_jobs", ScheduledAgentJob, ScheduledAgentJob.agent_slug),
+            ("im_bots", IMBotConfig, IMBotConfig.agent_slug),
+            ("meeting_decisions", MeetingDecision, MeetingDecision.proposer_slug),
+            ("meeting_messages", MeetingMessage, MeetingMessage.speaker_slug),
+        ):
+            result = await self.db.execute(select(func.count()).select_from(model).where(column == slug))
+            counts[name] = int(result.scalar_one() or 0)
+        escaped = slug.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        meeting_result = await self.db.execute(
+            select(func.count())
+            .select_from(Meeting)
+            .where(cast(Meeting.participant_slugs, String).like(f'%"{escaped}"%', escape="\\"))
+        )
+        counts["meetings"] = int(meeting_result.scalar_one() or 0)
+        return counts
+
     async def list_by_slugs(self, slugs: list[str]) -> list[Agent]:
         result = await self.db.execute(select(Agent).where(Agent.slug.in_(slugs)))
         return list(result.scalars().all())
@@ -245,6 +301,9 @@ class AgentRepository:
         config_json: dict | None = None,
         config_resource_access: dict[str, Collection[str]] | None = None,
         share_config: dict | None = None,
+        kind: str = AGENT_KIND,
+        tenant_id: int | None = None,
+        digital_employee_profile: dict | None = None,
         is_default: bool = False,
         is_subagent: bool | None = None,
         created_by: str | None = None,
@@ -287,6 +346,9 @@ class AgentRepository:
                 context_schema=get_agent_backend(backend_id).context_schema,
             ),
             share_config=normalized_share_config,
+            kind=kind,
+            tenant_id=tenant_id,
+            digital_employee_profile=digital_employee_profile or {},
             is_default=False,
             is_subagent=resolved_is_subagent,
             created_by=created_by,
@@ -312,6 +374,7 @@ class AgentRepository:
         config_json: dict | None = None,
         config_resource_access: dict[str, Collection[str]] | None = None,
         share_config: dict | None = None,
+        digital_employee_profile: dict | None = None,
         is_subagent: bool | None = None,
         updated_by: str | None = None,
         updater: User | None = None,
@@ -326,6 +389,8 @@ class AgentRepository:
             agent.icon = icon
         if pics is not None:
             agent.pics = pics
+        if digital_employee_profile is not None:
+            agent.digital_employee_profile = digital_employee_profile
         if config_json is not None:
             from yuxi.agents.buildin import get_agent_backend
 

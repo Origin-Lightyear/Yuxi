@@ -10,6 +10,7 @@ files:
   - package.json
   - url_policy.js
   - window_state.js
+  - update_feed.js
   # 运行时托盘/Dock 图标：resolveAppIcon 按 __dirname/build/icon.png 读取，不入白名单则打包态恒缺失
   - build/icon.png
 
@@ -25,6 +26,11 @@ win:
     - nsis
   icon: build/icon.png
   executableName: Yuxi
+  # 生成 latest.yml 与 app-update.yml；客户端运行时按当前服务地址重新解析更新源，
+  # 这里的 url 只作为构建产物里的默认元数据，不约束实际分发地址。
+  publish:
+    provider: generic
+    url: http://10.69.188.181:5173/desktop-updates/
 
 nsis:
   # 双架构需分别构建；带 ${arch} 后缀避免 x64 / arm64 安装包互相覆盖

@@ -286,6 +286,9 @@ services:
     image: ${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-0.7.3}
     ports:
       - "${YUXI_WEB_PORT:-80}:80"
+    volumes:
+      # 桌面客户端更新包由宿主机目录直接提供，发布新包不必重建网页镜像
+      - ./web/public/desktop-updates:/usr/share/nginx/html/desktop-updates:ro
     depends_on:
       - api
     networks:

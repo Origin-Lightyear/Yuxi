@@ -22,6 +22,8 @@ export * from './scheduled_agent_api' // 用户 Agent 定时任务 API
 export * from './workspace_api' // Workspace API
 export * from './im_bot_api' // IM 机器人配置 API
 export * from './speech_api' // 语音输入 API
+export * from './workbench_api' // 待办收件箱 API
+export * from './founderTwinApi' // 老板分身 API
 
 // 导出基础工具函数
 export {

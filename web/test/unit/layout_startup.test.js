@@ -64,10 +64,13 @@ test('布局导航不等待品牌或知识库，卸载后清理状态同步计�
     assert.ok(calls.includes('loadThreads'))
     assert.ok(calls.includes('loadProjects'))
     assert.ok(calls.includes('refreshConfig'))
-    assert.equal(interval.mock.callCount(), 1)
+    assert.equal(interval.mock.callCount(), 2)
     app.unmount()
     app = null
-    assert.equal(clear.mock.calls[0].arguments[0], 123)
+    assert.deepEqual(
+      clear.mock.calls.map((call) => call.arguments[0]),
+      [123, 123]
+    )
   } finally {
     app?.unmount()
     disposePinia(pinia)

@@ -58,5 +58,24 @@ async def test_non_saas_jwt_does_not_require_agent_session(monkeypatch):
     assert result is user
 
 
+async def test_saas_jwt_attaches_tenant_scope_to_user(monkeypatch):
+    user = SimpleNamespace(id=1, uid="E001", is_login_locked=lambda: False)
+    context = saas_identity.SaasEmployeeContext(
+        uid="E001",
+        tenant_id=100,
+        employee_id=2,
+        tenant_department_id=10,
+    )
+
+    monkeypatch.setattr(auth_middleware.AuthUtils, "verify_access_token", lambda _token: {"sub": "1"})
+    monkeypatch.setattr(saas_identity, "get_saas_employee_context", lambda _db, _uid: _async_value(context))
+    monkeypatch.setattr(saas_session, "get_saas_agent_session", lambda _uid: _async_value(object()))
+
+    result = await auth_middleware.get_current_user("Bearer token", _UserSession(user))
+
+    assert result.tenant_id == 100
+    assert result.tenant_department_id == 10
+
+
 async def _async_value(value):
     return value

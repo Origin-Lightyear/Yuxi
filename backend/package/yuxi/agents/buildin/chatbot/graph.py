@@ -12,7 +12,10 @@ from yuxi.agents.backends.paths import runtime_workdir_path
 from yuxi.agents.context import (
     DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS,
 )
+from yuxi.agents.digital_employee import FOUNDER_TWIN_KIND
 from yuxi.agents.middlewares import (
+    FounderTwinAnswerGuardMiddleware,
+    FounderTwinMiddleware,
     ImageInputCompatibilityMiddleware,
     NetworkRetryMiddleware,
     SteerMiddleware,
@@ -75,6 +78,8 @@ async def _build_middlewares(context, backend):
     )
     if approval_middleware:
         middlewares.append(approval_middleware)
+    if getattr(context, "agent_kind", None) == FOUNDER_TWIN_KIND:
+        middlewares.extend([FounderTwinMiddleware(), FounderTwinAnswerGuardMiddleware()])
     return middlewares
 
 

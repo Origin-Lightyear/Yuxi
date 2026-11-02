@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
 from yuxi.agents.buildin.chatbot.context import ChatBotContext
 
 from yuxi.agents.presets.subagents.general_purpose import PRESET as GENERAL_PURPOSE
@@ -16,7 +18,7 @@ from yuxi.repositories.agent_repository import (
     user_can_access_agent,
     user_can_manage_agent,
 )
-from yuxi.storage.postgres.models_business import Agent, User
+from yuxi.storage.postgres.models_business import Agent, Base, User
 
 
 class FakeDb:
@@ -422,3 +424,92 @@ def test_opt_in_resource_selection_preserves_all_intent(field):
     """默认关闭的资源同样可显式选择全部，且不展开持久化。"""
     merged = merge_agent_config_json({}, {"context": {field: "all"}}, resource_access={})
     assert merged == {"context": {field: "all"}}
+
+
+def test_agent_defaults_to_normal_agent_and_serializes_profile():
+    """Agent 缺省是普通智能体，员工档案随 to_dict 输出。"""
+    from yuxi.storage.postgres.models_business import Agent
+
+    plain = Agent(slug="plain", backend_id="ChatbotAgent", name="普通", share_config={})
+    assert plain.kind is None or plain.kind == "agent"
+    data = Agent(
+        slug="employee",
+        backend_id="ChatbotAgent",
+        name="员工",
+        share_config={},
+        kind="digital_employee",
+        digital_employee_profile={"status": "draft", "position": "经营分析官"},
+    ).to_dict()
+    assert data["kind"] == "digital_employee"
+    assert data["digital_employee_profile"]["position"] == "经营分析官"
+
+
+@pytest.mark.asyncio
+async def test_get_by_slug_for_update_refreshes_identity_map_snapshot():
+    """锁定读取必须带 populate_existing，避免返回预加载的旧状态。"""
+
+    class CaptureDb:
+        def __init__(self):
+            self.statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    db = CaptureDb()
+    await AgentRepository(db).get_by_slug_for_update(slug="employee")
+
+    assert db.statement.get_execution_options().get("populate_existing") is True
+
+
+@pytest.mark.asyncio
+async def test_agent_repository_scopes_queries_by_tenant():
+    """Repository 层按租户过滤列表和 slug，跨租户不返回资源。"""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as db:
+            db.add_all(
+                [
+                    Agent(
+                        slug="tenant-100",
+                        backend_id="ChatbotAgent",
+                        name="租户 100 员工",
+                        config_json={},
+                        share_config={},
+                        kind="digital_employee",
+                        tenant_id=100,
+                    ),
+                    Agent(
+                        slug="tenant-200",
+                        backend_id="ChatbotAgent",
+                        name="租户 200 员工",
+                        config_json={},
+                        share_config={},
+                        kind="digital_employee",
+                        tenant_id=200,
+                    ),
+                    Agent(
+                        slug="platform",
+                        backend_id="ChatbotAgent",
+                        name="平台员工",
+                        config_json={},
+                        share_config={},
+                        kind="digital_employee",
+                        tenant_id=None,
+                    ),
+                ]
+            )
+            await db.commit()
+
+        async with factory() as db:
+            repo = AgentRepository(db)
+            rows = await repo.list_by_kind(kind="digital_employee", tenant_id=100)
+            assert [row.slug for row in rows] == ["tenant-100"]
+            assert await repo.get_by_slug_for_tenant(slug="tenant-100", tenant_id=100) is not None
+            assert await repo.get_by_slug_for_tenant(slug="tenant-100", tenant_id=200) is None
+            assert await repo.get_by_slug_for_tenant(slug="platform", tenant_id=100) is None
+    finally:
+        await engine.dispose()

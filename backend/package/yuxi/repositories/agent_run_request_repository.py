@@ -172,6 +172,18 @@ class AgentRunRequestRepository:
             return 0
         return await self.get_queue_position_for(request)
 
+    async def mark_rejected(self, request_id: str, *, error_message: str) -> AgentRunRequest | None:
+        """把仍在排队的请求置为 rejected，供派发阶段的运行时守卫使用。"""
+        request = await self.lock_by_request_id(request_id)
+        if request is None or request.status != "queued":
+            return None
+        now = utc_now_naive()
+        request.status = "rejected"
+        request.error_message = error_message
+        request.updated_at = now
+        await self.db.flush()
+        return request
+
     async def mark_dispatched(self, request_id: str, *, run_id: str) -> AgentRunRequest | None:
         request = await self.lock_by_request_id(request_id)
         if request is None or request.status != "queued":

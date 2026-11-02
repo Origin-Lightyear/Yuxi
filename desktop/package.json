@@ -7,7 +7,11 @@
 	"scripts": {
 		"start": "electron .",
 		"dist:mac": "electron-builder --mac",
-		"dist:win": "electron-builder --win"
+		"dist:win": "electron-builder --win --x64",
+		"publish:win": "node scripts/publish-update.js"
+	},
+	"dependencies": {
+		"electron-updater": "^6.8.11"
 	},
 	"devDependencies": {
 		"electron": "^37.2.0",

@@ -103,6 +103,71 @@ const router = createRouter({
       ]
     },
     {
+      path: '/digital-employees',
+      name: 'digital-employees',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'DigitalEmployeeComp',
+          component: () => import('../views/DigitalEmployeeView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
+      path: '/workbench',
+      name: 'workbench',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'WorkbenchComp',
+          component: () => import('../views/WorkbenchView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
+      path: '/founder-twin',
+      name: 'founder-twin',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'FounderTwinComp',
+          component: () => import('../views/FounderTwinView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
+      path: '/meetings',
+      name: 'meetings',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'MeetingComp',
+          component: () => import('../views/MeetingView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
+      path: '/employee-skills',
+      name: 'employee-skills',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'EmployeeSkillsComp',
+          component: () => import('../views/EmployeeSkillsView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
       path: '/extensions',
       name: 'extensions',
       component: AppLayout,

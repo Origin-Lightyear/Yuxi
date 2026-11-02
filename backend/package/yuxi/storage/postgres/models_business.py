@@ -197,7 +197,26 @@ class User(Base):
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
 
     agent_env = relationship("AgentEnv", back_populates="user", cascade="all, delete-orphan", uselist=False)
-    user_config = relationship("UserConfig", back_populates="user", cascade="all, delete-orphan", uselist=False)
+    user_config = relationship(
+        "UserConfig",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
+
+    @property
+    def tenant_id(self) -> int | None:
+        """从登录身份读取租户归属；请求身份可覆盖为已解析值。"""
+        override = self.__dict__.get("_tenant_id_override")
+        if override is not None:
+            return override
+        config = self.user_config
+        return config.tenant_id if config is not None else None
+
+    @tenant_id.setter
+    def tenant_id(self, value: int | None) -> None:
+        self.__dict__["_tenant_id_override"] = value
 
     def to_dict(self, include_password: bool = False) -> dict[str, Any]:
         result = {
@@ -313,6 +332,9 @@ class Agent(Base):
     pics = Column(JSON, nullable=False, default=list)
     config_json = Column(JSON, nullable=False, default=dict)
     share_config = Column(JSON_VALUE, nullable=False)
+    kind = Column(String(32), nullable=False, default="agent", index=True)
+    tenant_id = Column(Integer, nullable=True, index=True)
+    digital_employee_profile = Column(JSON_VALUE, nullable=False, default=dict)
 
     is_default = Column(Boolean, nullable=False, default=False, index=True)
     is_subagent = Column(Boolean, nullable=False, default=False, index=True)
@@ -344,6 +366,9 @@ class Agent(Base):
             "pics": [normalize_public_minio_url(pic) for pic in (self.pics or [])],
             "config_json": self.config_json or {},
             "share_config": self.share_config or {},
+            "kind": self.kind or "agent",
+            "tenant_id": self.tenant_id,
+            "digital_employee_profile": self.digital_employee_profile or {},
             "is_default": bool(self.is_default),
             "is_subagent": bool(self.is_subagent),
             "created_by": self.created_by,
@@ -351,6 +376,273 @@ class Agent(Base):
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }
+
+
+class ExperienceEntry(Base):
+    """老板分身的经验条目；确认后才可被咨询检索和引用。"""
+
+    __tablename__ = "experience_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    twin_slug = Column(String(80), nullable=False, index=True)
+    code = Column(String(64), nullable=False)
+    title = Column(String(200), nullable=False)
+    situation = Column(Text, nullable=False, default="")
+    judgment = Column(Text, nullable=False, default="")
+    boundary = Column(Text, nullable=False, default="")
+    source_type = Column(String(32), nullable=False, default="manual")
+    source_ref = Column(String(512), nullable=True)
+    source_excerpt = Column(Text, nullable=True)
+    status = Column(String(32), nullable=False, default="draft", index=True)
+    embedding = Column(JSON_VALUE, nullable=True)
+    embedding_model = Column(String(128), nullable=True)
+    confirmed_by = Column(String(64), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    citation_count = Column(Integer, nullable=False, default=0)
+    created_by = Column(String(64), nullable=True, index=True)
+    updated_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    __table_args__ = (
+        UniqueConstraint("twin_slug", "code", name="uq_experience_entries_twin_code"),
+        Index("ix_experience_entries_twin_status", "twin_slug", "status"),
+    )
+
+
+class HandoffRequest(Base):
+    """分身无法给出有依据答案时转给老板本人的问题。"""
+
+    __tablename__ = "handoff_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    twin_slug = Column(String(80), nullable=False, index=True)
+    uid = Column(String(64), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    assigned_to_uid = Column(String(64), nullable=True, index=True)
+    status = Column(String(32), nullable=False, default="open", index=True)
+    answer = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    answered_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'answered', 'closed')", name="ck_handoff_requests_status"),
+        Index("ix_handoff_requests_twin_status", "twin_slug", "status"),
+        Index("ix_handoff_requests_twin_uid_created", "twin_slug", "uid", "created_at"),
+    )
+
+
+class ExperienceConsultation(Base):
+    """一次分身咨询；答案、引用和转交单绑定同一 Run。"""
+
+    __tablename__ = "experience_consultations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    twin_slug = Column(String(80), nullable=False, index=True)
+    uid = Column(String(64), nullable=False, index=True)
+    thread_id = Column(String(64), nullable=False, index=True)
+    run_id = Column(String(64), nullable=False)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=False, default="")
+    answer_message_id = Column(Integer, nullable=True)
+    cited_entry_ids = Column(JSON, nullable=False, default=list)
+    external_citations = Column(JSON, nullable=False, default=list)
+    confidence = Column(Float, nullable=True)
+    handoff_id = Column(
+        Integer,
+        ForeignKey("handoff_requests.id", ondelete="SET NULL", name="fk_experience_consultations_handoff"),
+        nullable=True,
+    )
+    created_at = Column(DateTime, default=utc_now_naive)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_experience_consultations_run_id"),
+        Index("ix_experience_consultations_twin_uid_created", "twin_slug", "uid", "created_at"),
+    )
+
+
+class Meeting(Base):
+    """分身或数字员工的多轮会议；纪要和决议都绑定同一会议事实。"""
+
+    __tablename__ = "meetings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kind = Column(String(32), nullable=False, default="twin", index=True)
+    topic = Column(String(300), nullable=False)
+    status = Column(String(32), nullable=False, default="draft", index=True)
+    participant_slugs = Column(JSON, nullable=False, default=list)
+    human_uids = Column(JSON, nullable=False, default=list)
+    signer_uids = Column(JSON, nullable=False, default=list)
+    rounds = Column(Integer, nullable=False, default=2)
+    summary = Column(Text, nullable=False, default="")
+    consensus = Column(JSON, nullable=False, default=list)
+    divergences = Column(JSON, nullable=False, default=list)
+    generation_error = Column(Text, nullable=True)
+    created_by = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('twin', 'digital_employee')", name="ck_meetings_kind"),
+        Index("ix_meetings_kind_status", "kind", "status"),
+        Index("ix_meetings_created_by_created", "created_by", "created_at"),
+    )
+
+
+class MeetingMessage(Base):
+    """会议中的一次发言；发言人可以是分身、数字员工或人。"""
+
+    __tablename__ = "meeting_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    meeting_id = Column(
+        Integer,
+        ForeignKey("meetings.id", ondelete="CASCADE", name="fk_meeting_messages_meeting"),
+        nullable=False,
+        index=True,
+    )
+    round = Column(Integer, nullable=False, default=1)
+    speaker_type = Column(String(32), nullable=False, default="twin")
+    speaker_slug = Column(String(80), nullable=True)
+    speaker_uid = Column(String(64), nullable=True)
+    speaker_name = Column(String(100), nullable=True)
+    content = Column(Text, nullable=False)
+    citations = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=utc_now_naive)
+
+    __table_args__ = (
+        CheckConstraint(
+            "speaker_type IN ('twin', 'digital_employee', 'human', 'system')",
+            name="ck_meeting_messages_speaker_type",
+        ),
+        Index("ix_meeting_messages_meeting_created", "meeting_id", "created_at"),
+    )
+
+
+class MeetingDecision(Base):
+    """会议形成的决议；全部指定负责人签字后才生效。"""
+
+    __tablename__ = "meeting_decisions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    meeting_id = Column(
+        Integer,
+        ForeignKey("meetings.id", ondelete="CASCADE", name="fk_meeting_decisions_meeting"),
+        nullable=False,
+        index=True,
+    )
+    code = Column(String(64), nullable=False)
+    title = Column(String(200), nullable=False)
+    detail = Column(Text, nullable=False, default="")
+    impact = Column(Text, nullable=False, default="")
+    proposer_slug = Column(String(80), nullable=True)
+    status = Column(String(32), nullable=False, default="pending", index=True)
+    effective_text = Column(Text, nullable=True)
+    effective_at = Column(DateTime, nullable=True)
+    experience_entry_id = Column(
+        Integer,
+        ForeignKey("experience_entries.id", ondelete="SET NULL", name="fk_meeting_decisions_experience"),
+        nullable=True,
+    )
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "code", name="uq_meeting_decisions_meeting_code"),
+        CheckConstraint(
+            "status IN ('pending', 'effective', 'rejected')",
+            name="ck_meeting_decisions_status",
+        ),
+        Index("ix_meeting_decisions_meeting_status", "meeting_id", "status"),
+    )
+
+
+class MeetingDecisionSigner(Base):
+    """决议的指定签字人和签字结果；按签字人投影待办。"""
+
+    __tablename__ = "meeting_decision_signers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    decision_id = Column(
+        Integer,
+        ForeignKey("meeting_decisions.id", ondelete="CASCADE", name="fk_meeting_decision_signers_decision"),
+        nullable=False,
+        index=True,
+    )
+    uid = Column(String(64), nullable=False, index=True)
+    status = Column(String(32), nullable=False, default="pending")
+    action = Column(String(32), nullable=True)
+    comment = Column(Text, nullable=True)
+    signed_text = Column(Text, nullable=True)
+    signed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+
+    __table_args__ = (
+        UniqueConstraint("decision_id", "uid", name="uq_meeting_decision_signers_decision_uid"),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected')",
+            name="ck_meeting_decision_signers_status",
+        ),
+        CheckConstraint(
+            "action IS NULL OR action IN ('approve', 'modify', 'reject')",
+            name="ck_meeting_decision_signers_action",
+        ),
+    )
+
+
+class EmployeeSkill(Base):
+    """员工技能卡；与 Agent 的 skills 表语义不同，不承载技能文件。"""
+
+    __tablename__ = "employee_skills"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(64), nullable=False, unique=True, index=True)
+    title = Column(String(200), nullable=False)
+    department = Column(String(80), nullable=False, default="")
+    owner_uid = Column(String(64), nullable=False, index=True)
+    capture_method = Column(String(32), nullable=False, default="interview")
+    status = Column(String(32), nullable=False, default="draft", index=True)
+    steps = Column(JSON, nullable=False, default=list)
+    rules = Column(JSON, nullable=False, default=list)
+    boundary = Column(Text, nullable=False, default="")
+    acceptance = Column(Text, nullable=False, default="")
+    successor_uid = Column(String(64), nullable=True, index=True)
+    handover_status = Column(String(32), nullable=False, default="unassigned")
+    source_ref = Column(String(512), nullable=True)
+    created_by = Column(String(64), nullable=True)
+    updated_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    __table_args__ = (
+        CheckConstraint(
+            "capture_method IN ('interview', 'recording', 'process', 'review')",
+            name="ck_employee_skills_capture_method",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'needs_review', 'ready', 'archived')",
+            name="ck_employee_skills_status",
+        ),
+        CheckConstraint(
+            "handover_status IN ('unassigned', 'assigned', 'accepted')",
+            name="ck_employee_skills_handover_status",
+        ),
+        Index("ix_employee_skills_owner_status", "owner_uid", "status"),
+        Index("ix_employee_skills_handover_status", "handover_status"),
+    )
+
+
+class WorkItemView(Base):
+    """待办已读记录；只保存用户对投影 item_key 的已读时间。"""
+
+    __tablename__ = "work_item_views"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    uid = Column(String(64), nullable=False, index=True)
+    item_key = Column(String(96), nullable=False)
+    viewed_at = Column(DateTime, nullable=False, default=utc_now_naive)
+
+    __table_args__ = (UniqueConstraint("uid", "item_key", name="uq_work_item_views_uid_item_key"),)
 
 
 class Skill(Base):

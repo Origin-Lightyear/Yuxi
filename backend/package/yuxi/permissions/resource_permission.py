@@ -179,6 +179,16 @@ def resolve_resource_permission(
     if _value(user, "role") == "superadmin":
         return ResourcePermission.MANAGE
 
+    resource_tenant = _value(resource, "tenant_id")
+    if resource_tenant is not None:
+        user_tenant = _value(user, "tenant_id")
+        try:
+            tenant_matches = user_tenant is not None and int(user_tenant) == int(resource_tenant)
+        except (TypeError, ValueError):
+            tenant_matches = False
+        if not tenant_matches:
+            return ResourcePermission.NONE
+
     raw_share_config = _value(resource, "share_config")
     config = normalize_permission_config(
         raw_share_config,

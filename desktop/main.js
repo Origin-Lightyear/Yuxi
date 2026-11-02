@@ -9,9 +9,11 @@
  * 连接失败时弹窗提供地址输入，用户可修改并重试（保存到 userData/config.json）。
  */
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, screen, session, shell, Tray } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { normalizeHttpUrl, resolveUpdateUrl, isAutoUpdateSupported } = require('./update_feed.js');
 const { isAllowedExternalUrl } = require('./url_policy.js');
 const { sanitizeWindowState } = require('./window_state.js');
 
@@ -21,6 +23,9 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 const DEFAULT_URL = 'http://10.69.188.181:5173';
 const CONFIG_FILE = 'config.json';
+// 安装版启动后延迟首查，避免抢启动与健康检查的资源；之后每 6 小时复查
+const UPDATE_CHECK_DELAY_MS = 15000;
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // 顶部给系统按钮（macOS 红绿灯 / Windows 窗口控件）留出的高度，窗口与页面留白共用同一常量
 const TITLEBAR_HEIGHT = 36;
 // 拖动条元素 id：注入脚本按它判重，全屏规则按它隐藏同一条带，改名单点即可
@@ -31,6 +36,12 @@ let backendUrl = null;
 // 退出标志：before-quit 与托盘「退出」共享；close 据此区分「关闭到托盘」与真正退出
 let isQuitting = false;
 let tray = null;
+// 自动更新只在 Windows 安装版启用；manualUpdateCheck 决定失败/无更新时是否打扰用户
+let updateSupported = false;
+let updateChecksStarted = false;
+let updateCheckInFlight = false;
+let manualUpdateCheck = false;
+let updateDownloadedVersion = null;
 
 // ---------------------------------------------------------------------------
 // 服务地址配置（userData/config.json 持久化）
@@ -405,6 +416,167 @@ function warnPageChromeFailure(err) {
 }
 
 // ---------------------------------------------------------------------------
+// 自动更新（Windows x64 安装版；更新包由服务地址所在站点的 /desktop-updates/ 分发）
+// ---------------------------------------------------------------------------
+
+// 更新提示可能来自托盘常驻：先恢复主窗口再弹，避免对话框藏在隐藏窗口后面
+function showAppDialog(options) {
+  const hasWindow = mainWindow && !mainWindow.isDestroyed();
+  if (hasWindow) showMainWindow();
+  const shown = hasWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options);
+  // 窗口在弹窗期间被销毁时返回取消态，避免未处理的 rejection
+  return shown.catch((err) => {
+    console.warn('[yuxi] 更新对话框失败:', err);
+    return { response: -1 };
+  });
+}
+
+// 更新源跟随服务地址，避免切换服务后仍从旧地址取包；YUXI_UPDATE_URL 用于分发地址与网页不同源的部署
+function resolveCurrentUpdateUrl() {
+  const envUrl = process.env.YUXI_UPDATE_URL;
+  if (envUrl && normalizeHttpUrl(envUrl) === null) {
+    console.warn('[yuxi] YUXI_UPDATE_URL 不是有效的 http(s) 地址，已忽略:', envUrl);
+  }
+  return resolveUpdateUrl({ envUrl, backendUrl });
+}
+
+function applyUpdateFeed() {
+  const url = resolveCurrentUpdateUrl();
+  if (!url) {
+    console.warn('[yuxi] 无法确定更新源地址，自动更新暂不启动');
+    return false;
+  }
+  autoUpdater.setFeedURL({ provider: 'generic', url });
+  return true;
+}
+
+// 检查定时器只启动一次；地址修复或切换后只重设 feed，不重复叠加定时器
+function startUpdateChecks() {
+  if (updateChecksStarted) return;
+  updateChecksStarted = true;
+  setTimeout(() => requestUpdateCheck(false), UPDATE_CHECK_DELAY_MS);
+  setInterval(() => requestUpdateCheck(false), UPDATE_CHECK_INTERVAL_MS);
+}
+
+// 初始化、启动连接成功与托盘切换地址共用：feed 可用后才开始定期检查
+function syncUpdateFeed() {
+  if (!updateSupported) return;
+  if (!applyUpdateFeed()) return;
+  startUpdateChecks();
+}
+
+// 检查结果通过 autoUpdater 事件收敛；manualUpdateCheck 只在用户主动检查时弹结果或错误
+function requestUpdateCheck(manual) {
+  // 地址切换与启动补查都会走到这里；非支持平台不能借此绕过能力判定
+  if (!updateSupported) return;
+  if (manual && updateDownloadedVersion) {
+    // 用户选过「稍后」：直接重新给出安装入口，不参与进行中的检查会话
+    showInstallPrompt(updateDownloadedVersion);
+    return;
+  }
+  if (updateCheckInFlight) {
+    // 正在检查：手动点击把当前会话升级为手动，结果照常提示
+    if (manual) manualUpdateCheck = true;
+    return;
+  }
+  // 手动检查触发的下载尚未收敛时，不叠加后台检查，避免后台事件清掉手动标记
+  if (!manual && manualUpdateCheck) return;
+  // 更新源尚未就绪时不要退回打包内的默认地址去检查
+  if (!applyUpdateFeed()) {
+    if (manual) {
+      showAppDialog({
+        type: 'warning',
+        title: '检查更新',
+        message: '更新源地址尚未就绪',
+        detail: '请先连接服务后再试。',
+      });
+    }
+    return;
+  }
+  updateCheckInFlight = true;
+  if (manual) manualUpdateCheck = true;
+  autoUpdater
+    .checkForUpdates()
+    // 失败由 error 事件统一记录与提示，这里只负责释放并发门闩
+    .catch(() => {})
+    .finally(() => {
+      updateCheckInFlight = false;
+    });
+}
+
+// 弹窗失败（窗口被销毁等）不能让下载结果变成未处理的 rejection
+function showInstallPrompt(version) {
+  showAppDialog({
+    type: 'info',
+    title: '发现新版本',
+    message: `大力水手 v${version} 已下载`,
+    detail: '重启后完成安装；选择「稍后」会在下次退出应用时自动安装。',
+    buttons: ['立即重启', '稍后'],
+    defaultId: 0,
+    cancelId: 1,
+  })
+    .then(({ response }) => {
+      if (response !== 0) return;
+      isQuitting = true;
+      autoUpdater.quitAndInstall();
+    })
+    .catch((err) => console.warn('[yuxi] 更新提示失败:', err));
+}
+
+// 同一版本只提示一次，避免下载完成事件重复触发对话框
+function promptInstallUpdate(info) {
+  // 下载终态一律收敛手动标记，包括同版本事件被去重的情况
+  manualUpdateCheck = false;
+  if (updateDownloadedVersion === info.version) return;
+  updateDownloadedVersion = info.version;
+  showInstallPrompt(info.version);
+}
+
+function setupAutoUpdate() {
+  updateSupported = isAutoUpdateSupported({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    arch: process.arch,
+  });
+  if (!updateSupported) {
+    console.log('[yuxi] 当前构建不支持自动更新（仅 Windows x64 安装版）');
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = console;
+
+  autoUpdater.on('update-not-available', () => {
+    if (manualUpdateCheck) {
+      showAppDialog({
+        type: 'info',
+        title: '检查更新',
+        message: `当前已是最新版本（v${app.getVersion()}）`,
+      });
+    }
+    manualUpdateCheck = false;
+  });
+
+  autoUpdater.on('update-downloaded', promptInstallUpdate);
+
+  autoUpdater.on('error', (err) => {
+    console.warn('[yuxi] 自动更新失败:', err);
+    if (manualUpdateCheck) {
+      showAppDialog({
+        type: 'error',
+        title: '检查更新失败',
+        message: '检查更新失败',
+        detail: String(err?.message || err),
+      });
+    }
+    manualUpdateCheck = false;
+  });
+
+  syncUpdateFeed();
+}
+
+// ---------------------------------------------------------------------------
 // 托盘
 // ---------------------------------------------------------------------------
 
@@ -483,6 +655,8 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     backendUrl = resolveBackendUrl();
+    const startupBackendUrl = backendUrl;
+    setupAutoUpdate();
 
     // dev 模式（npm start）下 Electron 自带默认图标，运行时替换为品牌 Logo
     const appIcon = resolveAppIcon();
@@ -503,46 +677,53 @@ if (!gotLock) {
     }
 
     if (tray) {
-      tray.setContextMenu(
-        Menu.buildFromTemplate([
-          { label: '显示主窗口', click: showMainWindow },
-          { type: 'separator' },
-          {
-            label: '切换服务地址',
-            click: async () => {
-              const url = await askUrl(backendUrl);
-              if (!url) return; // 用户取消输入，保持当前地址
-              const ok = await ensureBackend(url);
-              if (ok === null) {
-                isQuitting = true;
-                app.quit();
-                return;
-              }
-              saveConfig({ backendUrl: ok });
-              backendUrl = ok;
-              if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.loadURL(`${ok}/agent`);
-              }
-            },
-          },
-          // 系统登录项为唯一事实源；开发直跑（isPackaged=false）禁用，避免误设系统登录项
-          {
-            label: '开机自启动',
-            type: 'checkbox',
-            checked: app.getLoginItemSettings().openAtLogin,
-            enabled: app.isPackaged,
-            click: (menuItem) => app.setLoginItemSettings({ openAtLogin: menuItem.checked, path: process.execPath }),
-          },
-          { type: 'separator' },
-          {
-            label: '退出',
-            click: () => {
+      const trayMenu = [
+        { label: '显示主窗口', click: showMainWindow },
+        { type: 'separator' },
+        {
+          label: '切换服务地址',
+          click: async () => {
+            const url = await askUrl(backendUrl);
+            if (!url) return; // 用户取消输入，保持当前地址
+            const ok = await ensureBackend(url);
+            if (ok === null) {
               isQuitting = true;
               app.quit();
-            },
+              return;
+            }
+            saveConfig({ backendUrl: ok });
+            backendUrl = ok;
+            // 更新源跟随服务地址，换服务后立即改取新地址下的更新包并补查一次
+            syncUpdateFeed();
+            requestUpdateCheck(false);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.loadURL(`${ok}/agent`);
+            }
           },
-        ])
+        },
+        // 系统登录项为唯一事实源；开发直跑（isPackaged=false）禁用，避免误设系统登录项
+        {
+          label: '开机自启动',
+          type: 'checkbox',
+          checked: app.getLoginItemSettings().openAtLogin,
+          enabled: app.isPackaged,
+          click: (menuItem) => app.setLoginItemSettings({ openAtLogin: menuItem.checked, path: process.execPath }),
+        },
+      ];
+      if (updateSupported) {
+        trayMenu.push({ label: '检查更新', click: () => requestUpdateCheck(true) });
+      }
+      trayMenu.push(
+        { type: 'separator' },
+        {
+          label: '退出',
+          click: () => {
+            isQuitting = true;
+            app.quit();
+          },
+        }
       );
+      tray.setContextMenu(Menu.buildFromTemplate(trayMenu));
       tray.on('click', showMainWindow);
     }
 
@@ -580,6 +761,12 @@ if (!gotLock) {
       return;
     }
     backendUrl = connected;
+
+    // 启动弹窗里改过地址时，更新源跟着切到新地址，并立即补查一次，不等 6 小时定时器
+    if (connected !== startupBackendUrl) {
+      syncUpdateFeed();
+      requestUpdateCheck(false);
+    }
 
     // 连接成功后加载页面（用户可能在弹窗里改过地址）
     if (mainWindow && !mainWindow.isDestroyed()) {

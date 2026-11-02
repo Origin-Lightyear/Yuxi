@@ -9,7 +9,10 @@ from server.routers.auth_dept_router import department
 from server.routers.auth_router import auth
 from server.routers.chat_router import chat
 from server.routers.dashboard_router import dashboard
+from server.routers.digital_employee_router import digital_employee_router
+from server.routers.employee_skill_router import employee_skill_router
 from server.routers.external_kb_router import external_kb
+from server.routers.founder_twin_router import founder_twin_router
 from server.routers.filesystem_router import filesystem_router
 from server.routers.graph_router import graph
 from server.routers.im_bot_router import im_bots, im_gateway
@@ -17,6 +20,7 @@ from server.routers.knowledge_dashboard_router import knowledge_dashboard
 from server.routers.knowledge_eval_router import evaluation
 from server.routers.knowledge_router import knowledge
 from server.routers.mcp_router import mcp
+from server.routers.meeting_router import meeting_router
 from server.routers.mention_router import mention_router
 from server.routers.model_provider_router import model_providers
 from server.routers.project_router import projects
@@ -24,9 +28,11 @@ from server.routers.scheduled_agent_router import scheduled_agents
 from server.routers.skill_router import skills, user_skills
 from server.routers.system_router import system
 from server.routers.system_task_router import tasks
+from server.routers.tenant_agent_router import tenant_digital_employee_router, tenant_founder_twin_router
 from server.routers.tenant_knowledge_router import tenant_knowledge
 from server.routers.tool_router import tools
 from server.routers.user_router import user_router
+from server.routers.workbench_router import workbench_router
 from server.routers.workspace_router import workspace, workspace_knowledge
 
 router = APIRouter()
@@ -36,6 +42,11 @@ router.include_router(system)  # /api/system/* 系统状态与全局配置
 router.include_router(auth)  # /api/auth/* 登录、用户信息与 CLI 浏览器登录授权
 router.include_router(agent_memory_router)  # /api/agent/{slug}/memories 用户×Agent 记忆条目
 router.include_router(agent_router)  # /api/agent/* 智能体管理与运行态
+router.include_router(digital_employee_router)  # /api/digital-employees/* 数字员工配置与生命周期
+router.include_router(founder_twin_router)  # /api/founder-twins/* 老板分身、经验与转交
+router.include_router(meeting_router)  # /api/meetings/* 分身会议与数字员工会议
+router.include_router(employee_skill_router)  # /api/employee-skills/* 员工技能卡与交接
+router.include_router(workbench_router)  # /api/workbench/* 统一待办收件箱
 router.include_router(agent_invocation_call_router)  # /api/agent-invocation/agent-call/*
 router.include_router(agent_invocation_channel_router)  # /api/agent-invocation/channel/*
 router.include_router(agent_invocation_eval_router)  # /api/agent-invocation/eval/*
@@ -63,6 +74,8 @@ router.include_router(knowledge_dashboard)  # /api/dashboard/stats/knowledge 知
 router.include_router(external_kb)  # /api/knowledge/databases/external* CLI 与外部 Agent 调用
 router.include_router(knowledge)  # /api/knowledge/* 知识库管理与检索
 router.include_router(tenant_knowledge)  # /api/tenant/knowledge/* 租户知识库管理（Tenant 服务调用）
+router.include_router(tenant_digital_employee_router)  # /api/tenant/digital-employees/* 租户数字员工管理
+router.include_router(tenant_founder_twin_router)  # /api/tenant/founder-twins/* 租户老板分身管理
 router.include_router(evaluation)  # /api/evaluation/* 知识库评估
 router.include_router(graph)  # /api/graph/* 图谱查询与管理
 router.include_router(workspace_knowledge)  # /api/workspace/knowledge/* 工作区知识文件只读视图
