@@ -294,6 +294,73 @@ Content-Type: application/json
 
 本组 API 只管理老板分身本身。经验条目、咨询记录和转交单继续在 Yuxi 的老板分身页面维护，租户平台不直接读写这些数据。
 
+#### 经验录入入口
+
+在 Yuxi 打开：
+
+```text
+/founder-twin
+```
+
+选择目标老板分身，进入「经验库」页签，点击「新建经验」。需要填写：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `title` | 是 | 经验标题 |
+| `situation` | 否 | 适用场景 |
+| `judgment` | 是 | 老板的判断或做法 |
+| `boundary` | 否 | 适用边界、何时不适用 |
+| `source_type` | 否 | 来源类型，默认 `manual` |
+| `source_ref` | 否 | 来源文件或链接 |
+| `source_excerpt` | 否 | 来源摘录 |
+
+保存后是 `draft` 草稿；点击「确认」生成检索向量并变为 `confirmed`。只有 `confirmed` 经验会被分身检索和引用。确认时 embedding 不可用会失败并保留草稿。
+
+#### 管理权限
+
+经验录入使用 Yuxi 登录用户权限，不使用本页的 `X-Tenant-Admin-Key`。操作人必须对目标分身有管理权限：分身创建者是操作人，或 `share_config.manage_scope` 命中操作人。
+
+租户平台创建分身时如果 `manage_scope=null`，普通租户员工在 Yuxi 只能看到已确认经验，不能新建或确认。需要先在本组 API 的创建/更新请求中设置 `manage_scope`，或在租户平台编辑分身的「管理范围」。本地 `superadmin` 不受此限制。
+
+#### 自动化接口
+
+需要在 Yuxi 侧使用具有管理权限的 JWT：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/founder-twins/{slug}/entries` | 列出经验 |
+| `POST` | `/api/founder-twins/{slug}/entries` | 新建经验草稿 |
+| `PUT` | `/api/founder-twins/{slug}/entries/{entry_id}` | 编辑经验；已确认条目编辑后退回草稿 |
+| `POST` | `/api/founder-twins/{slug}/entries/{entry_id}/confirm` | 确认经验并生成 embedding |
+| `POST` | `/api/founder-twins/{slug}/entries/{entry_id}/invalidate` | 标记经验失效 |
+
+示例：
+
+```http
+POST /api/founder-twins/agent-2049501acaf3/entries
+Authorization: Bearer <yuxi-jwt>
+Content-Type: application/json
+
+{
+  "title": "大客户报价前先确认预算",
+  "situation": "客户询价但预算不明确",
+  "judgment": "先确认预算区间，再进入正式报价",
+  "boundary": "标准产品小额订单可直接报价",
+  "source_type": "manual",
+  "source_ref": null,
+  "source_excerpt": null
+}
+```
+
+随后调用确认接口：
+
+```http
+POST /api/founder-twins/agent-2049501acaf3/entries/{entry_id}/confirm
+Authorization: Bearer <yuxi-jwt>
+```
+
+本组租户管理 API 不提供经验录入、确认、咨询或转交接口。
+
 ### 删除限制
 
 老板分身存在以下任一引用时拒绝删除并返回 `409`：
