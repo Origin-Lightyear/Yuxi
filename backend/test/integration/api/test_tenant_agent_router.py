@@ -120,13 +120,22 @@ async def test_tenant_digital_employee_lifecycle_and_isolation(test_client, tena
         created = await test_client.post(
             "/api/tenant/digital-employees",
             headers=tenant_api,
-            json={"name": "租户数字员工", "slug": slug, "tenant_id": 999, "profile": _valid_profile()},
+            json={
+                "name": "租户数字员工",
+                "slug": slug,
+                "tenant_id": 999,
+                "profile": _valid_profile(),
+                "system_prompt": "你是租户数字员工，先确认数据口径。",
+                "config_json": {"context": {"model": "pytest:model"}},
+            },
         )
         assert created.status_code == 201, created.text
         employee = created.json()["employee"]
         assert employee["tenant_id"] == 100
         assert employee["slug"] == slug
         assert employee["digital_employee_profile"]["status"] == "draft"
+        assert employee["config_json"]["context"]["system_prompt"] == "你是租户数字员工，先确认数据口径。"
+        assert employee["config_json"]["context"]["model"] == "pytest:model"
 
         listed = await test_client.get("/api/tenant/digital-employees", headers=tenant_api)
         assert listed.status_code == 200, listed.text
@@ -155,11 +164,17 @@ async def test_tenant_digital_employee_lifecycle_and_isolation(test_client, tena
         updated = await test_client.put(
             f"/api/tenant/digital-employees/{slug}",
             headers=tenant_api,
-            json={"name": "更新后的数字员工", "tenant_id": 999},
+            json={
+                "name": "更新后的数字员工",
+                "tenant_id": 999,
+                "system_prompt": "更新后的行为 Prompt。",
+            },
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["employee"]["name"] == "更新后的数字员工"
         assert updated.json()["employee"]["tenant_id"] == 100
+        assert updated.json()["employee"]["config_json"]["context"]["system_prompt"] == "更新后的行为 Prompt。"
+        assert updated.json()["employee"]["config_json"]["context"]["model"] == "pytest:model"
 
         published = await test_client.post(f"/api/tenant/digital-employees/{slug}/publish", headers=tenant_api)
         assert published.status_code == 200, published.text

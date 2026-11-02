@@ -227,6 +227,18 @@ def _prepare_profile_for_new_employee(profile: dict | None) -> dict:
     return normalized
 
 
+def _merge_system_prompt(config_json: dict | None, system_prompt: str | None) -> dict:
+    """把顶层 system_prompt 写入运行配置；显式字段优先于 config_json 内的同名值。"""
+    if system_prompt is None:
+        return config_json or {}
+    merged = dict(config_json) if isinstance(config_json, dict) else {}
+    context = merged.get("context")
+    context = dict(context) if isinstance(context, dict) else {}
+    context["system_prompt"] = system_prompt
+    merged["context"] = context
+    return merged
+
+
 async def create_digital_employee(
     *,
     user: User,
@@ -238,6 +250,7 @@ async def create_digital_employee(
     icon: str | None = None,
     profile: dict | None = None,
     config_json: dict | None = None,
+    system_prompt: str | None = None,
     share_config: dict | None = None,
     tenant_id: int | None = None,
 ) -> Agent:
@@ -253,7 +266,7 @@ async def create_digital_employee(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     resolved_config, resource_access = await prepare_agent_config_write(
-        config_json or {},
+        _merge_system_prompt(config_json, system_prompt),
         context_schema=backend.context_schema,
         db=db,
         user=user,
@@ -288,10 +301,15 @@ async def update_digital_employee(
     changes: dict,
 ) -> Agent:
     """更新员工档案和通用配置；active 员工更新后仍必须满足发布条件。"""
-    allowed = {"name", "description", "icon", "profile", "config_json", "share_config"}
+    allowed = {"name", "description", "icon", "profile", "config_json", "system_prompt", "share_config"}
     unknown = set(changes) - allowed
     if unknown:
         raise ValueError(f"不支持的字段：{', '.join(sorted(unknown))}")
+
+    if "system_prompt" in changes:
+        system_prompt = changes.pop("system_prompt")
+        if system_prompt is not None:
+            changes["config_json"] = _merge_system_prompt(changes.get("config_json"), system_prompt)
 
     locked = await _get_locked_employee(db=db, slug=agent.slug)
     if not user_can_manage_agent(user, locked):
