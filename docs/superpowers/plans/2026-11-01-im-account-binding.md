@@ -19,6 +19,9 @@
 - 绑定查询与身份回落必须显式：未绑定且开关打开时返回 `409`，不静默使用归属人身份。
 - 每个新增 guard 配一个负向测试（恢复缺陷即变红）。
 - 提交前在仓库根目录执行：`python3 scripts/verify_engineering_contracts.py`、`python3 -m unittest scripts.test_verify_engineering_contracts`、`docker compose exec api uv run --group test pytest test/unit -m "not slow"`；网关改动额外跑 `cd packages/yuxi-im-gateway && uv run --group test pytest tests -q`；前端跑 `cd web && pnpm lint:check && pnpm test:unit`。
+- 集成测试一律在 api 容器里跑，但本 worktree 的镜像里 `uv run` 会因 site-packages 权限失败，改用 `docker compose exec -T api python -m pytest test/integration/... -q`；ruff 用宿主机 `uv run --with ruff ruff check --line-length 120 --select F,E,W,UP <files>`。
+- 原「```docker compose exec api uv run --group test pytest```」命令在本槽位不可用，同理替换为 `docker compose exec -T api python -m pytest test/unit -m "not slow"`。，真实 PostgreSQL 通过 `os.environ["POSTGRES_URL"]` 自建 engine，按 `test_agent_run_lease.py` 的做法建表、用 `uuid4` 造唯一数据并在 `finally` 里删除，不依赖缺失的 `db_session` fixture。
+- 仓库没有 `backend/test/.env.test`（只有 `.example`）；HTTP 集成测试需要它提供 `TEST_USERNAME`/`TEST_PASSWORD`。本地按本 worktree 的 `.env` 生成该文件（git 忽略，不提交），缺失时相关用例会 skip，不能算通过。
 
 ## Review Focus
 
@@ -45,22 +48,43 @@
 
 ```python
 # backend/test/integration/storage/test_im_binding_schema.py
-from sqlalchemy import select
+import os
+import uuid
+
+import pytest
+import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.storage.postgres.models_business import IMAccountBinding, IMBotConfig
 
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
-async def test_binding_unique_constraints(db_session):
-    db_session.add_all([
-        IMAccountBinding(user_id=1, platform="dingtalk", platform_user_id="u1", bot_id=None),
-        IMAccountBinding(user_id=2, platform="dingtalk", platform_user_id="u1", bot_id=None),
-    ])
-    with pytest.raises(IntegrityError):
-        await db_session.commit()
+
+@pytest_asyncio.fixture()
+async def binding_engine():
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    async with engine.begin() as connection:
+        await connection.execute(text(
+            "ALTER TABLE IF EXISTS im_bot_configs ADD COLUMN IF NOT EXISTS require_binding BOOLEAN NOT NULL DEFAULT false"
+        ))
+        await connection.run_sync(IMAccountBinding.__table__.create, checkfirst=True)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+async def test_binding_unique_constraints(binding_engine):
+    uid = uuid.uuid4().hex[:8]
+    async with binding_engine() as session:
+        session.add(IMAccountBinding(user_id=1, platform="dingtalk", platform_user_id=f"u-{uid}"))
+        session.add(IMAccountBinding(user_id=2, platform="dingtalk", platform_user_id=f"u-{uid}"))
+        with pytest.raises(IntegrityError):
+            await session.flush()
+        await session.rollback()
 ```
 
-再补一条断言同一用户同平台第二条绑定同样 `IntegrityError`，以及 `IMBotConfig.require_binding` 默认 `False`。
+再补两条：同一用户同平台第二条绑定同样 `IntegrityError`；`IMBotConfig.require_binding` 的 `default.arg` 为 `False`（纯 metadata 断言，无需连库）。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -90,7 +114,7 @@ git commit -m "feat(im-binding): 新增 IM 账号绑定与绑定会话数据模�
 
 **Files:**
 - Create: `backend/package/yuxi/services/im_binding_service.py`
-- Test: `backend/test/unit/services/test_im_binding_service.py`
+- Test: `backend/test/unit/services/test_im_binding_service.py`（纯逻辑）、`backend/test/integration/services/test_im_binding_service.py`（真实 PostgreSQL）
 
 **Interfaces:**
 - Produces:
@@ -102,9 +126,11 @@ git commit -m "feat(im-binding): 新增 IM 账号绑定与绑定会话数据模�
   - `async def resolve_channel_identity(db, *, transport_user: User, account_id: str, sender_id: str | None) -> ChannelIdentity`（未绑定且 `require_binding` 时抛 `HTTPException(409, detail={"code": "im_account_not_bound", ...})`；`account_id` 不归属 `transport_user` 时抛 403）
   - 内部：`_build_authorize_url(platform, credentials, redirect_uri, state) -> str`、`_exchange_code(platform, credentials, code, redirect_uri) -> tuple[str, str | None]`（返回 `(platform_user_id, union_id)`）、`_dingtalk_userid(credentials, union_id) -> str`
 
-- [ ] **Step 1: 写失败测试**（`backend/test/unit/services/test_im_binding_service.py`）
+- [ ] **Step 1: 写失败测试**
 
-覆盖五个用例，全部用内存 SQLite/现有 `db_session` fixture 与 monkeypatch 的平台函数：
+`backend/test/unit/services/test_im_binding_service.py`（不连库，只测纯函数）：`_build_authorize_url("dingtalk", credentials, redirect_uri, state)` 含 `client_id=`、`state=`、`scope=openid`；`_build_authorize_url("feishu", ...)` 指向 `open-apis/authen/v1/index`；`_hash_state("abc")` 稳定且不等于明文。
+
+`backend/test/integration/services/test_im_binding_service.py`（真实 PostgreSQL，按 Task 1 的 engine fixture 建表，monkeypatch 平台换取函数）覆盖五个用例：
 1. `test_create_binding_session_rejects_ambiguous_platform`：两个启用钉钉机器人时抛 `ValueError("同一平台只能有一个启用的机器人")`。
 2. `test_complete_binding_consumes_state_once`：第一次成功写入绑定；同一 state 第二次调用抛 `HTTPException(400, detail={"code": "invalid_binding_state", ...})`。
 3. `test_complete_binding_rejects_identity_owned_by_other_user`：已有他人绑定时抛 `HTTPException(409, detail={"code": "im_account_already_bound", ...})`。
@@ -113,7 +139,7 @@ git commit -m "feat(im-binding): 新增 IM 账号绑定与绑定会话数据模�
 
 - [ ] **Step 2: 运行确认失败**
 
-`docker compose exec api uv run --group test pytest test/unit/services/test_im_binding_service.py -q` → `ModuleNotFoundError`。
+`docker compose exec api uv run --group test pytest test/unit/services/test_im_binding_service.py test/integration/services/test_im_binding_service.py -q` → `ModuleNotFoundError`。
 
 - [ ] **Step 3: 实现服务**
 
@@ -126,7 +152,7 @@ git commit -m "feat(im-binding): 新增 IM 账号绑定与绑定会话数据模�
 - [ ] **Step 5: 提交**
 
 ```bash
-git add backend/package/yuxi/services/im_binding_service.py backend/test/unit/services/test_im_binding_service.py
+git add backend/package/yuxi/services/im_binding_service.py backend/test/unit/services/test_im_binding_service.py backend/test/integration/services/test_im_binding_service.py
 git commit -m "feat(im-binding): 实现绑定会话与平台授权换绑"
 ```
 
@@ -141,6 +167,10 @@ git commit -m "feat(im-binding): 实现绑定会话与平台授权换绑"
 
 **Interfaces:**
 - Produces: `GET /api/user/im-bindings`、`POST /api/user/im-bindings/{platform}/sessions`、`DELETE /api/user/im-bindings/{platform}`、`GET /api/im-bindings/callback/{platform}`（公开，成功/失败都返回一页最小 HTML 结果页，供手机端扫码后直接看，不新增前端路由）。
+
+- [ ] **Step 0: 准备本地集成测试凭据**
+
+`cp backend/test/.env.test.example backend/test/.env.test`，把 `TEST_USERNAME`/`TEST_PASSWORD` 填成本 worktree `.env` 里的超级管理员账号（git 忽略，不提交）。
 
 - [ ] **Step 1: 写失败测试（真实 HTTP）**
 
