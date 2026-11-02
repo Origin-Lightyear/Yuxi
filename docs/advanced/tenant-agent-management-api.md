@@ -292,17 +292,19 @@ Content-Type: application/json
 
 ### 经验、咨询与转交
 
-本组 API 只管理老板分身本身。经验条目、咨询记录和转交单继续在 Yuxi 的老板分身页面维护，租户平台不直接读写这些数据。
+本组 API 提供老板分身经验条目的录入、编辑、确认和失效。咨询记录和转交单仍在 Yuxi 内处理，不通过租户 API 暴露。
 
-#### 经验录入入口
+#### 经验接口
 
-在 Yuxi 打开：
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/tenant/founder-twins/{slug}/entries` | 列出经验，支持 `status=draft/confirmed/invalid` |
+| `POST` | `/api/tenant/founder-twins/{slug}/entries` | 新建经验草稿，返回 `201` |
+| `PUT` | `/api/tenant/founder-twins/{slug}/entries/{entry_id}` | 编辑经验；已确认条目编辑后退回草稿 |
+| `POST` | `/api/tenant/founder-twins/{slug}/entries/{entry_id}/confirm` | 确认经验并生成检索向量 |
+| `POST` | `/api/tenant/founder-twins/{slug}/entries/{entry_id}/invalidate` | 标记经验失效 |
 
-```text
-/founder-twin
-```
-
-选择目标老板分身，进入「经验库」页签，点击「新建经验」。需要填写：
+#### 经验字段
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
@@ -313,32 +315,14 @@ Content-Type: application/json
 | `source_type` | 否 | 来源类型，默认 `manual` |
 | `source_ref` | 否 | 来源文件或链接 |
 | `source_excerpt` | 否 | 来源摘录 |
+| `code` | 否 | 分身内唯一编码；不传自动生成 |
 
-保存后是 `draft` 草稿；点击「确认」生成检索向量并变为 `confirmed`。只有 `confirmed` 经验会被分身检索和引用。确认时 embedding 不可用会失败并保留草稿。
-
-#### 管理权限
-
-经验录入使用 Yuxi 登录用户权限，不使用本页的 `X-Tenant-Admin-Key`。操作人必须对目标分身有管理权限：分身创建者是操作人，或 `share_config.manage_scope` 命中操作人。
-
-租户平台创建分身时如果 `manage_scope=null`，普通租户员工在 Yuxi 只能看到已确认经验，不能新建或确认。需要先在本组 API 的创建/更新请求中设置 `manage_scope`，或在租户平台编辑分身的「管理范围」。本地 `superadmin` 不受此限制。
-
-#### 自动化接口
-
-需要在 Yuxi 侧使用具有管理权限的 JWT：
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/api/founder-twins/{slug}/entries` | 列出经验 |
-| `POST` | `/api/founder-twins/{slug}/entries` | 新建经验草稿 |
-| `PUT` | `/api/founder-twins/{slug}/entries/{entry_id}` | 编辑经验；已确认条目编辑后退回草稿 |
-| `POST` | `/api/founder-twins/{slug}/entries/{entry_id}/confirm` | 确认经验并生成 embedding |
-| `POST` | `/api/founder-twins/{slug}/entries/{entry_id}/invalidate` | 标记经验失效 |
-
-示例：
+#### 创建经验
 
 ```http
-POST /api/founder-twins/agent-2049501acaf3/entries
-Authorization: Bearer <yuxi-jwt>
+POST /api/tenant/founder-twins/agent-2049501acaf3/entries
+X-Tenant-Admin-Key: <key>
+X-Tenant-Id: 100
 Content-Type: application/json
 
 {
@@ -346,20 +330,30 @@ Content-Type: application/json
   "situation": "客户询价但预算不明确",
   "judgment": "先确认预算区间，再进入正式报价",
   "boundary": "标准产品小额订单可直接报价",
-  "source_type": "manual",
-  "source_ref": null,
-  "source_excerpt": null
+  "source_type": "manual"
 }
 ```
 
-随后调用确认接口：
+创建后是 `draft`，不会被分身检索或引用。
+
+#### 确认经验
 
 ```http
-POST /api/founder-twins/agent-2049501acaf3/entries/{entry_id}/confirm
-Authorization: Bearer <yuxi-jwt>
+POST /api/tenant/founder-twins/agent-2049501acaf3/entries/{entry_id}/confirm
+X-Tenant-Admin-Key: <key>
+X-Tenant-Id: 100
 ```
 
-本组租户管理 API 不提供经验录入、确认、咨询或转交接口。
+确认会生成 embedding 并变为 `confirmed`。只有 `confirmed` 经验会被分身检索和引用；embedding 不可用时返回 `503`，经验保留草稿状态。
+
+#### 语义
+
+- 编辑已确认经验会清空旧 embedding 并退回 `draft`，需要重新确认。
+- 失效经验不能编辑，也不能被检索；需要重新录入。
+- 同一分身内 `code` 重复返回 `409`。
+- 跨租户或跨分身访问条目统一 `404`。
+- 通过本组 API 管理经验使用租户管理 Key，不受 Yuxi 用户 `share_config.manage_scope` 限制。
+- 通过 Yuxi `/founder-twin` 页面维护经验时，操作人仍需要分身管理权限；租户创建分身时可通过 `manage_scope` 指定负责人。
 
 ### 删除限制
 
@@ -382,6 +376,9 @@ Authorization: Bearer <yuxi-jwt>
 | 发布条件不满足 | `422` | `发布前请填写：岗位、职责...` |
 | 删除仍有引用 | `409` | `数字员工仍被对话、定时任务、IM Bot 或会议引用` |
 | 创建时 slug 已被占用 | `409` | `slug 已被占用` |
+| 经验编码重复 | `409` | `经验编码已存在` |
+| 编辑已失效经验 | `422` | `已失效经验不能编辑，请新建条目` |
+| 确认时 embedding 不可用 | `503` | `embedding 未就绪，经验未确认：...` |
 | 删除非草稿数字员工 | `409` | `只有草稿数字员工可以删除` |
 | `share_config` 越界或格式错误 | `422` | 具体校验错误 |
 

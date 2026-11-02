@@ -25,6 +25,7 @@ from yuxi.services.founder_twin_service import (
     get_twin_stats,
     get_visible_twin,
     invalidate_experience,
+    serialize_experience_entry,
     update_experience_entry,
     update_founder_twin,
 )
@@ -104,24 +105,7 @@ def _twin_payload(agent: Agent, *, user: User, stats: dict[str, int]) -> dict:
 
 def _entry_payload(entry: ExperienceEntry) -> dict:
     """序列化经验条目，隐藏 embedding 与内部模型信息。"""
-    return {
-        "id": entry.id,
-        "twin_slug": entry.twin_slug,
-        "code": entry.code,
-        "title": entry.title,
-        "situation": entry.situation,
-        "judgment": entry.judgment,
-        "boundary": entry.boundary,
-        "source_type": entry.source_type,
-        "source_ref": entry.source_ref,
-        "source_excerpt": entry.source_excerpt,
-        "status": entry.status,
-        "citation_count": entry.citation_count,
-        "confirmed_by": entry.confirmed_by,
-        "confirmed_at": format_utc_datetime(entry.confirmed_at),
-        "created_at": format_utc_datetime(entry.created_at),
-        "updated_at": format_utc_datetime(entry.updated_at),
-    }
+    return serialize_experience_entry(entry)
 
 
 def _consultation_payload(

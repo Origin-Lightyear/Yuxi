@@ -27,7 +27,7 @@ from yuxi.storage.postgres.models_business import (
     HandoffRequest,
     User,
 )
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 EXPERIENCE_STATUS_DRAFT = "draft"
 EXPERIENCE_STATUS_CONFIRMED = "confirmed"
@@ -67,6 +67,28 @@ def experience_embedding_text(entry: ExperienceEntry) -> str:
         entry.source_excerpt,
     )
     return "\n\n".join(str(part).strip() for part in parts if part and str(part).strip())
+
+
+def serialize_experience_entry(entry: ExperienceEntry) -> dict:
+    """序列化经验条目，隐藏 embedding 与内部模型信息。"""
+    return {
+        "id": entry.id,
+        "twin_slug": entry.twin_slug,
+        "code": entry.code,
+        "title": entry.title,
+        "situation": entry.situation,
+        "judgment": entry.judgment,
+        "boundary": entry.boundary,
+        "source_type": entry.source_type,
+        "source_ref": entry.source_ref,
+        "source_excerpt": entry.source_excerpt,
+        "status": entry.status,
+        "citation_count": entry.citation_count,
+        "confirmed_by": entry.confirmed_by,
+        "confirmed_at": format_utc_datetime(entry.confirmed_at),
+        "created_at": format_utc_datetime(entry.created_at),
+        "updated_at": format_utc_datetime(entry.updated_at),
+    }
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:

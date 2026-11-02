@@ -10,7 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.routers.digital_employee_router import DigitalEmployeeCreate, DigitalEmployeeUpdate
-from server.routers.founder_twin_router import FounderTwinCreate, FounderTwinUpdate
+from server.routers.founder_twin_router import (
+    ExperienceEntryCreate,
+    ExperienceEntryUpdate,
+    FounderTwinCreate,
+    FounderTwinUpdate,
+)
 from server.utils.auth_middleware import get_db
 from server.utils.tenant_admin import TenantAdminContext, require_tenant_admin
 from yuxi.agents.digital_employee import (
@@ -23,6 +28,7 @@ from yuxi.agents.digital_employee import (
 from yuxi.knowledge.runtime import knowledge_base
 from yuxi.permissions import normalize_permission_config
 from yuxi.repositories.agent_repository import AgentRepository
+from yuxi.repositories.founder_twin_repository import FounderTwinRepository
 from yuxi.services.digital_employee_service import (
     create_digital_employee,
     delete_digital_employee,
@@ -32,10 +38,19 @@ from yuxi.services.digital_employee_service import (
     update_digital_employee,
 )
 from yuxi.services.founder_twin_service import (
+    EXPERIENCE_STATUSES,
+    ExperienceCodeConflict,
+    ExperienceStateConflict,
+    ExperienceValidationError,
+    confirm_experience,
+    create_experience_entry,
     create_founder_twin,
     delete_founder_twin,
     get_tenant_twin,
     get_twin_stats,
+    invalidate_experience,
+    serialize_experience_entry,
+    update_experience_entry,
     update_founder_twin,
 )
 from yuxi.storage.postgres.models_business import Agent, User
@@ -81,6 +96,19 @@ def _tenant_twin_payload(agent: Agent, *, stats: dict[str, int]) -> dict:
         "can_manage": True,
         "stats": stats,
     }
+
+
+async def _tenant_entry(
+    db: AsyncSession,
+    *,
+    twin: Agent,
+    entry_id: int,
+):
+    """读取属于目标分身的经验条目；跨分身统一 404。"""
+    entry = await FounderTwinRepository(db).get_entry(entry_id)
+    if entry is None or entry.twin_slug != twin.slug:
+        raise HTTPException(status_code=404, detail="经验条目不存在")
+    return entry
 
 
 async def _tenant_employee(db: AsyncSession, *, slug: str, tenant_id: int) -> Agent:
@@ -409,3 +437,116 @@ async def delete_tenant_twin(
     agent = await get_tenant_twin(db, slug=slug, tenant_id=ctx.tenant_id)
     await delete_founder_twin(db, agent=agent)
     return {"success": True}
+
+
+@tenant_founder_twin_router.get("/{slug}/entries")
+async def list_tenant_twin_entries(
+    slug: str,
+    status: str | None = Query(None),
+    ctx: TenantAdminContext = Depends(require_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出本租户老板分身的经验条目。"""
+    twin = await get_tenant_twin(db, slug=slug, tenant_id=ctx.tenant_id)
+    if status is not None and status not in EXPERIENCE_STATUSES:
+        raise HTTPException(status_code=422, detail="status 只支持 draft、confirmed 或 invalid")
+    entries = await FounderTwinRepository(db).list_entries(twin.slug, status=status)
+    return {"entries": [serialize_experience_entry(entry) for entry in entries], "total": len(entries)}
+
+
+@tenant_founder_twin_router.post("/{slug}/entries", status_code=201)
+async def create_tenant_twin_entry(
+    slug: str,
+    payload: ExperienceEntryCreate,
+    ctx: TenantAdminContext = Depends(require_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """为老板分身创建经验草稿。"""
+    twin = await get_tenant_twin(db, slug=slug, tenant_id=ctx.tenant_id)
+    try:
+        entry = await create_experience_entry(
+            db,
+            twin_slug=twin.slug,
+            data=payload.model_dump(),
+            actor_uid=_tenant_actor(ctx).uid,
+        )
+        await db.commit()
+        await db.refresh(entry)
+    except ExperienceCodeConflict as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"entry": serialize_experience_entry(entry)}
+
+
+@tenant_founder_twin_router.put("/{slug}/entries/{entry_id}")
+async def update_tenant_twin_entry(
+    slug: str,
+    entry_id: int,
+    payload: ExperienceEntryUpdate,
+    ctx: TenantAdminContext = Depends(require_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新老板分身经验；已确认条目编辑后退回草稿。"""
+    twin = await get_tenant_twin(db, slug=slug, tenant_id=ctx.tenant_id)
+    entry = await _tenant_entry(db, twin=twin, entry_id=entry_id)
+    try:
+        entry = await update_experience_entry(
+            db,
+            entry,
+            data=payload.model_dump(exclude_unset=True),
+            actor_uid=_tenant_actor(ctx).uid,
+        )
+        await db.commit()
+        await db.refresh(entry)
+    except ExperienceCodeConflict as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"entry": serialize_experience_entry(entry)}
+
+
+@tenant_founder_twin_router.post("/{slug}/entries/{entry_id}/confirm")
+async def confirm_tenant_twin_entry(
+    slug: str,
+    entry_id: int,
+    ctx: TenantAdminContext = Depends(require_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """确认老板分身经验并生成检索向量。"""
+    twin = await get_tenant_twin(db, slug=slug, tenant_id=ctx.tenant_id)
+    entry = await _tenant_entry(db, twin=twin, entry_id=entry_id)
+    try:
+        entry = await confirm_experience(db, entry, actor_uid=_tenant_actor(ctx).uid)
+        await db.commit()
+        await db.refresh(entry)
+    except (ExperienceStateConflict, ExperienceValidationError) as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail=f"embedding 未就绪，经验未确认：{exc}",
+        ) from exc
+    return {"entry": serialize_experience_entry(entry)}
+
+
+@tenant_founder_twin_router.post("/{slug}/entries/{entry_id}/invalidate")
+async def invalidate_tenant_twin_entry(
+    slug: str,
+    entry_id: int,
+    ctx: TenantAdminContext = Depends(require_tenant_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """标记老板分身经验失效。"""
+    twin = await get_tenant_twin(db, slug=slug, tenant_id=ctx.tenant_id)
+    entry = await _tenant_entry(db, twin=twin, entry_id=entry_id)
+    entry = await invalidate_experience(db, entry, actor_uid=_tenant_actor(ctx).uid)
+    await db.commit()
+    await db.refresh(entry)
+    return {"entry": serialize_experience_entry(entry)}

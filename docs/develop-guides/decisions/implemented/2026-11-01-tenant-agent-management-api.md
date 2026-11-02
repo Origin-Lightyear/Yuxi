@@ -26,6 +26,7 @@ Owner：backend/server/routers/tenant_agent_router.py
 
 - `/api/tenant/digital-employees`：列表、详情、创建、更新、发布、停用、删除。
 - `/api/tenant/founder-twins`：列表、详情、创建、更新、删除。
+- `/api/tenant/founder-twins/{slug}/entries`：经验列表、创建、更新、确认和失效；咨询与转交仍不暴露。
 
 创建返回 `201`，其余成功返回现有资源结构。跨租户访问统一 `404`，不暴露资源存在性。删除数字员工沿用草稿和引用检查；删除老板分身在存在经验、咨询、转交、会议或 Agent 引用时返回 `409`。
 
@@ -39,7 +40,7 @@ Owner：backend/server/routers/tenant_agent_router.py
 
 ### 非目标
 
-- 不通过租户 API 管理老板分身的经验、咨询或转交；这些继续在 Yuxi 内维护。
+- 不通过租户 API 管理老板分身的咨询记录或转交单；经验条目已通过 `/entries` 提供生命周期接口。
 - 不新增前端页面，不改变员工侧数字员工、老板分身的现有交互。
 - 不把租户 API 暴露给普通 JWT 用户。
 
@@ -88,6 +89,7 @@ Owner：backend/server/routers/tenant_agent_router.py
 | 数字员工删除守卫包含会议引用 | 删除已被会议使用的员工破坏历史 | `backend/package/yuxi/repositories/agent_repository.py` | 同上租户 API 测试中的 `test_tenant_digital_employee_delete_guard_includes_meetings` | 插入会议参与记录后删除返回 409 | Passed |
 | 数字员工与老板分身都支持顶层 `system_prompt` | 接入方需要记两套 Prompt 字段 | `backend/package/yuxi/services/digital_employee_service.py` | `pytest test/integration/api/test_tenant_agent_router.py`：8 passed | 创建和更新写入 `config_json.context.system_prompt`，只更新 Prompt 时其他 context 字段保留 | Passed |
 | 知识库名称展示且 ID 冗余 | 租户平台直接展示 kb_id，或发送名称被运行配置拒绝 | `backend/server/routers/tenant_agent_router.py` | 同上测试中的 `test_tenant_agent_knowledge_names_are_displayed_and_ids_stored` | 请求/响应返回名称，数据库配置断言保存 kb_id | Passed |
+| 租户 API 可录入老板经验 | 租户平台无法维护经验，或跨分身读写 | `backend/server/routers/tenant_agent_router.py` | `pytest test/integration/api/test_tenant_agent_router.py`：9 passed | 创建、列表、更新、失效经验；跨租户读取 404 | Passed |
 | 现有数字员工、老板分身和 Agent 路径无回归 | 租户字段改变现有管理或员工读取行为 | `backend/package/yuxi/services/founder_twin_service.py` | `pytest test/integration/api/test_tenant_agent_router.py`：8 passed；`pytest test/integration/api/test_founder_twin_api.py`：2 passed；`pytest test/integration/api/test_digital_employee_api.py`：9 passed | 原有用例覆盖草稿隐藏、发布、经验管理与转交 | Passed |
 | 知识库权限无回归 | 通用租户检查误伤知识库读取 | `backend/package/yuxi/permissions/resource_permission.py` | `pytest test/integration/api/test_tenant_knowledge_router.py test/integration/api/test_knowledge_router_employee.py test/integration/api/test_agent_config_resource_authorization.py`：40 passed, 5 skipped | 租户知识库与员工知识库用例 | Passed |
 | 全量后端 unit 无回归 | 新增租户列或权限判断破坏既有行为 | 全仓库 | `pytest test/unit -m "not slow"`：2725 passed, 58 skipped | 无 | Passed |

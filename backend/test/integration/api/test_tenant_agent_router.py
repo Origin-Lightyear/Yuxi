@@ -325,6 +325,61 @@ async def test_tenant_agent_knowledge_names_are_displayed_and_ids_stored(test_cl
             await test_client.delete(f"/api/tenant/knowledge/databases/{kb_id}", headers=tenant_api)
 
 
+async def test_tenant_founder_twin_experience_lifecycle(test_client, tenant_api):
+    slug = f"pytest-tenant-twin-exp-{uuid.uuid4().hex[:8]}"
+    try:
+        created_twin = await test_client.post(
+            "/api/tenant/founder-twins",
+            headers=tenant_api,
+            json={"name": "经验测试分身", "slug": slug, "system_prompt": "按已确认经验回答。"},
+        )
+        assert created_twin.status_code == 201, created_twin.text
+
+        created_entry = await test_client.post(
+            f"/api/tenant/founder-twins/{slug}/entries",
+            headers=tenant_api,
+            json={
+                "title": "报价前确认预算",
+                "situation": "客户询价但预算不明确",
+                "judgment": "先确认预算区间，再进入正式报价",
+                "boundary": "标准产品小额订单可直接报价",
+                "source_type": "manual",
+            },
+        )
+        assert created_entry.status_code == 201, created_entry.text
+        entry = created_entry.json()["entry"]
+        entry_id = entry["id"]
+        assert entry["status"] == "draft"
+        assert entry["twin_slug"] == slug
+
+        listed = await test_client.get(f"/api/tenant/founder-twins/{slug}/entries", headers=tenant_api)
+        assert listed.status_code == 200, listed.text
+        assert entry_id in {item["id"] for item in listed.json()["entries"]}
+
+        updated = await test_client.put(
+            f"/api/tenant/founder-twins/{slug}/entries/{entry_id}",
+            headers=tenant_api,
+            json={"judgment": "先确认预算区间和决策链，再进入正式报价"},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["entry"]["judgment"] == "先确认预算区间和决策链，再进入正式报价"
+
+        invalidated = await test_client.post(
+            f"/api/tenant/founder-twins/{slug}/entries/{entry_id}/invalidate",
+            headers=tenant_api,
+        )
+        assert invalidated.status_code == 200, invalidated.text
+        assert invalidated.json()["entry"]["status"] == "invalid"
+
+        other_headers = {**tenant_api, "X-Tenant-Id": "999"}
+        assert (
+            await test_client.get(f"/api/tenant/founder-twins/{slug}/entries", headers=other_headers)
+        ).status_code == 404
+    finally:
+        await _db("DELETE FROM experience_entries WHERE twin_slug = :slug", {"slug": slug})
+        await _db("DELETE FROM agents WHERE slug = :slug", {"slug": slug})
+
+
 async def test_tenant_founder_twin_lifecycle_and_delete_guard(test_client, tenant_api):
     slug = f"pytest-tenant-twin-{uuid.uuid4().hex[:10]}"
     try:
