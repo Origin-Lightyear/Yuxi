@@ -34,6 +34,7 @@ class IMBotPayload(BaseModel):
     credentials: dict | None = None
     allowed_users: list[str] | None = None
     require_mention: bool | None = None
+    require_binding: bool | None = None
     group_sessions_per_user: bool | None = None
 
 

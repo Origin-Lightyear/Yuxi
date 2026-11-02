@@ -30,6 +30,15 @@
           </div>
           <div
             class="sider-item"
+            :class="{ activesec: activeTab === 'imAccounts' }"
+            @click="activeTab = 'imAccounts'"
+            v-if="userStore.isLoggedIn"
+          >
+            <IdCard class="icon" :size="18" />
+            <span>IM 账号</span>
+          </div>
+          <div
+            class="sider-item"
             :class="{ activesec: activeTab === 'apiKeys' }"
             @click="activeTab = 'apiKeys'"
             v-if="false"
@@ -139,6 +148,14 @@
         </div>
         <div
           class="nav-item"
+          :class="{ active: activeTab === 'imAccounts' }"
+          @click="activeTab = 'imAccounts'"
+          v-if="userStore.isLoggedIn"
+        >
+          IM 账号
+        </div>
+        <div
+          class="nav-item"
           :class="{ active: activeTab === 'apiKeys' }"
           @click="activeTab = 'apiKeys'"
           v-if="false"
@@ -205,6 +222,13 @@
             <AccountSettingsComponent />
           </div>
 
+          <div
+            v-show="activeTab === 'imAccounts'"
+            v-if="userStore.isLoggedIn && loadedTabs.has('imAccounts')"
+          >
+            <ImAccountBindingComponent />
+          </div>
+
           <div v-if="false">
             <ApiKeyManagementComponent />
           </div>
@@ -248,6 +272,7 @@ import {
   CircleUser,
   Bot,
   ExternalLink,
+  IdCard,
   Settings,
   Key,
   ScanText,
@@ -276,6 +301,9 @@ const DepartmentManagementComponent = createAsyncPanel(
 )
 const ImBotManagementComponent = createAsyncPanel(
   () => import('@/components/ImBotManagementComponent.vue')
+)
+const ImAccountBindingComponent = createAsyncPanel(
+  () => import('@/components/ImAccountBindingComponent.vue')
 )
 
 const props = defineProps({
@@ -306,7 +334,7 @@ const visible = computed({
 
 const availableTabs = computed(() => {
   const tabs = []
-  if (userStore.isLoggedIn) tabs.push('account')
+  if (userStore.isLoggedIn) tabs.push('account', 'imAccounts')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('apiKeys')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('agentEnv')
   if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user', 'imBots')

@@ -26,6 +26,7 @@ export function buildImBotPayload(form) {
     enabled: form.enabled,
     allowed_users: parseAllowedUsers(form.allowedUsersText),
     require_mention: form.requireMention,
+    require_binding: form.requireBinding,
     group_sessions_per_user: form.groupSessionsPerUser
   }
   if (form.credentials) payload.credentials = { ...form.credentials }
@@ -46,6 +47,7 @@ export function formFromImBot(bot) {
     enabled: bot.enabled !== false,
     allowedUsersText: (bot.allowed_users || []).join(', '),
     requireMention: bot.require_mention !== false,
+    requireBinding: bot.require_binding === true,
     groupSessionsPerUser: bot.group_sessions_per_user !== false,
     credentials: null
   }

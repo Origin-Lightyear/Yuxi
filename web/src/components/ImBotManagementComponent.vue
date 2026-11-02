@@ -209,6 +209,10 @@
         <a-form-item label="群聊内按用户独立会话" class="form-item">
           <a-switch v-model:checked="state.form.groupSessionsPerUser" />
         </a-form-item>
+
+        <a-form-item label="要求绑定后才能使用" class="form-item">
+          <a-switch v-model:checked="state.form.requireBinding" />
+        </a-form-item>
       </a-form>
     </a-modal>
   </div>

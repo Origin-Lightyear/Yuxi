@@ -37,6 +37,7 @@
     "pdfjs-dist": "^6.2.108",
     "pinia": "^4.0.3",
     "pinia-plugin-persistedstate": "^4.7.1",
+    "qrcode": "^1.5.4",
     "shiki": "^4.4.3",
     "vue": "^3.5.41",
     "vue-router": "^5.2.0"
