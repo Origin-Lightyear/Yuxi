@@ -160,7 +160,6 @@ async def create_tenant_employee(
             icon=payload.icon,
             profile=payload.profile.model_dump(exclude_unset=True),
             config_json=payload.config_json,
-            system_prompt=payload.system_prompt,
             share_config=payload.share_config,
             tenant_id=ctx.tenant_id,
         )

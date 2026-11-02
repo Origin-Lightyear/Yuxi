@@ -45,7 +45,6 @@ class DigitalEmployeeCreate(BaseModel):
     icon: str | None = None
     profile: DigitalEmployeeProfile = Field(default_factory=DigitalEmployeeProfile)
     config_json: dict | None = None
-    system_prompt: str | None = None
     share_config: dict | None = None
 
 
@@ -57,7 +56,6 @@ class DigitalEmployeeUpdate(BaseModel):
     icon: str | None = None
     profile: DigitalEmployeeProfile | None = None
     config_json: dict | None = None
-    system_prompt: str | None = None
     share_config: dict | None = None
 
 
@@ -125,7 +123,6 @@ async def create_employee(
             icon=payload.icon,
             profile=payload.profile.model_dump(exclude_unset=True),
             config_json=payload.config_json,
-            system_prompt=payload.system_prompt,
             share_config=payload.share_config,
         )
     except ValueError as exc:

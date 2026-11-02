@@ -125,8 +125,12 @@ async def test_tenant_digital_employee_lifecycle_and_isolation(test_client, tena
                 "slug": slug,
                 "tenant_id": 999,
                 "profile": _valid_profile(),
-                "system_prompt": "你是租户数字员工，先确认数据口径。",
-                "config_json": {"context": {"model": "pytest:model"}},
+                "config_json": {
+                    "context": {
+                        "system_prompt": "你是租户数字员工，先确认数据口径。",
+                        "model": "pytest:model",
+                    }
+                },
             },
         )
         assert created.status_code == 201, created.text
@@ -167,7 +171,7 @@ async def test_tenant_digital_employee_lifecycle_and_isolation(test_client, tena
             json={
                 "name": "更新后的数字员工",
                 "tenant_id": 999,
-                "system_prompt": "更新后的行为 Prompt。",
+                "config_json": {"context": {"system_prompt": "更新后的行为 Prompt。"}},
             },
         )
         assert updated.status_code == 200, updated.text

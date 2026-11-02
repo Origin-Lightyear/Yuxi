@@ -66,7 +66,6 @@
 | `profile.boundaries` | 是 | 工作边界 | 发布前必填，最长 2000 字符；会议参与者上下文会使用 |
 | `profile.acceptance` | 是 | 验收标准 | 发布前必填，最长 2000 字符；会议参与者上下文会使用 |
 | `profile.status` | 否 | `draft` / `active` / `disabled` | 由创建、发布、停用接口维护 |
-| `system_prompt` | 是 | 数字员工行为 Prompt 的便捷字段 | 服务端写入 `config_json.context.system_prompt`；与老板分身字段一致，显式传入时优先于 `config_json` 内的同名值。响应不返回顶层字段，回读看 `config_json.context.system_prompt` |
 | `config_json` | 是 | 运行时配置 | 见下方“运行配置字段” |
 | `share_config` | 是 | 员工可见/可管理权限 | 只控制权限，不控制员工知识或 Prompt |
 | `tenant_id` | 否 | 租户归属 | 由 `X-Tenant-Id` 注入；请求体传入会被忽略 |
@@ -104,21 +103,7 @@
 }
 ```
 
-也可以把 `system_prompt` 放在顶层；服务端会写入 `config_json.context.system_prompt`。两者同时提交时，顶层 `system_prompt` 优先：
-
-```json
-{
-  "system_prompt": "你是经营分析官。先确认数据口径，再输出结论。",
-  "config_json": {
-    "context": {
-      "knowledges": ["kb_xxx"],
-      "tools": "all"
-    }
-  }
-}
-```
-
-如果只写 `description`，模型行为不会改变；需要模型遵循的角色、规则、输出格式，必须写 `system_prompt` 或 `config_json.context.system_prompt`。
+如果只写 `description`，模型行为不会改变；需要模型遵循的角色、规则、输出格式，必须写 `config_json.context.system_prompt`。
 
 ### 老板分身字段
 
@@ -176,7 +161,11 @@ Content-Type: application/json
   "slug": "operations-analyst",
   "backend_id": "ChatbotAgent",
   "description": "输出经营分析",
-  "system_prompt": "你是经营分析官。先确认数据口径，再输出结论。",
+  "config_json": {
+    "context": {
+      "system_prompt": "你是经营分析官。先确认数据口径，再输出结论。"
+    }
+  },
   "profile": {
     "position": "经营分析官",
     "department": "经营管理",
@@ -222,7 +211,7 @@ Content-Type: application/json
 
 ### 更新请求
 
-`PUT` 只更新提交的字段。支持 `name`、`description`、`icon`、`profile`、`config_json`、`system_prompt`、`share_config`；不支持修改 `slug`、`kind`、`tenant_id`。发布后的员工更新档案时仍必须满足发布条件。只提交 `system_prompt` 时，其他 `config_json.context` 字段保持不变。
+`PUT` 只更新提交的字段。支持 `name`、`description`、`icon`、`profile`、`config_json`、`share_config`；不支持修改 `slug`、`kind`、`tenant_id`。发布后的员工更新档案时仍必须满足发布条件。只提交 `config_json.context.system_prompt` 时，其他 `config_json.context` 字段保持不变。
 
 ### 删除限制
 
