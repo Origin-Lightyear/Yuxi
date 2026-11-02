@@ -236,3 +236,58 @@ async def test_state_command_returns_identity_source(binding_engine, monkeypatch
     assert result["command"] == "state"
     assert result["identity_source"] == "binding"
     assert captured["state_uid"] == bound.uid
+
+
+async def test_state_command_without_sender_falls_back_to_owner(binding_engine, monkeypatch):
+    """无 sender 的 /state 命令走归属人回退，响应 identity_source=owner_fallback。"""
+    uid = uuid.uuid4().hex[:10]
+    owner_uid = f"owner-{uid}"
+    captured: dict[str, str] = {}
+
+    async def fake_state(**kwargs):
+        captured["state_uid"] = kwargs["current_user"].uid
+        return {"agent_state": {"todos": []}}
+
+    monkeypatch.setattr(channel_router, "get_agent_state_view", fake_state)
+
+    try:
+        async with binding_engine() as session:
+            owner = await _create_user(session, owner_uid)
+            bot = await _create_bot(session, platform="feishu", owner_uid=owner.uid, require_binding=False)
+
+            result = await channel_router.receive_channel_message(
+                _payload(str(bot.id), None, text="/state"),
+                current_user=owner,
+                db=session,
+            )
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [owner_uid])
+
+    assert result["command"] == "state"
+    assert result["identity_source"] == "owner_fallback"
+    assert captured["state_uid"] == owner.uid
+
+
+async def test_reject_without_pending_approval_returns_conflict(binding_engine):
+    """无待审批运行时的 /reject 返回 409 no_pending_approval，身份先解析成功。"""
+    uid = uuid.uuid4().hex[:10]
+    owner_uid = f"owner-{uid}"
+
+    try:
+        async with binding_engine() as session:
+            owner = await _create_user(session, owner_uid)
+            bot = await _create_bot(session, platform="feishu", owner_uid=owner.uid, require_binding=False)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await channel_router.receive_channel_message(
+                    _payload(str(bot.id), None, text="/reject"),
+                    current_user=owner,
+                    db=session,
+                )
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [owner_uid])
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "no_pending_approval"

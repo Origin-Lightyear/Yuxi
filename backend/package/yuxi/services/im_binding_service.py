@@ -307,8 +307,9 @@ async def resolve_channel_identity(
 ) -> ChannelIdentity:
     """按 account_id 机器人归属与 sender_id 绑定解析真实执行身份。
 
-    ``account_id`` 不归属 ``transport_user`` 时抛 403；未绑定且 ``require_binding``
-    打开时抛 409 ``im_account_not_bound``，关闭时回退到机器人归属人并标记 owner_fallback。
+    ``account_id`` 不归属 ``transport_user`` 时抛 403；机器人停用时抛 403
+    ``im_bot_disabled``；未绑定且 ``require_binding`` 打开时抛 409
+    ``im_account_not_bound``，关闭时回退到机器人归属人并标记 owner_fallback。
     """
     try:
         bot_id = int(account_id)
@@ -319,6 +320,11 @@ async def resolve_channel_identity(
         raise HTTPException(
             status_code=403,
             detail={"code": "im_bot_not_owned", "message": "机器人不归属当前调用方"},
+        )
+    if not bot.enabled:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "im_bot_disabled", "message": "机器人已停用"},
         )
 
     binding = None

@@ -407,3 +407,24 @@ async def test_resolve_channel_identity_falls_back_to_owner_when_not_required(bi
     finally:
         async with binding_engine() as session:
             await _cleanup(session, [user_uid])
+
+
+async def test_resolve_channel_identity_rejects_disabled_bot(binding_engine):
+    """停用机器人即使归属正确也必须拒绝，不能回退到归属人身份。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            transport_user = await _create_user(session, user_uid)
+            disabled_bot = await _create_bot(
+                session, platform="dingtalk", owner_uid=transport_user.uid, enabled=False
+            )
+            with pytest.raises(HTTPException) as exc_info:
+                await resolve_channel_identity(
+                    session, transport_user=transport_user, account_id=str(disabled_bot.id), sender_id="sender-1"
+                )
+            assert exc_info.value.status_code == 403
+            assert exc_info.value.detail["code"] == "im_bot_disabled"
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
