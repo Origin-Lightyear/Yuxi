@@ -22,11 +22,14 @@ from yuxi.storage.postgres.models_business import IMAccountBinding, IMBotConfig,
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
+# 与 e2e_helpers.postgres_dsn 相同的回退，避免有凭据但缺该环境变量的 CI 抛 KeyError。
+_DEFAULT_POSTGRES_URL = "postgresql+asyncpg://postgres:postgres@postgres:5432/yuxi"
+
 
 @pytest_asyncio.fixture()
 async def im_db():
     """自建真实 PostgreSQL 会话工厂，测试结束后释放连接池。"""
-    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    engine = create_async_engine(os.environ.get("POSTGRES_URL", _DEFAULT_POSTGRES_URL), pool_pre_ping=True)
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
 
@@ -70,6 +73,26 @@ def _channel_payload(*, account_id: str, chat_id: str, sender_id: str, agent_slu
     }
 
 
+async def _require_globally_visible_agent(agent_slug: str) -> None:
+    """确认目标智能体对新用户全局可见，否则跳过。
+
+    ``submit_agent_request`` 用 ``get_visible_by_slug(..., user=current_user)`` 解析，
+    绑定用户是新创建的普通用户；若默认智能体非全局共享，绑定用户会 404，用例应在
+    提交前明确跳过而不是静默失败。
+    """
+    conn = await asyncpg.connect(postgres_dsn())
+    try:
+        access_level = await conn.fetchval(
+            "SELECT share_config -> 'read_scope' ->> 'access_level' FROM agents WHERE slug = $1",
+            agent_slug,
+        )
+    finally:
+        await conn.close()
+    if access_level != "global":
+        reason = f"E2E 需要全局可见的智能体，但 {agent_slug} 的 read_scope.access_level={access_level!r}"
+        pytest.skip(reason)
+
+
 async def _assert_run_belongs_to(conn: asyncpg.Connection, run_id: str, thread_id: str, uid: str) -> None:
     """回读数据库，确认 Run 与会话都归属指定 uid，线程为 channel_* 派生。"""
     run = await conn.fetchrow("SELECT uid, conversation_thread_id FROM agent_runs WHERE id = $1", run_id)
@@ -88,6 +111,9 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
     """已绑定 sender 各自落库到本人线程，未绑定身份在强绑开关下被拦。"""
     owner_uid = e2e_agent_context["uid"]
     agent_slug = e2e_agent_context["agent_slug"]
+
+    # 绑定用户是新建的普通用户，智能体必须全局可见才能解析成功。
+    await _require_globally_visible_agent(agent_slug)
 
     run_token = uuid.uuid4().hex[:10]
     bound_a_uid = f"e2e-bound-a-{run_token}"
@@ -170,6 +196,16 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
         )
         assert resp_reject.status_code == 409, resp_reject.text
         assert resp_reject.json()["detail"]["code"] == "im_account_not_bound", resp_reject.text
+
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            rejected_run_count = await conn.fetchval(
+                "SELECT count(*) FROM agent_runs WHERE origin_metadata ->> 'account_id' = $1",
+                str(enforce_bot_id),
+            )
+        finally:
+            await conn.close()
+        assert rejected_run_count == 0, f"require_binding 拦截后仍产生了 Run：{rejected_run_count}"
     finally:
         if thread_ids:
             await delete_test_conversation_rows(thread_ids)

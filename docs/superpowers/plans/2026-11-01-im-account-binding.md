@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI + SQLAlchemy(async) + PostgreSQL、httpx、Vue 3 + Ant Design Vue、`qrcode`（前端渲染二维码）、pytest / vitest。
 
-**Spec:** `docs/develop-guides/decisions/proposed/2026-11-01-im-account-binding.md`
+**Spec:** `docs/develop-guides/decisions/implemented/2026-11-01-im-account-binding.md`
 
 ## Global Constraints
 
