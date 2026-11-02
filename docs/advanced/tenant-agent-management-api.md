@@ -294,6 +294,11 @@ Content-Type: application/json
 
 本组 API 提供老板分身经验条目的录入、编辑、确认和失效。咨询记录和转交单仍在 Yuxi 内处理，不通过租户 API 暴露。
 
+路径说明：
+
+- Yuxi 租户管理 API：`/api/tenant/founder-twins/{slug}/entries`
+- 租户平台前端当前使用 `/api/tenant/agents/founder-twins` 代理前缀；平台后端需要把 `/entries` 子路径转发到上面的 Yuxi 路径。前端接入前先确认代理已覆盖经验子路径。
+
 #### 经验接口
 
 | 方法 | 路径 | 说明 |
@@ -346,6 +351,42 @@ X-Tenant-Id: 100
 
 确认会生成 embedding 并变为 `confirmed`。只有 `confirmed` 经验会被分身检索和引用；embedding 不可用时返回 `503`，经验保留草稿状态。
 
+创建/确认成功返回同形结构：
+
+```json
+{
+  "entry": {
+    "id": 12,
+    "twin_slug": "agent-2049501acaf3",
+    "code": "exp-20261103",
+    "title": "大客户报价前先确认预算",
+    "situation": "客户询价但预算不明确",
+    "judgment": "先确认预算区间，再进入正式报价",
+    "boundary": "标准产品小额订单可直接报价",
+    "source_type": "manual",
+    "source_ref": null,
+    "source_excerpt": null,
+    "status": "draft",
+    "citation_count": 0,
+    "confirmed_by": null,
+    "confirmed_at": null,
+    "created_at": "2026-11-03T10:00:00",
+    "updated_at": "2026-11-03T10:00:00"
+  }
+}
+```
+
+列表响应：
+
+```json
+{
+  "entries": [],
+  "total": 0
+}
+```
+
+确认成功后 `status` 变为 `confirmed`，`confirmed_by` 为租户操作人标识，`confirmed_at` 为确认时间。列表支持 `status` 过滤；不传时返回全部状态。
+
 #### 语义
 
 - 编辑已确认经验会清空旧 embedding 并退回 `draft`，需要重新确认。
@@ -354,6 +395,7 @@ X-Tenant-Id: 100
 - 跨租户或跨分身访问条目统一 `404`。
 - 通过本组 API 管理经验使用租户管理 Key，不受 Yuxi 用户 `share_config.manage_scope` 限制。
 - 通过 Yuxi `/founder-twin` 页面维护经验时，操作人仍需要分身管理权限；租户创建分身时可通过 `manage_scope` 指定负责人。
+- 当前租户平台页面只展示分身生命周期；经验管理 UI 需要平台前端接入以上接口。
 
 ### 删除限制
 
