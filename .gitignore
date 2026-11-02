@@ -80,6 +80,10 @@ docs/vibe
 
 /models
 
+# 桌面客户端更新产物（由 desktop/scripts/publish-update.js 生成，不入库）
+web/public/desktop-updates/*
+!web/public/desktop-updates/.gitkeep
+
 .taskr/
 .workbuddy/
 web/src/utils/__tests__/

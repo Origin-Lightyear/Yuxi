@@ -21,6 +21,9 @@ backend/package/.venv/
 # 忽略 node_modules 文件夹（前端项目）
 web/node_modules/
 
+# 桌面客户端更新包由宿主机目录挂载进生产容器，不进入镜像构建上下文
+web/public/desktop-updates/
+
 # 忽略 Docker 运行时数据卷
 docker/volumes/
 

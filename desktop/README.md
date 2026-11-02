@@ -54,14 +54,42 @@ npm run dist:mac
 当前未签名（无 Apple 开发者证书），分发时 macOS Gatekeeper 会提示"无法验证开发者"，
 需右键→打开 或 系统设置→隐私与安全性 放行；正式分发需配置 Apple 证书签名。
 
+## 自动更新（仅 Windows x64 安装版）
+
+安装版启动 15 秒后检查一次更新，之后每 6 小时复查；托盘菜单提供「检查更新」。新版本在后台下载，完成后弹窗询问「立即重启 / 稍后」；选「稍后」会在下次退出应用时安装。
+
+更新源是服务地址所在站点的根路径 `/desktop-updates/`（如 `http://10.69.188.181:5173/desktop-updates/`；服务地址自带的子路径不参与），切换服务地址后自动跟随并立即补查一次。更新包与网页分开托管时，用 `YUXI_UPDATE_URL` 覆盖：
+
+```bash
+YUXI_UPDATE_URL=https://cdn.example.com/desktop-updates npm start
+```
+
+发布新版本：
+
+```bash
+cd desktop
+# 1. 修改 package.json 的 version（必须与待发布安装包一致）
+npm run dist:win                # 固定产出 x64；生成 dist/latest.yml、安装包和 .blockmap
+npm run publish:win             # 校验 sha512 后原子复制到 web/public/desktop-updates/
+```
+
+发布脚本只接受 `-x64.exe`，要求 `latest.yml` 的 `files` 带 `sha512`，并拒绝覆盖目标目录中同名但内容不同的安装包（同版本重发必须先提升版本号）：Windows 的 `latest.yml` 只有一份，x64 与 arm64 不能共用同一更新源。需要 ARM 安装包时手工执行 `npx electron-builder --win nsis --arm64`，但 ARM 安装版不启用自动更新，也不要把 ARM 包发布到自动更新目录。
+
+`web/public/desktop-updates/` 由开发版 Vite 直接提供；生产版 `docker-compose.prod.yml` 把同一目录挂进 nginx，发布新包不需要重建网页镜像。产物不入库，脚本也不会清理历史版本；长期发布需人工删除目录中旧版本的安装包和 `.blockmap`（保留当前版本即可，旧 `.blockmap` 缺失只会让客户端整包下载）。开发版 Vite 对不存在的更新文件会回落到首页，更新检查失败只写日志；生产版 nginx 明确返回 404。
+
+限制：Windows 安装包未签名，更新可用但系统可能提示未知发布者；macOS 构建未签名，`electron-updater` 无法完成安装；ARM 安装版没有对应的更新源。自动更新只在 Windows x64 安装版启用。
+
 ## 目录结构
 
 ```
 desktop/
-├── main.js                # 主进程（健康检查 /api/system/health + 窗口 + 地址弹窗）
+├── main.js                # 主进程（健康检查 /api/system/health + 窗口 + 地址弹窗 + 自动更新）
 ├── preload.js             # 地址输入窗口的 IPC 桥
+├── update_feed.js         # 更新源地址解析与平台判定（纯函数）
 ├── url_policy.js          # openExternal 协议白名单（纯函数）
 ├── window_state.js        # 窗口位置/大小校验（纯函数）
+├── scripts/
+│   └── publish-update.js  # 把 Windows 更新产物复制到网页静态目录
 ├── test/                  # 纯函数单测（node --test）
 ├── package.json           # 依赖与脚本
 └── electron-builder.yml   # macOS/Windows 打包配置
