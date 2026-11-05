@@ -37,6 +37,7 @@ from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentR
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services import agent_data_sync
 from yuxi.services.digital_employee_service import ensure_digital_employee_can_start
+from yuxi.services.im_binding_service import can_read_channel_run_as_bot_owner
 from yuxi.services.input_message_service import (
     AgentRunInputMessage,
     build_resume_input_message,
@@ -895,9 +896,20 @@ async def cancel_agent_run_view(*, run_id: str, current_uid: str, db: AsyncSessi
 
 
 async def _load_stream_run_for_user(run_id: str, current_uid: str):
-    """读取当前用户可见的 Run，供 SSE 建连鉴权。"""
+    """读取当前用户可见的 Run，供 SSE 建连鉴权。
+
+    先按 Run 归属校验；不归属时，若调用方是提交该 Channel Run 的机器人归属人，
+    也允许读取。
+    """
     async with pg_manager.get_async_session_context() as db:
-        return await AgentRunRepository(db).get_run_for_user(run_id, str(current_uid))
+        repo = AgentRunRepository(db)
+        run = await repo.get_run_for_user(run_id, str(current_uid))
+        if run is not None:
+            return run
+        run = await repo.get_run(run_id)
+        if run is not None and await can_read_channel_run_as_bot_owner(db, run=run, caller_uid=current_uid):
+            return run
+        return None
 
 
 async def _load_stream_run(run_id: str):

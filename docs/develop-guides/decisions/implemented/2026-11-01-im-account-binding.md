@@ -26,7 +26,9 @@ IM 机器人用「机器人归属人」的 API Key 执行所有消息：同一�
 2. `GET /api/im-bindings/callback/{platform}?code=&state=`（公开路由，靠 state 鉴权）：校验 state 未过期未使用 → 换 user access token → 取平台身份（飞书 `open_id`；钉钉 `unionId` 经 `topapi/v2/user/getbyunionid` 换成消息侧 `userid`）→ 写绑定，返回一页最小 HTML 结果页。
 3. `GET /api/user/im-bindings` 列出本人绑定；`DELETE /api/user/im-bindings/{platform}` 解绑。
 
-**消息链路**：`backend/server/routers/agent_invocation_channel_router.py` 保留「API Key = 机器人归属人」的传输身份，校验调用方确实是该 `account_id` 机器人（`bot.owner_uid == current_user.uid` 否则 403，机器人停用返回 403 `im_bot_disabled`），随后 `resolve_channel_identity` 按 `(bot.platform, sender_id)` 查绑定得到真实用户，以该用户身份提交 Run（线程、权限、模型配置、附件全按该用户走），并在成功响应返回 `identity_source`。同一解析对 `/resume` 与 slash command 生效，避免两个入口身份不一致。未绑定时按机器人 `require_binding` 分流：打开返回 `409 im_account_not_bound`，网关（`packages/yuxi-im-gateway`）回一条「请先在 Yuxi 个人设置里绑定飞书/钉钉账号」；关闭（过渡期）仍以机器人归属人身份执行，响应带 `identity_source=owner_fallback`，网关在正文后附一行未绑定提示。
+**消息链路**：`backend/server/routers/agent_invocation_channel_router.py` 保留「API Key = 机器人归属人」的传输身份，仅当 `channel` 属于 IM 平台（`feishu` / `dingtalk`）时校验调用方确实是该 `account_id` 机器人（`bot.owner_uid == current_user.uid` 否则 403，机器人停用返回 403 `im_bot_disabled`），随后 `resolve_channel_identity` 按 `(bot.platform, sender_id)` 查绑定得到真实用户，以该用户身份提交 Run（线程、权限、模型配置、附件全按该用户走），并在成功响应返回 `identity_source`。同一解析对 `/resume` 与 slash command 生效，避免两个入口身份不一致；非 IM 渠道（如 `yuxi-cli`）保持原有透传身份与响应结构，不进入绑定解析。未绑定时按机器人 `require_binding` 分流：打开返回 `409 im_account_not_bound`，网关（`packages/yuxi-im-gateway`）回一条「请先在 Yuxi 个人设置里绑定飞书/钉钉账号」；关闭（过渡期）仍以机器人归属人身份执行，响应带 `identity_source=owner_fallback`，网关在正文后附一行未绑定提示。
+
+绑定后 Run 的 `uid` 是绑定用户，而网关仍只持有机器人归属人的 API Key。运行事件流与线程产物下载在原有「Run / 线程属于调用方」校验之外增加一条 Channel 读权限：Run 来源为 `channel`，其 `origin_metadata.account_id` 解析到仍启用且归属调用方的机器人时允许读取；非 Channel Run、机器人缺失、停用或归属他人一律不解锁。该规则集中实现在 `im_binding_service.can_read_channel_run_as_bot_owner` 与 `can_read_channel_thread_as_bot_owner`，分别供 `agent_run_service` 事件流与 `artifact_service` 产物下载复用。
 
 Owner 分工：`im_binding_service.py` 拥有绑定会话、平台身份换取与绑定/身份解析；`agent_invocation_channel_router.py` 拥有消息入口的身份解析接入与传输身份校验；`ImAccountBindingComponent.vue` 拥有个人设置页入口与二维码交互；`packages/yuxi-im-gateway/src/yuxi_im_gateway/runner.py` 拥有 `owner_fallback` 与 `im_account_not_bound` 的提示文案。
 
@@ -44,12 +46,16 @@ Owner 分工：`im_binding_service.py` 拥有绑定会话、平台身份换取�
 - 钉钉 `unionId → userid` 依赖通讯录权限，换取失败即整次绑定失败并回明确提示，不做降级匹配。
 - 回调地址取自创建会话时的请求 `base_url`，要求该域名手机侧可达且已在平台后台登记。
 - `allowed_users` 白名单继续作为入口门禁，与绑定相互独立。
+- Channel Run 的读权限跟随机器人启停：机器人停用后，归属人不再能通过该规则读取其历史 Channel Run 事件与产物。
 
 ## 验证
 
 本槽位真实执行的命令与结果：
 
-- `docker compose exec -T api python -m pytest test/unit -m "not slow" -q` → **2677 passed, 58 skipped**。
+- `docker compose exec -T api python -m pytest test/unit -m "not slow" -q` → **2680 passed, 58 skipped**。
+- `docker compose exec -T api python -m pytest test/unit/routers/test_agent_invocation_channel_router.py test/unit/services/test_artifact_service.py -q` → **34 passed**（含非 IM 渠道不解析绑定、产物回退到 Channel Run 归属人与拒绝无归属两条负向用例）。
+- `docker compose exec -T api python -m pytest test/integration/services/test_channel_run_read_access.py -q` → **2 passed**（真实 PostgreSQL：绑定用户的 Channel Run 由机器人归属人可读、无关用户不可读、普通 Chat Run 不解锁、停用机器人不解锁）。
+- 负向验证：临时移除 `channel in PLATFORMS` 门槛 → `test_cli_channel_skips_im_binding_resolution` 变红；临时让 `can_read_channel_run_as_bot_owner` 恒为 `False` → `test_channel_run_is_readable_by_bot_owner_and_thread_artifact_resolves` 变红，恢复后均通过。
 - `docker compose exec -T api python -m pytest test/unit/services/test_im_binding_service.py -q` → **3 passed**。
 - `docker compose exec -T api python -m pytest test/integration/services/test_im_binding_service.py test/integration/storage/test_im_binding_schema.py test/integration/api/test_im_binding_router.py test/integration/api/test_channel_identity_binding.py -q` → **23 passed, 2 skipped**（真实 PostgreSQL，含绑定命中、归属人回退、强绑拦截、机器人归属与停用校验、唯一约束与 state 状态机）。
 - `cd packages/yuxi-im-gateway && uv run --group test pytest tests -q` → **66 passed**。

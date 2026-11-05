@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.repositories.im_bot_repository import get_im_bot, list_im_bots
 from yuxi.services.im_bot_service import PLATFORMS, decrypt_credentials
-from yuxi.storage.postgres.models_business import IMAccountBinding, IMBindingSession, User
+from yuxi.storage.postgres.models_business import AgentRun, IMAccountBinding, IMBindingSession, User
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 # 飞书 / 钉钉授权与换取身份端点（与各平台开放文档一致）。
@@ -349,3 +349,38 @@ async def resolve_channel_identity(
             detail={"code": "im_account_not_bound", "message": "请先在 Yuxi 个人设置里绑定飞书/钉钉账号"},
         )
     return ChannelIdentity(user=transport_user, owner_fallback=True)
+
+
+async def can_read_channel_run_as_bot_owner(db: AsyncSession, *, run: AgentRun | None, caller_uid: str) -> bool:
+    """判断调用方是否因拥有提交该 Channel Run 的机器人而可读取它。
+
+    只对 ``source == "channel"`` 的 Run 生效；来源元数据 ``account_id`` 必须
+    解析到仍启用且归属调用方的机器人，否则一律拒绝。
+    """
+    if run is None or run.source != "channel":
+        return False
+    account_id = (run.origin_metadata or {}).get("account_id")
+    try:
+        bot_id = int(account_id)
+    except (TypeError, ValueError):
+        return False
+    bot = await get_im_bot(db, bot_id)
+    return bot is not None and bool(bot.enabled) and bot.owner_uid == str(caller_uid)
+
+
+async def can_read_channel_thread_as_bot_owner(db: AsyncSession, *, thread_id: str, caller_uid: str) -> bool:
+    """判断调用方是否拥有为该线程提交过 Channel Run 的机器人。
+
+    产物下载只有线程 ID，没有 Run ID，因此按线程内任一 Channel Run 的机器人
+    归属判定；线程本身仍由后续 Workdir 归属校验约束。
+    """
+    result = await db.execute(
+        select(AgentRun).where(
+            AgentRun.conversation_thread_id == thread_id,
+            AgentRun.source == "channel",
+        )
+    )
+    for run in result.scalars().all():
+        if await can_read_channel_run_as_bot_owner(db, run=run, caller_uid=caller_uid):
+            return True
+    return False

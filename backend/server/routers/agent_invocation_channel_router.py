@@ -17,6 +17,7 @@ from yuxi.services.agent_run_service import create_resume_run_view
 from yuxi.services.channel_command_service import parse_slash_command
 from yuxi.services.chat_service import get_agent_state_view
 from yuxi.services.im_binding_service import resolve_channel_identity
+from yuxi.services.im_bot_service import PLATFORMS
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.models_business import User
@@ -63,14 +64,16 @@ async def receive_channel_message(
     account_id = _normalize_required(payload.account_id, "account_id")
     agent_slug = _normalize_required(payload.agent_slug, "agent_slug")
 
-    identity = await resolve_channel_identity(
-        db,
-        transport_user=current_user,
-        account_id=account_id,
-        sender_id=payload.sender_id,
-    )
-    current_user = identity.user
-    identity_source = "binding" if not identity.owner_fallback else "owner_fallback"
+    identity_source = None
+    if channel in PLATFORMS:
+        identity = await resolve_channel_identity(
+            db,
+            transport_user=current_user,
+            account_id=account_id,
+            sender_id=payload.sender_id,
+        )
+        current_user = identity.user
+        identity_source = "binding" if not identity.owner_fallback else "owner_fallback"
 
     thread_id = _resolve_thread_id(
         uid=str(current_user.uid),
@@ -120,7 +123,7 @@ async def receive_channel_message(
                 "command": "state",
                 "thread_id": thread_id,
                 "state": state,
-                "identity_source": identity_source,
+                **_identity_source_field(identity_source),
             }
         try:
             decision = decision_type_for_command(command.name, command.args)
@@ -178,7 +181,7 @@ async def receive_channel_message(
     )
     result["kind"] = "run"
     result["channel"] = channel
-    result["identity_source"] = identity_source
+    result.update(_identity_source_field(identity_source))
     return result
 
 
@@ -192,7 +195,7 @@ async def _resolve_latest_run(
     channel: str,
     origin_metadata: dict[str, str],
     current_user: User,
-    identity_source: str,
+    identity_source: str | None,
     db: AsyncSession,
 ) -> dict:
     """审批（批准或拒绝）当前等待中的工具调用，并优先复用同 request_id 的恢复 run。"""
@@ -246,8 +249,13 @@ async def _resolve_latest_run(
         "command": decision,
         "thread_id": thread_id,
         "run": result,
-        "identity_source": identity_source,
+        **_identity_source_field(identity_source),
     }
+
+
+def _identity_source_field(identity_source: str | None) -> dict[str, str]:
+    """只在 IM 渠道解析过身份时输出 identity_source，其他渠道保持原有响应结构。"""
+    return {"identity_source": identity_source} if identity_source else {}
 
 
 _DECISION_COMMANDS = {"approve": "approve", "reject": "reject"}

@@ -143,7 +143,7 @@ async def test_state_command_does_not_submit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(router, "submit_agent_request", fail_submit)
     monkeypatch.setattr(router, "get_agent_state_view", fake_state)
     result = await router.receive_channel_message(
-        _payload("/state"),
+        _payload("/state", channel="dingtalk", account_id="1"),
         current_user=SimpleNamespace(uid="user-1"),
         db=object(),
     )
@@ -304,3 +304,40 @@ async def test_channel_does_not_treat_question_interrupt_as_approval(monkeypatch
         )
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "ask_user_question_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_cli_channel_skips_im_binding_resolution(monkeypatch: pytest.MonkeyPatch):
+    """非 IM 渠道（yuxi-cli）不得进入机器人绑定解析，也不返回 identity_source。"""
+    calls: dict[str, object] = {}
+
+    async def fail_resolve_channel_identity(*_args, **_kwargs):
+        raise AssertionError("非 IM 渠道不应解析 IM 绑定身份")
+
+    async def fake_submit_agent_request(*, request_input, **_kwargs):
+        calls["request_input"] = request_input
+        return {"run_id": "run-1", "thread_id": request_input.thread_id, "status": "dispatched"}
+
+    class EmptyRunRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_run_by_request_id(self, request_id: str):
+            del request_id
+            return None
+
+        async def get_latest_chat_or_resume_run(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(router, "resolve_channel_identity", fail_resolve_channel_identity)
+    monkeypatch.setattr(router, "submit_agent_request", fake_submit_agent_request)
+    monkeypatch.setattr(router, "AgentRunRepository", EmptyRunRepo)
+    result = await router.receive_channel_message(
+        _payload("你好", channel="cli", account_id="local", chat_id="chat-1"),
+        current_user=SimpleNamespace(uid="user-1"),
+        db=object(),
+    )
+
+    assert result["kind"] == "run"
+    assert calls["request_input"].origin.channel == "cli"
+    assert "identity_source" not in result
