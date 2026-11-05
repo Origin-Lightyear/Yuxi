@@ -93,6 +93,7 @@ async def test_channel_run_is_readable_by_bot_owner_and_thread_artifact_resolves
     bound_uid = f"bound-{suffix}"
     stranger_uid = f"stranger-{suffix}"
     thread_id = f"channel_{uuid.uuid4().hex}"
+    chat_thread_id = f"chat_{uuid.uuid4().hex}"
     try:
         async with binding_engine() as session:
             await _create_user(session, owner_uid)
@@ -100,13 +101,16 @@ async def test_channel_run_is_readable_by_bot_owner_and_thread_artifact_resolves
             await _create_user(session, stranger_uid)
             bot = await _create_bot(session, owner_uid=owner_uid)
             channel_run = _run(uid=bound_uid, thread_id=thread_id, source="channel", account_id=str(bot.id))
-            chat_run = _run(uid=bound_uid, thread_id=f"chat_{uuid.uuid4().hex}", source="chat", account_id=None)
+            chat_run = _run(uid=bound_uid, thread_id=chat_thread_id, source="chat", account_id=str(bot.id))
             session.add_all([channel_run, chat_run])
             await session.commit()
 
             assert await can_read_channel_run_as_bot_owner(session, run=channel_run, caller_uid=owner_uid) is True
             assert await can_read_channel_run_as_bot_owner(session, run=channel_run, caller_uid=stranger_uid) is False
             assert await can_read_channel_run_as_bot_owner(session, run=chat_run, caller_uid=owner_uid) is False
+            assert await can_read_channel_thread_as_bot_owner(
+                session, thread_id=chat_thread_id, caller_uid=owner_uid
+            ) is False
             assert await can_read_channel_thread_as_bot_owner(
                 session, thread_id=thread_id, caller_uid=owner_uid
             ) is True
