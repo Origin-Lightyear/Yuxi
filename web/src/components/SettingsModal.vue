@@ -32,7 +32,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'imAccounts' }"
             @click="activeTab = 'imAccounts'"
-            v-if="userStore.isLoggedIn"
+            v-if="userStore.isLoggedIn && userStore.saasMode"
           >
             <IdCard class="icon" :size="18" />
             <span>IM 账号</span>
@@ -150,7 +150,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'imAccounts' }"
           @click="activeTab = 'imAccounts'"
-          v-if="userStore.isLoggedIn"
+          v-if="userStore.isLoggedIn && userStore.saasMode"
         >
           IM 账号
         </div>
@@ -224,7 +224,7 @@
 
           <div
             v-show="activeTab === 'imAccounts'"
-            v-if="userStore.isLoggedIn && loadedTabs.has('imAccounts')"
+            v-if="userStore.isLoggedIn && userStore.saasMode && loadedTabs.has('imAccounts')"
           >
             <ImAccountBindingComponent />
           </div>
@@ -334,7 +334,8 @@ const visible = computed({
 
 const availableTabs = computed(() => {
   const tabs = []
-  if (userStore.isLoggedIn) tabs.push('account', 'imAccounts')
+  if (userStore.isLoggedIn) tabs.push('account')
+  if (userStore.isLoggedIn && userStore.saasMode) tabs.push('imAccounts')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('apiKeys')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('agentEnv')
   if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user', 'imBots')

@@ -276,36 +276,33 @@ async def test_ensure_business_schema_creates_user_config_table():
 
 @pytest.mark.asyncio
 async def test_ensure_business_schema_creates_im_binding_tables():
-    """既有/已版本化业务库也必须通过 ensure_business_schema 建出 IM 账号绑定两张表。"""
+    """既有/已版本化业务库也必须通过 ensure_business_schema 建出一次性绑定会话表。"""
     async with _recording_manager() as (manager, connection):
         await manager.ensure_business_schema()
 
     statements = "\n".join(connection.statements)
 
-    assert "CREATE TABLE IF NOT EXISTS im_account_bindings" in statements
-    assert "CONSTRAINT uq_im_binding_platform_user UNIQUE (platform, platform_user_id)" in statements
-    assert "CONSTRAINT uq_im_binding_user_platform UNIQUE (user_id, platform)" in statements
-    assert "REFERENCES users(id) ON DELETE CASCADE" in statements
-    assert "REFERENCES im_bot_configs(id) ON DELETE SET NULL" in statements
+    # 绑定关系由 Tenant 唯一保存，业务库不再创建本地绑定表。
+    assert "CREATE TABLE IF NOT EXISTS im_account_bindings" not in statements
 
     assert "CREATE TABLE IF NOT EXISTS im_binding_sessions" in statements
     assert "state_hash VARCHAR(64) NOT NULL UNIQUE" in statements
     assert "status VARCHAR(16) NOT NULL DEFAULT 'pending'" in statements
+    assert "ADD COLUMN IF NOT EXISTS require_binding BOOLEAN NOT NULL DEFAULT false" in statements
 
 
 @pytest.mark.asyncio
 async def test_im_binding_tables_use_naive_timestamps_matching_models():
-    """IM 绑定两张表的迁移 DDL 必须与 DateTime(naive) 模型一致，避免 aware/naive 时间比较抛错。"""
+    """绑定会话表的迁移 DDL 必须与 DateTime(naive) 模型一致，避免 aware/naive 时间比较抛错。"""
     async with _recording_manager() as (manager, connection):
         await manager.ensure_business_schema()
 
     im_binding_statements = [
         statement
         for statement in connection.statements
-        if "CREATE TABLE IF NOT EXISTS im_account_bindings" in statement
-        or "CREATE TABLE IF NOT EXISTS im_binding_sessions" in statement
+        if "CREATE TABLE IF NOT EXISTS im_binding_sessions" in statement
     ]
-    assert len(im_binding_statements) == 2
+    assert len(im_binding_statements) == 1
     for statement in im_binding_statements:
         assert "TIMESTAMP WITHOUT TIME ZONE" in statement
         assert "TIMESTAMPTZ" not in statement

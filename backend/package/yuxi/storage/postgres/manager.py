@@ -1239,19 +1239,6 @@ class PostgresManager(metaclass=SingletonMeta):
                 "ADD COLUMN IF NOT EXISTS require_binding BOOLEAN NOT NULL DEFAULT false"
             ),
             """
-            CREATE TABLE IF NOT EXISTS im_account_bindings (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                platform VARCHAR(16) NOT NULL,
-                platform_user_id VARCHAR(128) NOT NULL,
-                bot_id INTEGER REFERENCES im_bot_configs(id) ON DELETE SET NULL,
-                created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-                updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-                CONSTRAINT uq_im_binding_platform_user UNIQUE (platform, platform_user_id),
-                CONSTRAINT uq_im_binding_user_platform UNIQUE (user_id, platform)
-            )
-            """,
-            """
             CREATE TABLE IF NOT EXISTS im_binding_sessions (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

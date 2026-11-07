@@ -351,6 +351,15 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
     return FRONTEND_BINDING_RESULT_PATH
 
 
+def _bound_platform(row: dict) -> tuple[str, str] | None:
+    """从 Tenant 绑定行解析受支持的平台与平台用户 ID，其余返回 None。"""
+    platform = str(row.get("channelType") or "").strip().lower()
+    channel_user_id = row.get("channelUserId")
+    if platform not in PLATFORMS or row.get("bound") is not True or not channel_user_id:
+        return None
+    return platform, str(channel_user_id)
+
+
 async def list_bindings(db: AsyncSession, *, user: User) -> list[dict]:
     """实时读取 Tenant 的三平台绑定，映射为前端使用的飞书/钉钉列表。"""
     del db
@@ -363,18 +372,45 @@ async def list_bindings(db: AsyncSession, *, user: User) -> list[dict]:
 
     bindings: list[dict] = []
     for row in rows:
-        platform = str(row.get("channelType") or "").strip().lower()
-        channel_user_id = row.get("channelUserId")
-        if platform not in PLATFORMS or row.get("bound") is not True or not channel_user_id:
+        parsed = _bound_platform(row)
+        if parsed is None:
             continue
+        platform, channel_user_id = parsed
         bindings.append(
             {
                 "platform": platform,
-                "platform_user_id": str(channel_user_id),
+                "platform_user_id": channel_user_id,
                 "created_at": row.get("boundAt"),
             }
         )
     return sorted(bindings, key=lambda item: item["platform"])
+
+
+async def preheat_binding_cache(uid: str, agent_session: SaasAgentSession) -> int:
+    """登录后按 Tenant 当前绑定预热缓存，返回写入的平台数。
+
+    支持平台先清旧映射再写新映射：Tenant 已解绑或已换号的平台不能继续命中
+    旧缓存。TTL 取 AgentSession 剩余有效秒数，与消息侧可复用窗口对齐。
+    """
+    rows = await get_saas_client().list_channel_bindings(agent_session.token)
+    bound: dict[str, str] = {}
+    for row in rows:
+        parsed = _bound_platform(row)
+        if parsed is not None:
+            bound[parsed[0]] = parsed[1]
+
+    ttl_seconds = get_saas_session_ttl_seconds(agent_session.expires_at)
+    for platform in sorted(PLATFORMS):
+        await im_binding_cache.forget_binding(uid=uid, platform=platform)
+        channel_user_id = bound.get(platform)
+        if channel_user_id is not None:
+            await im_binding_cache.remember_binding(
+                uid=uid,
+                platform=platform,
+                channel_user_id=channel_user_id,
+                ttl_seconds=ttl_seconds,
+            )
+    return len(bound)
 
 
 async def delete_binding(db: AsyncSession, *, user: User, platform: str) -> None:

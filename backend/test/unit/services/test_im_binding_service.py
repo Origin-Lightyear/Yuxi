@@ -1,4 +1,6 @@
-"""IM 账号绑定服务：纯函数单元测试（授权 URL 构建与 state 哈希，不连库）。"""
+"""IM 账号绑定服务：纯函数与缓存预热单元测试（不连库）。"""
+
+import pytest
 
 from yuxi.services.im_binding_service import _build_authorize_url, _hash_state
 
@@ -32,3 +34,55 @@ def test_hash_state_is_stable_and_not_plaintext():
     assert digest == _hash_state("abc")
     assert digest != "abc"
     assert len(digest) == 64  # sha256 hexdigest
+
+
+@pytest.mark.asyncio
+async def test_preheat_binding_cache_writes_bound_platforms_and_clears_stale(monkeypatch):
+    """登录预热只写 Tenant 已绑定的支持平台，并清掉本平台旧映射。"""
+    from yuxi.config import config as app_config
+    from yuxi.services import im_binding_service
+    from yuxi.services.saas_session import SaasAgentSession
+
+    monkeypatch.setattr(app_config, "saas_enabled", True)
+    monkeypatch.setattr(app_config, "platform_service_url", "https://tenant.example.com")
+
+    remembered: list[dict] = []
+    forgotten: list[str] = []
+
+    class _FakeClient:
+        async def list_channel_bindings(self, token):
+            assert token == "session-1"
+            return [
+                {"channelType": "FEISHU", "bound": True, "channelUserId": "ou-1", "boundAt": "2026-11-06T10:20:30"},
+                {"channelType": "DINGTALK", "bound": False, "channelUserId": None, "boundAt": None},
+                {"channelType": "WECOM", "bound": True, "channelUserId": "wc-1", "boundAt": "2026-11-05T09:08:07"},
+            ]
+
+    async def fake_remember(**kwargs):
+        remembered.append(kwargs)
+
+    async def fake_forget(*, uid, platform):
+        forgotten.append(platform)
+
+    monkeypatch.setattr(im_binding_service, "get_saas_client", lambda: _FakeClient())
+    monkeypatch.setattr(im_binding_service.im_binding_cache, "remember_binding", fake_remember)
+    monkeypatch.setattr(im_binding_service.im_binding_cache, "forget_binding", fake_forget)
+
+    count = await im_binding_service.preheat_binding_cache(
+        "emp-1",
+        SaasAgentSession(
+            token="session-1",
+            expires_at="1793974830",
+            tenant_id=1,
+            employee_id=2,
+            mcp_instance_id="runtime-1",
+        ),
+    )
+
+    assert count == 1
+    assert forgotten == ["dingtalk", "feishu"]
+    assert len(remembered) == 1
+    assert remembered[0]["uid"] == "emp-1"
+    assert remembered[0]["platform"] == "feishu"
+    assert remembered[0]["channel_user_id"] == "ou-1"
+    assert remembered[0]["ttl_seconds"] > 0

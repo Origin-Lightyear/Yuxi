@@ -1767,36 +1767,6 @@ class IMBotConfig(Base):
         }
 
 
-class IMAccountBinding(Base):
-    """IM 账号绑定（飞书 / 钉钉身份绑定到 Yuxi 用户）。"""
-
-    __tablename__ = "im_account_bindings"
-    __table_args__ = (
-        UniqueConstraint("platform", "platform_user_id", name="uq_im_binding_platform_user"),
-        UniqueConstraint("user_id", "platform", name="uq_im_binding_user_platform"),
-    )
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    platform = Column(String(16), nullable=False)
-    platform_user_id = Column(String(128), nullable=False)
-    bot_id = Column(Integer, ForeignKey("im_bot_configs.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
-
-    def to_dict(self) -> dict[str, Any]:
-        """序列化绑定公开字段。"""
-        return {
-            "id": self.id,
-            "user_id": self.user_id,
-            "platform": self.platform,
-            "platform_user_id": self.platform_user_id,
-            "bot_id": self.bot_id,
-            "created_at": format_utc_datetime(self.created_at),
-            "updated_at": format_utc_datetime(self.updated_at),
-        }
-
-
 class IMBindingSession(Base):
     """IM 账号绑定会话（一次性授权 / 扫码流程状态）。"""
 

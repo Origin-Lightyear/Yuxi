@@ -56,7 +56,12 @@ from yuxi.services.oidc_service import (
 
 # SaaS 多租户认证相关导入
 from yuxi.services.saas_auth_service import find_or_create_saas_user, upsert_saas_mcp_server, upsert_saas_model_provider
-from yuxi.services.saas_client import SaasAPIError, _parse_employee_permission_department_id, get_saas_client
+from yuxi.services.saas_client import (
+    SaasAPIError,
+    TenantEmployee,
+    _parse_employee_permission_department_id,
+    get_saas_client,
+)
 from yuxi.config import config as app_config
 from server.routers.model_provider_router import _refresh_model_cache
 
@@ -244,7 +249,8 @@ def _select_saas_mcp_server(servers: list[dict], fallback_url: str = "") -> tupl
 async def logout(
     current_user: User = Depends(get_required_user),
 ):
-    """注销本地 JWT 对应的 SaaS AgentSession。"""
+    """注销本地 JWT 对应的 SaaS AgentSession，并清理 IM 身份缓存。"""
+    from yuxi.services.im_binding_cache import forget_user_bindings
     from yuxi.services.saas_session import clear_saas_agent_session, get_saas_agent_session
 
     session = await get_saas_agent_session(current_user.uid)
@@ -254,7 +260,33 @@ async def logout(
         except Exception as exc:
             logger.warning(f"Failed to logout SaaS AgentSession: {exc}")
         await clear_saas_agent_session(current_user.uid)
+        try:
+            await forget_user_bindings(current_user.uid)
+        except Exception as exc:
+            logger.warning(f"Failed to clear IM binding cache: {exc}")
     return {"success": True}
+
+
+async def _save_saas_login_state(uid: str, emp: TenantEmployee, mcp_instance_id: str) -> None:
+    """无条件保存 Tenant AgentSession，并预热 IM 绑定缓存。
+
+    会话是解绑、绑定与 IM 消息身份解析的前提，即使 Tenant 未下发 MCP Runtime
+    也必须保存。绑定缓存预热依赖 Tenant 可达，失败只告警，不阻断登录。
+    """
+    from yuxi.services import im_binding_service, saas_session
+
+    agent_session = saas_session.SaasAgentSession(
+        token=emp.agent_session_token,
+        expires_at=emp.agent_session_expires_at,
+        tenant_id=emp.tenant_id,
+        employee_id=emp.employee_id,
+        mcp_instance_id=mcp_instance_id,
+    )
+    await saas_session.save_saas_agent_session(uid, agent_session)
+    try:
+        await im_binding_service.preheat_binding_cache(uid, agent_session)
+    except Exception as exc:
+        logger.warning(f"Failed to preheat IM binding cache: {exc}")
 
 
 async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: int | None = None) -> dict:
@@ -362,11 +394,7 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
 
     # 持久化 SaaS 员工身份，供 Agent 数据双写与定时任务使用
     from yuxi.services.saas_identity import save_saas_employee_context
-    from yuxi.services.saas_session import (
-        SaasAgentSession,
-        get_saas_session_ttl_seconds,
-        save_saas_agent_session,
-    )
+    from yuxi.services.saas_session import get_saas_session_ttl_seconds
 
     tenant_department_id = emp.department_id
     try:
@@ -386,17 +414,7 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
     )
     await _commit_saas_changes_and_refresh_model_cache(db)
 
-    if selected_mcp:
-        await save_saas_agent_session(
-            user.uid,
-            SaasAgentSession(
-                token=emp.agent_session_token,
-                expires_at=emp.agent_session_expires_at,
-                tenant_id=emp.tenant_id,
-                employee_id=emp.employee_id,
-                mcp_instance_id=selected_mcp[1],
-            ),
-        )
+    await _save_saas_login_state(user.uid, emp, selected_mcp[1] if selected_mcp else "")
 
     token_data = {"sub": str(user.id)}
     access_token = AuthUtils.create_access_token(
