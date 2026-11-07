@@ -293,18 +293,20 @@ def _normalize_mobile(value: str | None) -> str:
     return digits
 
 
-def _ensure_platform_account_matches_user(user: User, platform_mobile: str | None) -> None:
+def _ensure_platform_account_matches_user(
+    uid: str, *, expected_mobile: str | None, platform_mobile: str | None
+) -> None:
     """确认扫码的平台账号属于当前登录用户，避免把他人平台身份绑到自己账号。
 
     平台授权只证明扫码者控制该平台账号，Tenant 按 AgentSession 确定绑定目标，
-    因此归属核验必须由 Yuxi 完成：用平台资料手机号与本地用户比对，任一侧缺失
-    或不一致都失败关闭，不调用 Tenant。
+    因此归属核验必须由 Yuxi 完成。比较基准是 Tenant 登录时下发并存入 AgentSession
+    的手机号（用户不能改写），任一侧缺失或不一致都失败关闭，不调用 Tenant。
     """
-    local_mobile = _normalize_mobile(user.phone_number)
+    expected_value = _normalize_mobile(expected_mobile)
     platform_value = _normalize_mobile(platform_mobile)
-    if not local_mobile or not platform_value or local_mobile != platform_value:
+    if not expected_value or not platform_value or expected_value != platform_value:
         logger.warning(
-            f"Platform identity verification failed: uid={user.uid}, has_platform_mobile={bool(platform_value)}"
+            f"Platform identity verification failed: uid={uid}, has_platform_mobile={bool(platform_value)}"
         )
         raise HTTPException(
             403,
@@ -392,6 +394,9 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
     if user is None:
         raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定用户不存在"})
     agent_session = await _require_agent_session(user)
+    # 旧会话没有 Tenant 下发手机号，无法核验扫码账号归属，要求重新登录刷新会话。
+    if not agent_session.mobile:
+        raise _binding_login_required()
 
     bot = await get_im_bot(db, bot_id)
     if bot is None:
@@ -400,7 +405,9 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
     platform_user_id, _union_id, platform_mobile = await _exchange_code(
         platform, credentials, code, redirect_uri=None
     )
-    _ensure_platform_account_matches_user(user, platform_mobile)
+    _ensure_platform_account_matches_user(
+        user.uid, expected_mobile=agent_session.mobile, platform_mobile=platform_mobile
+    )
     # 先算缓存 TTL：解析失败时必须在调用 Tenant 前失败，避免“已绑定却显示失败”。
     ttl_seconds = get_saas_session_ttl_seconds(agent_session.expires_at)
 

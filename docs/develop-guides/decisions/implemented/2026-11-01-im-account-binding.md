@@ -25,12 +25,12 @@ IM 机器人用「机器人归属人」的 API Key 执行所有消息：同一�
 **绑定链路**（入口在 Yuxi 个人设置，`web/src/components/ImAccountBindingComponent.vue` 负责前端交互）：
 
 1. `POST /api/user/im-bindings/{platform}/sessions`：要求有效的 Tenant AgentSession（缺失 401 `im_binding_login_required`），取该平台唯一启用的机器人凭据生成 state，返回 `{bind_url, expires_at}`；前端用 `bind_url` 渲染二维码（`qrcode` 前端库，后端不存图片）。同一平台多个启用机器人时报错要求收敛，不静默挑选凭据。非 SaaS 部署返回 400 `im_binding_not_enabled`。
-2. `GET /api/im-bindings/callback/{platform}?code=&state=`（公开路由，靠 state 鉴权）：用 `UPDATE ... WHERE pending AND used_at IS NULL AND expires_at > now RETURNING` 原子消费 state，并发回调最多一个成功 → 换 user access token → 取平台身份（飞书 `open_id`；钉钉 `unionId` 经 `topapi/v2/user/getbyunionid` 换成消息侧 `userid`）→ 用平台资料手机号核验扫码账号属于发起绑定的当前用户（缺失或不一致返回 403 `im_binding_identity_mismatch`，不调用 Tenant）→ 调用 Tenant 绑定。Tenant 成功后才写 Redis 并返回成功结果页；Tenant 失败时映射为明确错误，不返回成功。
+2. `GET /api/im-bindings/callback/{platform}?code=&state=`（公开路由，靠 state 鉴权）：用 `UPDATE ... WHERE pending AND used_at IS NULL AND expires_at > now RETURNING` 原子消费 state，并发回调最多一个成功 → 换 user access token → 取平台身份（飞书 `open_id`；钉钉 `unionId` 经 `topapi/v2/user/getbyunionid` 换成消息侧 `userid`）→ 用平台资料手机号核验扫码账号属于发起绑定的当前用户（基准是 Tenant 登录下发、随 AgentSession 保存的手机号；缺失或不一致返回 403 `im_binding_identity_mismatch`，不调用 Tenant）→ 调用 Tenant 绑定。Tenant 成功后才写 Redis 并返回成功结果页；Tenant 失败时映射为明确错误，不返回成功。
 3. `GET /api/user/im-bindings` 实时读取 Tenant 三个平台的绑定，只向前端暴露已绑定的飞书/钉钉；`DELETE /api/user/im-bindings/{platform}` 由 Tenant 解绑并清理本地缓存。三个用户接口都要求有效的 Tenant AgentSession，缺失返回 401 `im_binding_login_required`。
 
 Tenant 错误码映射：`20316`（平台账号已绑其他员工）→ 409 `im_account_already_bound`；`20314`（员工会话失效）→ 清 Redis AgentSession 与绑定缓存后 401 `im_binding_login_required`；`20302`（员工不存在/停用）→ 403 `im_employee_unavailable`；`20317`（管理密钥错误）或其他失败 → 502 `im_binding_tenant_unavailable`。平台账号归属核验失败返回 403 `im_binding_identity_mismatch`，不调用 Tenant。
 
-**登录与登出**：SaaS 登录成功后在 `_save_saas_login_state` 中无条件保存 Tenant AgentSession（即使 Tenant 没有下发 MCP Runtime），随后调用一次 `GET channel-bindings` 预热缓存：对飞书/钉钉先清旧映射再写当前绑定，避免解绑或换号后继续命中旧缓存。预热失败只记告警，不影响登录。登出在清理 AgentSession 后删除该用户全部绑定缓存。
+**登录与登出**：SaaS 登录成功后在 `_save_saas_login_state` 中无条件保存 Tenant AgentSession（即使 Tenant 没有下发 MCP Runtime），并把 Tenant 登录下发的员工手机号一并存入会话，作为绑定归属核验的服务端基准；随后调用一次 `GET channel-bindings` 预热缓存：对飞书/钉钉先清旧映射再写当前绑定，避免解绑或换号后继续命中旧缓存。预热失败只记告警，不影响登录。登出在清理 AgentSession 后删除该用户全部绑定缓存。
 
 **消息链路**：`backend/server/routers/agent_invocation_channel_router.py` 保留「API Key = 机器人归属人」的传输身份，IM 渠道只接受机器人自身的 API Key：`AuthPrincipal.api_key_id` 必须等于 `im_bot_configs.api_key_id`，JWT 登录态（包括机器人归属人）返回 403 `im_channel_api_key_required`，同属主但非该机器人的 Key 返回 403 `im_bot_credential_mismatch`。随后 `resolve_channel_identity` 解析真实用户，以该用户身份提交 Run（线程、权限、模型配置、附件全按该用户走），并在成功响应返回 `identity_source`。同一解析对 `/resume` 与 slash command 生效；非 IM 渠道（如 `yuxi-cli`）保持原有 JWT/API Key 认证与响应结构，不进入绑定解析。
 
@@ -66,7 +66,8 @@ Owner 分工：`im_binding_service.py` 拥有绑定会话、平台身份换取�
 - Channel Run 的读权限跟随机器人启停：机器人停用后，归属人不再能通过该规则读取其历史 Channel Run 事件与产物。
 - SaaS 部署下管理员同样展示「IM 机器人」管理入口：绑定开关与机器人凭据都要在 Yuxi 侧维护，不能因为 SaaS 模式隐藏入口。
 - IM 渠道的 `channel` 标识统一转小写后再匹配 `PLATFORMS`，避免大小写变体绕过机器人 API Key 门槛。
-- 绑定归属核验依赖平台授权返回手机号：手机号须与 Tenant 登录同步到本地 `users.phone_number` 的一致；任一侧缺失或不一致都失败关闭（403 `im_binding_identity_mismatch`），因此飞书应用需具备读取用户手机号的授权范围，换绑前也需保证本地手机号已同步。
+- 绑定归属核验依赖平台授权返回手机号：基准是 Tenant 登录下发并存入 AgentSession 的 `mobile`，不是用户可通过 `PUT /api/auth/profile` 改写的 `users.phone_number`；任一侧缺失或不一致都失败关闭（403 `im_binding_identity_mismatch`），因此飞书应用需具备读取用户手机号的授权范围。
+- 升级前已登录的会话没有 `mobile` 字段，绑定回调会返回 401 `im_binding_login_required`，用户重新登录后即可完成核验；这是有意的失败关闭，不做跳过核验的兼容路径。
 - 历史库的 `im_account_bindings` 成为无消费者残留表；新库不创建，旧库需人工确认后清理。
 - 过期 `im_binding_sessions` 行不会主动删除；条件 `UPDATE` 保证其不可再用，运维可按 `expires_at` 归档清理。
 - 缓存冷启动回查只同步本地用户，不重写员工上下文；绑定用户必然先完成过 SaaS 登录，`UserConfig` 与部门信息已存在。
@@ -79,7 +80,7 @@ Owner 分工：`im_binding_service.py` 拥有绑定会话、平台身份换取�
 - `docker compose exec -T api python -m pytest test/unit/routers/test_agent_invocation_channel_router.py test/unit/services/test_artifact_service.py -q` → **35 passed**。
 - `docker compose exec -T api python -m pytest test/integration/services/test_channel_run_read_access.py -q` → **2 passed**。
 - `docker compose exec -T api python -m pytest test/unit/routers/test_auth_router_saas.py test/unit/routers/test_im_binding_router.py test/unit/routers/test_agent_invocation_channel_router.py test/unit/services/test_im_binding_service.py test/unit/services/test_im_binding_cache.py test/unit/server/test_saas_session_auth.py -q` → **40 passed**。
-- `docker compose exec -T api python -m pytest test/integration/storage/test_im_binding_schema.py test/integration/services/test_im_binding_service.py test/integration/api/test_channel_identity_binding.py -q` → **39 passed**（真实 PostgreSQL + Redis，含 Tenant 错误码映射 20302/20314/20316/20317、平台账号归属核验失败关闭、TTL 解析失败先于 Tenant 调用、state 并发原子消费、缓存命中零调用、Redis 读失败回退、冷启动回查、归属人回退、非 SaaS `identity_source=owner`、机器人 API Key 与同属主其他 Key 拒绝、大小写平台标识不绕过凭证门槛）。
+- `docker compose exec -T api python -m pytest test/integration/storage/test_im_binding_schema.py test/integration/services/test_im_binding_service.py test/integration/api/test_channel_identity_binding.py -q` → **41 passed**（真实 PostgreSQL + Redis，含 Tenant 错误码映射 20302/20314/20316/20317、平台账号归属核验以 Tenant 会话手机号为基准（本地手机号被改写仍拒绝、会话缺手机号 401）、TTL 解析失败先于 Tenant 调用、state 并发原子消费、缓存命中零调用、Redis 读失败回退、冷启动回查、归属人回退、非 SaaS `identity_source=owner`、机器人 API Key 与同属主其他 Key 拒绝、大小写平台标识不绕过凭证门槛）。
 - `docker compose exec -T api python -m pytest test/integration/services/test_channel_run_read_access.py test/integration/api/test_im_binding_router.py test/integration/api/test_agent_invocation_channel_api.py test/integration/api/test_auth_router.py -q` → **7 passed, 14 skipped, 2 failed**。失败的两条是 `test_auth_router.py` 的本地登录断言：本槽位 `SAAS_ENABLED=true` 且 Tenant 不可达，登录走 Tenant 后返回 502，而用例预期本地 401/限流，与本次变更无关。
 - `python3 -m ruff check --line-length 120 --select F,E,W,UP <本次修改的 Python 文件>` → **All checks passed**。`manager.py` 本次只删除 DDL，未新增超长行；该文件 1573/1625/1626/1671/1719 的 5 处既有 E501 不在本次范围，未顺手修改。
 - `cd packages/yuxi-im-gateway && .venv/bin/python -m pytest tests -q` → **66 passed**。

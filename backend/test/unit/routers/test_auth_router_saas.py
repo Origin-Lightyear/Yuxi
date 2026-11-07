@@ -181,13 +181,14 @@ async def test_save_saas_login_state_persists_session_without_mcp(monkeypatch):
         agent_session_expires_at="1793974830",
     )
 
-    await auth_router._save_saas_login_state("EMP001", emp, "")
+    await auth_router._save_saas_login_state("EMP001", emp, "", "13800138000")
 
     assert len(saved) == 1
     uid, session = saved[0]
     assert uid == "EMP001"
     assert session.token == "session-1"
     assert session.mcp_instance_id == ""
+    assert session.mobile == "13800138000"
     assert preheated == ["EMP001"]
 
 
@@ -219,7 +220,7 @@ async def test_save_saas_login_state_ignores_preheat_failure(monkeypatch):
         agent_session_expires_at="1793974830",
     )
 
-    await auth_router._save_saas_login_state("EMP001", emp, "runtime-1")
+    await auth_router._save_saas_login_state("EMP001", emp, "runtime-1", "13800138000")
 
 
 async def test_logout_clears_binding_cache_without_agent_session(monkeypatch):

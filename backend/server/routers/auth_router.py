@@ -267,11 +267,13 @@ async def logout(
     return {"success": True}
 
 
-async def _save_saas_login_state(uid: str, emp: TenantEmployee, mcp_instance_id: str) -> None:
+async def _save_saas_login_state(uid: str, emp: TenantEmployee, mcp_instance_id: str, mobile: str) -> None:
     """无条件保存 Tenant AgentSession，并预热 IM 绑定缓存。
 
     会话是解绑、绑定与 IM 消息身份解析的前提，即使 Tenant 未下发 MCP Runtime
-    也必须保存。绑定缓存预热依赖 Tenant 可达，失败只告警，不阻断登录。
+    也必须保存。``mobile`` 是 Tenant 登录下发的员工手机号，随会话保存，供 IM
+    绑定核验扫码账号归属，避免依赖用户可自行修改的本地资料。绑定缓存预热依赖
+    Tenant 可达，失败只告警，不阻断登录。
     """
     from yuxi.services import im_binding_service, saas_session
 
@@ -281,6 +283,7 @@ async def _save_saas_login_state(uid: str, emp: TenantEmployee, mcp_instance_id:
         tenant_id=emp.tenant_id,
         employee_id=emp.employee_id,
         mcp_instance_id=mcp_instance_id,
+        mobile=mobile,
     )
     await saas_session.save_saas_agent_session(uid, agent_session)
     try:
@@ -414,7 +417,7 @@ async def _saas_login(db: AsyncSession, mobile: str, password: str, tenant_id: i
     )
     await _commit_saas_changes_and_refresh_model_cache(db)
 
-    await _save_saas_login_state(user.uid, emp, selected_mcp[1] if selected_mcp else "")
+    await _save_saas_login_state(user.uid, emp, selected_mcp[1] if selected_mcp else "", auth_result.mobile)
 
     token_data = {"sub": str(user.id)}
     access_token = AuthUtils.create_access_token(

@@ -132,24 +132,27 @@ async def test_feishu_exchange_reads_profile_mobile(monkeypatch):
     assert kwargs["headers"] == {"Authorization": "Bearer user-token"}
 
 
-def test_platform_account_must_match_local_mobile():
-    """手机号缺失或不一致时拒绝绑定，且不泄露具体号码。"""
-    from types import SimpleNamespace
-
+def test_platform_account_must_match_session_mobile():
+    """基准取 Tenant 会话手机号；缺失或不一致时拒绝绑定，且不泄露具体号码。"""
     from fastapi import HTTPException
 
     from yuxi.services.im_binding_service import _ensure_platform_account_matches_user
 
-    user = SimpleNamespace(uid="EMP001", phone_number="13800138000")
-
     with pytest.raises(HTTPException) as exc:
-        _ensure_platform_account_matches_user(user, "13900000000")
+        _ensure_platform_account_matches_user(
+            "EMP001", expected_mobile="13800138000", platform_mobile="13900000000"
+        )
     assert exc.value.status_code == 403
     assert exc.value.detail["code"] == "im_binding_identity_mismatch"
     assert "13800138000" not in exc.value.detail["message"]
 
-    with pytest.raises(HTTPException) as exc:
-        _ensure_platform_account_matches_user(user, None)
-    assert exc.value.detail["code"] == "im_binding_identity_mismatch"
+    for expected, actual in ((None, "13800138000"), ("13800138000", None), ("", "")):
+        with pytest.raises(HTTPException) as exc:
+            _ensure_platform_account_matches_user(
+                "EMP001", expected_mobile=expected, platform_mobile=actual
+            )
+        assert exc.value.detail["code"] == "im_binding_identity_mismatch"
 
-    _ensure_platform_account_matches_user(user, "+86 138-0013-8000")
+    _ensure_platform_account_matches_user(
+        "EMP001", expected_mobile="13800138000", platform_mobile="+86 138-0013-8000"
+    )

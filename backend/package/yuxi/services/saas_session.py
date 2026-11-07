@@ -20,6 +20,8 @@ class SaasAgentSession:
     tenant_id: int
     employee_id: int
     mcp_instance_id: str
+    # Tenant 登录下发的手机号，作为 IM 绑定归属核验的服务端基准，用户不能改写。
+    mobile: str | None = None
 
 
 def _session_key(uid: str) -> str:
@@ -66,6 +68,7 @@ async def get_saas_agent_session(uid: str) -> SaasAgentSession | None:
         tenant_id=int(data["tenant_id"]),
         employee_id=int(data["employee_id"]),
         mcp_instance_id=str(data["mcp_instance_id"]),
+        mobile=str(data["mobile"]) if data.get("mobile") else None,
     )
 
 
