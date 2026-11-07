@@ -18,7 +18,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from e2e_helpers import postgres_dsn
 from test.live_api_cleanup import delete_test_conversation_rows
-from yuxi.storage.postgres.models_business import IMAccountBinding, IMBotConfig, User
+from yuxi.config import config as app_config
+from yuxi.services.im_binding_cache import forget_user_bindings, remember_binding
+from yuxi.storage.postgres.models_business import IMBotConfig, User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -109,6 +111,9 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
     e2e_client, e2e_headers, e2e_agent_context, im_db
 ):
     """已绑定 sender 各自落库到本人线程，未绑定身份在强绑开关下被拦。"""
+    if not app_config.is_saas_enabled:
+        pytest.skip("IM 账号绑定只在 SaaS 部署启用")
+
     owner_uid = e2e_agent_context["uid"]
     agent_slug = e2e_agent_context["agent_slug"]
 
@@ -135,13 +140,9 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
             )
             bot_id = bot.id
             enforce_bot_id = enforce_bot.id
-            session.add(
-                IMAccountBinding(user_id=bound_a.id, platform="feishu", platform_user_id="sender-a", bot_id=bot.id)
-            )
-            session.add(
-                IMAccountBinding(user_id=bound_b.id, platform="feishu", platform_user_id="sender-b", bot_id=bot.id)
-            )
-            await session.commit()
+            # 绑定关系由 Tenant 保存；E2E 预置与其 TTL 等价的缓存，避免依赖 Tenant 可达性。
+            await remember_binding(uid=bound_a.uid, platform="feishu", channel_user_id="sender-a", ttl_seconds=600)
+            await remember_binding(uid=bound_b.uid, platform="feishu", channel_user_id="sender-b", ttl_seconds=600)
 
         # 消息 A：sender-a 绑定 bound_a，落库到 bound_a 的 channel_* 线程。
         resp_a = await e2e_client.post(
@@ -215,3 +216,5 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
                 await session.execute(delete(IMBotConfig).where(IMBotConfig.id.in_(bot_ids)))
             await session.execute(delete(User).where(User.uid.in_([bound_a_uid, bound_b_uid])))
             await session.commit()
+        for uid in (bound_a_uid, bound_b_uid):
+            await forget_user_bindings(uid)
