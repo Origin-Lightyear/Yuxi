@@ -260,10 +260,10 @@ async def logout(
         except Exception as exc:
             logger.warning(f"Failed to logout SaaS AgentSession: {exc}")
         await clear_saas_agent_session(current_user.uid)
-        try:
-            await forget_user_bindings(current_user.uid)
-        except Exception as exc:
-            logger.warning(f"Failed to clear IM binding cache: {exc}")
+    try:
+        await forget_user_bindings(current_user.uid)
+    except Exception as exc:
+        logger.warning(f"Failed to clear IM binding cache: {exc}")
     return {"success": True}
 
 

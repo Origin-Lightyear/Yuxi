@@ -45,7 +45,7 @@
 - 修复 API/Worker 单文件挂载 `.env` 在编辑器原子保存后失效的问题：Compose 统一通过 `env_file` 注入环境变量，避免热重载时 ARQ 子进程因 `/app/.env` 短暂不存在而退出、已派发 Run 长期停留在 pending。
 - 桌面客户端升级为 v1 桌面壳（托盘常驻、窗口状态记忆、右键编辑、外链白名单、下载落盘、运行通知）并改为无边框窗口：去掉 Windows/Linux 应用菜单栏，顶部 36px 作为系统按钮与窗口拖动区，全屏时自动收起；Windows 安装包按架构区分命名，x64 与 arm64 产物不再互相覆盖。
 - 新增 IM 机器人能力：`im_bot_configs` 表、凭证加密与按属主 API Key，提供管理接口、`/reject` 审批拒绝和前端设置页；新增独立网关服务 `packages/yuxi-im-gateway`，通过 WebSocket 接入飞书 / 钉钉，支持 Markdown / Excel 附件回发与配置热更新；IM 会话不提供工具审批交互，提交 run 时固定 `always_trust`，运行仍需审批时只回提示不挂起会话，Compose 新增可选 `gateway` 服务及相关环境变量；凭证、目标 Agent 或启停状态变化会重启网关进程，避免 SDK 无法停止的旧长连接继续占用或分流消息。
-- 新增 IM 账号绑定：飞书/钉钉身份可在个人设置扫码绑定到本人账号，消息按绑定用户身份、权限与线程执行，机器人归属人可读取其提交的 Channel Run 事件与产物；未绑定时按 `require_binding` 在拦截（`im_account_not_bound`）与归属人回退（附提示）间切换，绑定解析只作用于 IM 渠道。
+- 新增 IM 账号绑定：飞书/钉钉身份可在个人设置扫码绑定到本人账号，绑定关系由 Tenant 唯一保存，Yuxi 以与员工会话同期的 Redis 缓存解析消息身份；消息按绑定用户身份、权限与线程执行，机器人归属人可读取其提交的 Channel Run 事件与产物；未绑定时按 `require_binding` 在拦截（`im_account_not_bound`）与归属人回退（附提示）间切换，Tenant 不可达时失败关闭，绑定解析只作用于 IM 渠道且非 SaaS 部署维持归属人模式。
 - 移除前端首页与应用布局对 GitHub 仓库 API 的实时统计请求，不再由浏览器访问 `api.github.com`；仓库和文档跳转链接保持不变。
 - 新增内置 `linko-enterprise` 技能统一 Linko 企业数据入口：读正文判断系统，依云/水趣直调 `linko_ent`，金蝶先读 `references/kingdee-k3cloud.md` 再走 `k3_*`；判不准时在正文列出选项询问（禁用 `ask_user_question`，IM 不支持该中断），禁止推测字段含义或裁剪返回，依赖 `finance-mcp`。
 - 修复 MCP 服务不可达或假死时整轮 Run 失败：MCP 工具把 `httpx` 传输异常转为 `ToolException`，并按 `YUXI_MCP_TOOL_TIMEOUT_SECONDS`（默认 120 秒）放弃超时调用，由 `handle_tool_error` 返回工具错误消息，模型可提示数据源暂不可用并继续回答。

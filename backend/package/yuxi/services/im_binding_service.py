@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.config import config as app_config
@@ -57,10 +57,15 @@ FRONTEND_BINDING_RESULT_PATH = "/"
 
 @dataclass(frozen=True)
 class ChannelIdentity:
-    """Channel 入口解析出的真实执行身份。"""
+    """Channel 入口解析出的真实执行身份。
+
+    ``identity_source`` 区分三种来源：``binding``（绑定用户）、
+    ``owner_fallback``（SaaS 未绑定回退归属人，需要提示）与 ``owner``
+    （非 SaaS 部署直接按归属人执行，无需绑定提示）。
+    """
 
     user: User
-    owner_fallback: bool
+    identity_source: str
 
 
 def _hash_state(state: str) -> str:
@@ -100,8 +105,14 @@ async def _handle_tenant_error(uid: str | None, exc: Exception) -> NoReturn:
     if isinstance(exc, SaasAPIError):
         if exc.code == 20314:
             if uid:
-                await clear_saas_agent_session(uid)
-                await im_binding_cache.forget_user_bindings(uid)
+                try:
+                    await clear_saas_agent_session(uid)
+                    await im_binding_cache.forget_user_bindings(uid)
+                except Exception as cache_exc:  # 清理失败不能把 401 变成 500，缓存会自然过期
+                    logger.warning(
+                        f"IM binding cache clear failed on 20314: uid={uid}, "
+                        f"error={cache_exc.__class__.__name__}"
+                    )
             raise _binding_login_required()
         if exc.code == 20316:
             raise HTTPException(
@@ -264,11 +275,16 @@ async def _exchange_code(
 
 
 async def create_binding_session(db: AsyncSession, *, user: User, platform: str, base_url: str) -> dict:
-    """为用户创建一次性绑定会话，返回 ``{"bind_url", "expires_at"}``。"""
+    """为用户创建一次性绑定会话，返回 ``{"bind_url", "expires_at"}``。
+
+    绑定最终调用 Tenant 需要用户的 AgentSession，缺失时直接要求重新登录，
+    避免生成一张必然失败、却已写入 pending state 的二维码。
+    """
     _require_binding_enabled()
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
         raise ValueError("platform 只支持 feishu 或 dingtalk")
+    await _require_agent_session(user)
     bots = [bot for bot in await list_im_bots(db) if bot.enabled and bot.platform == platform]
     if len(bots) > 1:
         raise ValueError("同一平台只能有一个启用的机器人")
@@ -298,38 +314,45 @@ async def create_binding_session(db: AsyncSession, *, user: User, platform: str,
 async def complete_binding(db: AsyncSession, *, platform: str, code: str, state: str) -> str:
     """校验 state、换取平台身份并由 Tenant 保存绑定，返回前端回调路径。
 
-    state 单次可用的持久化顺序：先 COMMIT 置 used_at，再换取平台身份，最后调用
-    Tenant。代价是换取或 Tenant 失败会烧掉该 state，用户需重新生成二维码。
+    state 用条件 UPDATE 原子消费：只有 pending、未使用且未过期的行能被置为
+    used，并发回调最多一个成功。消费后立即 COMMIT，再换取平台身份并调用
+    Tenant；换取或 Tenant 失败会烧掉该 state，用户需重新生成二维码。
     """
     _require_binding_enabled()
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
         raise ValueError("platform 只支持 feishu 或 dingtalk")
 
-    result = await db.execute(select(IMBindingSession).where(IMBindingSession.state_hash == _hash_state(state)))
-    session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话无效或已过期"})
-    if session.platform != platform:
-        raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话平台不匹配"})
-    if session.status != "pending" or session.used_at is not None:
-        raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话已被使用"})
-    if session.expires_at <= utc_now_naive():
-        raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话已过期"})
-
-    # state 一次性消费：先置 used_at 并 COMMIT，使重放保证不依赖调用方事务。
-    session.status = "used"
-    session.used_at = utc_now_naive()
+    now = utc_now_naive()
+    consumed = await db.execute(
+        update(IMBindingSession)
+        .where(
+            IMBindingSession.state_hash == _hash_state(state),
+            IMBindingSession.platform == platform,
+            IMBindingSession.status == "pending",
+            IMBindingSession.used_at.is_(None),
+            IMBindingSession.expires_at > now,
+        )
+        .values(status="used", used_at=now)
+        .returning(IMBindingSession.user_id, IMBindingSession.bot_id)
+    )
+    row = consumed.one_or_none()
     await db.commit()
+    if row is None:
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_binding_state", "message": "绑定会话无效、已过期或已被使用"},
+        )
+    user_id, bot_id = row
 
     user = (
-        await db.execute(select(User).where(User.id == session.user_id, User.is_deleted == 0))
+        await db.execute(select(User).where(User.id == user_id, User.is_deleted == 0))
     ).scalar_one_or_none()
     if user is None:
         raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定用户不存在"})
     agent_session = await _require_agent_session(user)
 
-    bot = await get_im_bot(db, session.bot_id)
+    bot = await get_im_bot(db, bot_id)
     if bot is None:
         raise ValueError("绑定会话关联的机器人不存在")
     credentials = decrypt_credentials(platform, bot.credentials_encrypted)
@@ -478,14 +501,19 @@ async def _resolve_bound_user(db: AsyncSession, *, platform: str, sender_id: str
 
 
 async def resolve_channel_identity(
-    db: AsyncSession, *, transport_user: User, account_id: str, sender_id: str | None
+    db: AsyncSession,
+    *,
+    transport_user: User,
+    account_id: str,
+    sender_id: str | None,
+    transport_api_key_id: int | None,
 ) -> ChannelIdentity:
     """按 account_id 机器人归属与 sender_id 绑定解析真实执行身份。
 
-    ``account_id`` 不归属 ``transport_user`` 时抛 403；机器人停用时抛 403
-    ``im_bot_disabled``。非 SaaS 部署不启用绑定，始终以机器人归属人执行。
-    绑定身份先读 Redis 缓存，未命中才调用 Tenant；Tenant 不可达时失败关闭，
-    未绑定且 ``require_binding`` 打开时抛 409 ``im_account_not_bound``。
+    ``account_id`` 不归属 ``transport_user`` 或调用凭证不是该机器人的 API Key
+    时抛 403；机器人停用时抛 403 ``im_bot_disabled``。非 SaaS 部署不启用绑定，
+    始终以机器人归属人执行。绑定身份先读 Redis 缓存，未命中才调用 Tenant；
+    Tenant 不可达时失败关闭，未绑定且 ``require_binding`` 打开时抛 409。
     """
     try:
         bot_id = int(account_id)
@@ -497,6 +525,11 @@ async def resolve_channel_identity(
             status_code=403,
             detail={"code": "im_bot_not_owned", "message": "机器人不归属当前调用方"},
         )
+    if transport_api_key_id is None or bot.api_key_id is None or bot.api_key_id != transport_api_key_id:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "im_bot_credential_mismatch", "message": "调用凭证不是该机器人的 API Key"},
+        )
     if not bot.enabled:
         raise HTTPException(
             status_code=403,
@@ -504,24 +537,28 @@ async def resolve_channel_identity(
         )
 
     if not app_config.is_saas_enabled:
-        return ChannelIdentity(user=transport_user, owner_fallback=True)
+        return ChannelIdentity(user=transport_user, identity_source="owner")
 
     if sender_id:
-        cached_uid = await im_binding_cache.bind_uid(bot.platform, sender_id)
+        try:
+            cached_uid = await im_binding_cache.bind_uid(bot.platform, sender_id)
+        except Exception as exc:  # 缓存是加速层，读失败回退到 Tenant 冷启动回查
+            logger.warning(f"IM binding cache read failed: platform={bot.platform}, error={exc.__class__.__name__}")
+            cached_uid = None
         if cached_uid:
             bound_user = await _find_active_user(db, cached_uid)
             if bound_user is not None:
-                return ChannelIdentity(user=bound_user, owner_fallback=False)
+                return ChannelIdentity(user=bound_user, identity_source="binding")
         bound_user = await _resolve_bound_user(db, platform=bot.platform, sender_id=sender_id)
         if bound_user is not None:
-            return ChannelIdentity(user=bound_user, owner_fallback=False)
+            return ChannelIdentity(user=bound_user, identity_source="binding")
 
     if bot.require_binding:
         raise HTTPException(
             status_code=409,
             detail={"code": "im_account_not_bound", "message": "请先在 Yuxi 个人设置里绑定飞书/钉钉账号"},
         )
-    return ChannelIdentity(user=transport_user, owner_fallback=True)
+    return ChannelIdentity(user=transport_user, identity_source="owner_fallback")
 
 
 async def can_read_channel_run_as_bot_owner(db: AsyncSession, *, run: AgentRun | None, caller_uid: str) -> bool:

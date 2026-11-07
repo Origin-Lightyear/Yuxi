@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +21,7 @@ def _result_page(message: str) -> HTMLResponse:
     """渲染最小 HTML 结果页，供手机端扫码后直接查看。"""
     html = (
         '<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">'
-        f"<title>IM 账号绑定</title></head><body><p>{message}</p></body></html>"
+        f"<title>IM 账号绑定</title></head><body><p>{escape(message)}</p></body></html>"
     )
     return HTMLResponse(html)
 

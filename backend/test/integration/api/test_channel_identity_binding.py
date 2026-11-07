@@ -17,12 +17,13 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from server.utils.auth_middleware import AuthPrincipal
 from yuxi.services.im_binding_cache import bind_uid, forget_user_bindings, remember_binding
 from yuxi.services.saas_client import SaasAPIError, _parse_employee_auth
-from yuxi.storage.postgres.models_business import IMBotConfig, User
+from yuxi.storage.postgres.models_business import APIKey, IMBotConfig, User
 from yuxi.storage.redis import close_async_redis_client, get_async_redis_client
 
 channel_router = importlib.import_module("server.routers.agent_invocation_channel_router")
@@ -112,16 +113,29 @@ async def _create_user(session, uid: str) -> User:
     return user
 
 
-async def _create_bot(session, *, platform: str, owner_uid: str, require_binding: bool = False) -> IMBotConfig:
-    """创建临时机器人配置并返回；身份解析不读取凭证，占位密文即可。"""
+async def _create_bot(
+    session, *, platform: str, owner_uid: str, require_binding: bool = False, enabled: bool = True
+) -> IMBotConfig:
+    """创建临时机器人配置及其 API Key，返回可供身份解析校验的机器人。"""
+    owner = (await session.execute(select(User).where(User.uid == owner_uid))).scalar_one()
+    api_key = APIKey(
+        key_hash=uuid.uuid4().hex,
+        key_prefix="pytest",
+        name=f"pytest-bot-key-{uuid.uuid4().hex[:8]}",
+        user_id=owner.id,
+        created_by=owner.uid,
+    )
+    session.add(api_key)
+    await session.flush()
     bot = IMBotConfig(
         platform=platform,
         name=f"bot-{uuid.uuid4().hex[:8]}",
-        enabled=True,
+        enabled=enabled,
         credentials_encrypted="pytest-placeholder",
         owner_uid=owner_uid,
         agent_slug="default-chatbot",
         require_binding=require_binding,
+        api_key_id=api_key.id,
     )
     session.add(bot)
     await session.commit()
@@ -129,8 +143,13 @@ async def _create_bot(session, *, platform: str, owner_uid: str, require_binding
 
 
 async def _cleanup(session, user_uids: list[str]) -> None:
-    """删除测试机器人与用户，并清理绑定缓存。"""
+    """删除测试机器人、API Key 与用户，并清理绑定缓存。"""
+    user_ids = list(
+        (await session.execute(select(User.id).where(User.uid.in_(user_uids)))).scalars().all()
+    )
     await session.execute(delete(IMBotConfig).where(IMBotConfig.owner_uid.in_(user_uids)))
+    if user_ids:
+        await session.execute(delete(APIKey).where(APIKey.user_id.in_(user_ids)))
     await session.execute(delete(User).where(User.uid.in_(user_uids)))
     await session.commit()
     for uid in user_uids:
@@ -178,7 +197,7 @@ async def test_cached_sender_resolves_without_tenant_call(binding_engine, monkey
 
             result = await channel_router.receive_channel_message(
                 _payload(str(bot.id), "sender-1"),
-                current_user=owner,
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                 db=session,
             )
     finally:
@@ -206,12 +225,12 @@ async def test_cache_miss_authenticates_once_and_backfills(binding_engine, monke
 
             first = await channel_router.receive_channel_message(
                 _payload(str(bot.id), "sender-1"),
-                current_user=owner,
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                 db=session,
             )
             second = await channel_router.receive_channel_message(
                 _payload(str(bot.id), "sender-1"),
-                current_user=owner,
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                 db=session,
             )
             cached_uid = await bind_uid("feishu", "sender-1")
@@ -242,12 +261,47 @@ async def test_stale_cache_reauthenticates(binding_engine, monkeypatch, fake_ten
 
             result = await channel_router.receive_channel_message(
                 _payload(str(bot.id), "sender-1"),
-                current_user=owner,
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                 db=session,
             )
     finally:
         async with binding_engine() as session:
             await _cleanup(session, [owner_uid, bound_uid, "missing-user"])
+
+    assert result["identity_source"] == "binding"
+    assert captured["current_uid"] == bound_uid
+    assert fake_tenant.calls == [("FEISHU", "sender-1")]
+
+
+async def test_cache_read_failure_falls_back_to_tenant(binding_engine, monkeypatch, fake_tenant):
+    """Redis 读失败时回退到 Tenant 冷启动回查，不把 IM 消息变成 500。"""
+    import yuxi.services.im_binding_service as im_binding_service
+
+    uid = uuid.uuid4().hex[:10]
+    owner_uid = f"owner-{uid}"
+    bound_uid = f"bound-{uid}"
+    captured = _capture_submit(monkeypatch)
+    fake_tenant.auth_result = _employee_auth(bound_uid)
+
+    async def failing_bind_uid(platform, channel_user_id):
+        del platform, channel_user_id
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(im_binding_service.im_binding_cache, "bind_uid", failing_bind_uid)
+
+    try:
+        async with binding_engine() as session:
+            owner = await _create_user(session, owner_uid)
+            bot = await _create_bot(session, platform="feishu", owner_uid=owner.uid)
+
+            result = await channel_router.receive_channel_message(
+                _payload(str(bot.id), "sender-1"),
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
+                db=session,
+            )
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [owner_uid, bound_uid])
 
     assert result["identity_source"] == "binding"
     assert captured["current_uid"] == bound_uid
@@ -268,7 +322,7 @@ async def test_unbound_sender_falls_back_to_owner(binding_engine, monkeypatch, f
 
             result = await channel_router.receive_channel_message(
                 _payload(str(bot.id), "unknown-sender"),
-                current_user=owner,
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                 db=session,
             )
     finally:
@@ -300,7 +354,7 @@ async def test_unbound_sender_required_binding_rejects(binding_engine, monkeypat
             with pytest.raises(HTTPException) as exc_info:
                 await channel_router.receive_channel_message(
                     _payload(str(bot.id), "unknown-sender"),
-                    current_user=owner,
+                    principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                     db=session,
                 )
     finally:
@@ -333,7 +387,7 @@ async def test_tenant_unavailable_fails_closed(binding_engine, monkeypatch, fake
             with pytest.raises(HTTPException) as exc_info:
                 await channel_router.receive_channel_message(
                     _payload(str(bot.id), "sender-1"),
-                    current_user=owner,
+                    principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                     db=session,
                 )
     finally:
@@ -361,14 +415,14 @@ async def test_non_saas_keeps_owner_identity(binding_engine, monkeypatch, fake_t
 
             result = await channel_router.receive_channel_message(
                 _payload(str(bot.id), "sender-1"),
-                current_user=owner,
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                 db=session,
             )
     finally:
         async with binding_engine() as session:
             await _cleanup(session, [owner_uid])
 
-    assert result["identity_source"] == "owner_fallback"
+    assert result["identity_source"] == "owner"
     assert captured["current_uid"] == owner_uid
     assert fake_tenant.calls == []
 
@@ -388,7 +442,7 @@ async def test_bot_not_owned_by_transport_user_rejects(binding_engine, fake_tena
             with pytest.raises(HTTPException) as exc_info:
                 await channel_router.receive_channel_message(
                     _payload(str(bot_b.id), "sender-1"),
-                    current_user=owner_a,
+                    principal=AuthPrincipal(user=owner_a, api_key_id=bot_b.api_key_id),
                     db=session,
                 )
     finally:
@@ -397,6 +451,31 @@ async def test_bot_not_owned_by_transport_user_rejects(binding_engine, fake_tena
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail["code"] == "im_bot_not_owned"
+
+
+async def test_disabled_bot_rejects_before_identity_resolution(binding_engine, fake_tenant):
+    """机器人停用时返回 403 ``im_bot_disabled``，不解析身份也不调用 Tenant。"""
+    uid = uuid.uuid4().hex[:10]
+    owner_uid = f"owner-{uid}"
+
+    try:
+        async with binding_engine() as session:
+            owner = await _create_user(session, owner_uid)
+            bot = await _create_bot(session, platform="feishu", owner_uid=owner.uid, enabled=False)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await channel_router.receive_channel_message(
+                    _payload(str(bot.id), "sender-1"),
+                    principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
+                    db=session,
+                )
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [owner_uid])
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["code"] == "im_bot_disabled"
+    assert fake_tenant.calls == []
 
 
 async def test_state_command_returns_identity_source(binding_engine, monkeypatch, fake_tenant):
@@ -421,7 +500,7 @@ async def test_state_command_returns_identity_source(binding_engine, monkeypatch
 
             result = await channel_router.receive_channel_message(
                 _payload(str(bot.id), "sender-1", text="/state"),
-                current_user=owner,
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                 db=session,
             )
     finally:
@@ -452,7 +531,7 @@ async def test_state_command_without_sender_falls_back_to_owner(binding_engine, 
 
             result = await channel_router.receive_channel_message(
                 _payload(str(bot.id), None, text="/state"),
-                current_user=owner,
+                principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                 db=session,
             )
     finally:
@@ -477,7 +556,7 @@ async def test_reject_without_pending_approval_returns_conflict(binding_engine, 
             with pytest.raises(HTTPException) as exc_info:
                 await channel_router.receive_channel_message(
                     _payload(str(bot.id), None, text="/reject"),
-                    current_user=owner,
+                    principal=AuthPrincipal(user=owner, api_key_id=bot.api_key_id),
                     db=session,
                 )
     finally:

@@ -220,3 +220,27 @@ async def test_save_saas_login_state_ignores_preheat_failure(monkeypatch):
     )
 
     await auth_router._save_saas_login_state("EMP001", emp, "runtime-1")
+
+
+async def test_logout_clears_binding_cache_without_agent_session(monkeypatch):
+    """即使 Tenant 会话已过期，登出仍要清理本机 IM 绑定缓存。"""
+    from types import SimpleNamespace
+
+    from yuxi.services import im_binding_cache, saas_session
+
+    cleared: list[str] = []
+
+    async def no_session(uid):
+        del uid
+        return None
+
+    async def fake_forget(uid):
+        cleared.append(uid)
+
+    monkeypatch.setattr(saas_session, "get_saas_agent_session", no_session)
+    monkeypatch.setattr(im_binding_cache, "forget_user_bindings", fake_forget)
+
+    result = await auth_router.logout(current_user=SimpleNamespace(uid="EMP001"))
+
+    assert result == {"success": True}
+    assert cleared == ["EMP001"]

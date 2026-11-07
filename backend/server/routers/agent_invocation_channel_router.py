@@ -23,7 +23,7 @@ from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, su
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.hash_utils import hash_id
 
-from server.utils.auth_middleware import get_db, get_required_user
+from server.utils.auth_middleware import AuthPrincipal, get_db, get_required_principal
 
 agent_invocation_channel_router = APIRouter(prefix="/agent-invocation/channel", tags=["agent-invocation"])
 
@@ -56,24 +56,33 @@ class ChannelMessageRequest(BaseModel):
 @agent_invocation_channel_router.post("/messages")
 async def receive_channel_message(
     payload: ChannelMessageRequest,
-    current_user: User = Depends(get_required_user),
+    principal: AuthPrincipal = Depends(get_required_principal),
     db: AsyncSession = Depends(get_db),
 ):
     """处理纯文本 Channel 消息或最小 slash command。"""
     channel = _normalize_required(payload.channel, "channel")
     account_id = _normalize_required(payload.account_id, "account_id")
     agent_slug = _normalize_required(payload.agent_slug, "agent_slug")
+    current_user = principal.user
 
     identity_source = None
     if channel in PLATFORMS:
+        # IM 渠道由网关用机器人自己的 API Key 调用；JWT 不能代替传输凭证，
+        # 否则机器人归属人可以凭自己的登录态冒充任意已绑定 sender。
+        if principal.api_key_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "im_channel_api_key_required", "message": "IM 渠道只接受机器人 API Key"},
+            )
         identity = await resolve_channel_identity(
             db,
             transport_user=current_user,
             account_id=account_id,
             sender_id=payload.sender_id,
+            transport_api_key_id=principal.api_key_id,
         )
         current_user = identity.user
-        identity_source = "binding" if not identity.owner_fallback else "owner_fallback"
+        identity_source = identity.identity_source
 
     thread_id = _resolve_thread_id(
         uid=str(current_user.uid),

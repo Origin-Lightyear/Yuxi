@@ -6,6 +6,8 @@
 
 **Architecture:** 新增 `im_account_bindings`（平台身份 ↔ 用户映射）与 `im_binding_sessions`（一次性 state）两张表，加上 `im_bot_configs.require_binding` 开关。绑定入口在 Yuxi 侧，用该平台唯一启用机器人的凭据发起平台 OAuth，回调换取平台用户 ID 后落库。Channel 入口保留「API Key = 机器人归属人」的传输身份用于校验调用方，再按 `(platform, sender_id)` 解析真实用户；未绑定时按开关分流为「回退归属人 + 提示」或「409 拦截」。
 
+> **修订（Phase 2）**：下方 Phase 1 的 `im_account_bindings` 本地表设计已被取代。最终方案不再由 Yuxi 保存绑定关系，Tenant 是唯一保存方，Yuxi 只保留 `im_binding_sessions` 一次性 state 与 TTL 对齐的 Redis 缓存。以本计划末尾 Phase 2 任务与决策记录为准。
+
 **Tech Stack:** FastAPI + SQLAlchemy(async) + PostgreSQL、httpx、Vue 3 + Ant Design Vue、`qrcode`（前端渲染二维码）、pytest / vitest。
 
 **Spec:** `docs/develop-guides/decisions/implemented/2026-11-01-im-account-binding.md`
@@ -29,7 +31,7 @@
 - **伪造 `account_id`**：持有任意 API Key 的调用方不能通过传别人的 `account_id` 拿到别人的绑定身份，必须校验机器人归属。
 - **同平台身份被换绑**：另一个用户完成授权时不能覆盖已有绑定，必须拒绝并引导先解绑。
 - **state 重放 / 过期**：用过或过期的 state 必须失败，不能写出绑定。
-- **过渡期静默**：`require_binding=false` 且未绑定时，响应必须带 `identity_source=owner_fallback`，网关必须附提示，用户不能毫不知情。
+- **过渡期静默**：`require_binding=false` 且未绑定时，响应必须带 `identity_source=owner_fallback`，网关必须附提示，用户不能毫不知情；非 SaaS 部署直接按归属人执行，返回 `identity_source=owner`，不附绑定提示。
 
 ---
 
@@ -118,7 +120,7 @@ git commit -m "feat(im-binding): 新增 IM 账号绑定与绑定会话数据模�
 
 **Interfaces:**
 - Produces:
-  - `@dataclass(frozen=True) ChannelIdentity: user: User; owner_fallback: bool`
+  - `@dataclass(frozen=True) ChannelIdentity: user: User; identity_source: str`（`binding` / `owner_fallback` / `owner`）
   - `async def create_binding_session(db, *, user: User, platform: str, base_url: str) -> dict`（返回 `{"bind_url", "expires_at"}`）
   - `async def complete_binding(db, *, platform: str, code: str, state: str) -> str`（返回前端回调路径）
   - `async def list_bindings(db, *, user_id: int) -> list[dict]`
@@ -135,7 +137,7 @@ git commit -m "feat(im-binding): 新增 IM 账号绑定与绑定会话数据模�
 2. `test_complete_binding_consumes_state_once`：第一次成功写入绑定；同一 state 第二次调用抛 `HTTPException(400, detail={"code": "invalid_binding_state", ...})`。
 3. `test_complete_binding_rejects_identity_owned_by_other_user`：已有他人绑定时抛 `HTTPException(409, detail={"code": "im_account_already_bound", ...})`。
 4. `test_complete_binding_rejects_expired_state`：`expires_at` 已过期时抛 `HTTPException(400, detail={"code": "invalid_binding_state", ...})`，且不写绑定。
-5. `test_resolve_channel_identity_falls_back_to_owner_when_not_required`：`require_binding=False` 且无绑定时返回 `ChannelIdentity(user=transport_user, owner_fallback=True)`；`require_binding=True` 时抛 409 `im_account_not_bound`。
+5. `test_resolve_channel_identity_falls_back_to_owner_when_not_required`：`require_binding=False` 且无绑定时返回 `identity_source="owner_fallback"`；`require_binding=True` 时抛 409 `im_account_not_bound`；非 SaaS 返回 `identity_source="owner"`。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -145,7 +147,7 @@ git commit -m "feat(im-binding): 新增 IM 账号绑定与绑定会话数据模�
 
 授权 URL：飞书 `https://open.feishu.cn/open-apis/authen/v1/index`（`app_id`、`redirect_uri`、`state`）；钉钉 `https://login.dingtalk.com/oauth2/auth`（`response_type=code`、`client_id`、`redirect_uri`、`scope=openid`、`state`、`prompt=consent`）。
 换取身份：飞书 `POST /open-apis/authen/v1/access_token`（`tenant_access_token` 换 `user_access_token`）后读 `data.open_id`/`data.union_id`；钉钉 `POST https://api.dingtalk.com/v1.0/oauth2/userAccessToken` 拿 `accessToken`，再 `GET https://api.dingtalk.com/v1.0/contact/users/me` 取 `unionId`，最后 `POST https://oapi.dingtalk.com/topapi/v2/user/getbyunionid` 取 `result.userid`。
-`resolve_channel_identity`：先按 `bot_id == int(account_id)` 取机器人并校验 `bot.owner_uid == transport_user.uid`，再按 `(bot.platform, sender_id)` 查绑定，命中则查出绑定用户返回 `owner_fallback=False`。
+`resolve_channel_identity`：先按 `bot_id == int(account_id)` 取机器人并校验 `bot.owner_uid == transport_user.uid`，再按 `(bot.platform, sender_id)` 查绑定，命中则查出绑定用户返回 `identity_source="binding"`。
 
 - [ ] **Step 4: 跑测试通过**（同 Step 2 命令）
 
@@ -201,12 +203,12 @@ git commit -m "feat(im-binding): 提供绑定会话、回调与解绑接口"
 
 **Interfaces:**
 - Consumes: `resolve_channel_identity`、`ChannelIdentity`（Task 2）。
-- Produces: Channel 响应体新增 `identity_source: "binding" | "owner_fallback"`。
+- Produces: Channel 响应体新增 `identity_source: "binding" | "owner_fallback" | "owner"`。
 
 - [ ] **Step 1: 写失败测试**
 
 1. 已绑定 sender 的消息：run 的 `uid` 等于绑定用户 uid，响应 `identity_source == "binding"`。
-2. 未绑定 + `require_binding=false`：run 的 `uid` 等于机器人归属人，响应 `identity_source == "owner_fallback"`。
+2. 未绑定 + `require_binding=false`（SaaS）：run 的 `uid` 等于机器人归属人，响应 `identity_source == "owner_fallback"`；非 SaaS 返回 `identity_source == "owner"`。
 3. 未绑定 + `require_binding=true`：HTTP 409，`detail.code == "im_account_not_bound"`，且不产生 run。
 4. 用 A 的 API Key 提交 `account_id=B` 的机器人：403。
 
@@ -320,3 +322,148 @@ changelog 增一条（≤200 字）；decision record 移入 `docs/develop-guide
 git add docs/develop-guides/changelog.md docs/develop-guides/decisions backend/test/e2e/test_im_binding_flow.py
 git commit -m "docs(im-binding): 记录 IM 账号绑定的证据与未验证范围"
 ```
+
+---
+
+## Phase 2: Tenant 是绑定关系唯一保存方
+
+**背景：** Phase 1 把绑定关系写入 Yuxi 的 `im_account_bindings`，与 Tenant 的 `employee/channel-bindings` 形成两份事实。Phase 2 改为 Tenant 唯一保存，Yuxi 只保留一次性 OAuth state（`im_binding_sessions`）和一份 TTL 与 Tenant AgentSession 对齐的 Redis 映射缓存，用于 IM 消息侧避免每条消息都调用 Tenant。非 SaaS 部署不启用绑定，IM 继续按机器人归属人执行。
+
+**Tenant 契约：** `docs/advanced/agent-channel-binding-api.md`（四接口、`AgentSession` 员工认证、`X-Tenant-Admin-Key` 平台登录、错误码 `20314/20316/20302/20317/20206`）。
+
+### Task 8: Tenant 渠道绑定客户端与 Redis 缓存原语
+
+**Files:**
+- Modify: `backend/package/yuxi/services/saas_client.py`
+- Create: `backend/package/yuxi/services/im_binding_cache.py`
+- Test: `backend/test/unit/services/test_saas_client.py`、`backend/test/unit/services/test_im_binding_cache.py`
+
+**Interfaces:**
+- Produces:
+  - `SaasClient.bind_channel_account(agent_session_token: str, channel_type: str, channel_user_id: str) -> dict`
+  - `SaasClient.unbind_channel_account(agent_session_token: str, channel_type: str) -> None`
+  - `SaasClient.list_channel_bindings(agent_session_token: str) -> list[dict]`
+  - `SaasClient.authenticate_channel(channel_type: str, channel_user_id: str) -> EmployeeAuthResult`
+  - `im_binding_cache.bind_uid(platform, channel_user_id) -> str | None`
+  - `im_binding_cache.remember_binding(*, uid, platform, channel_user_id, ttl_seconds) -> None`
+  - `im_binding_cache.forget_binding(*, uid, platform) -> None`
+  - `im_binding_cache.forget_user_bindings(uid) -> None`
+
+- [ ] **Step 1: 写失败测试**
+  - `SaasClient`：绑定请求方法/路径/`Authorization: AgentSession <token>`/`{channelType: "FEISHU", channelUserId}`；解绑 `DELETE .../channel-bindings/DINGTALK` 无请求体；查询返回数组；`code != 0` 抛 `SaasAPIError(code=20316)`；平台登录请求头 `X-Tenant-Admin-Key` 且不发员工 Token；管理密钥为空时不发请求直接抛 `SaasAPIError(20317)`。
+  - 缓存：`remember_binding` 同时写正向与反向键且 `ex=ttl_seconds`；`bind_uid` 未命中返回 `None`；`forget_binding` 先按反向键删除正向键；键里不能出现明文 token。
+- [ ] **Step 2: 运行确认失败**
+  `docker compose exec -T api python -m pytest test/unit/services/test_saas_client.py test/unit/services/test_im_binding_cache.py -q` → 期望缺符号/失败。
+- [ ] **Step 3: 实现**
+  - `channel_type_for(platform)` 把 `feishu/dingtalk` 映射为 `FEISHU/DINGTALK`，其他平台抛 `ValueError`。
+  - 统一 `{code,msg,data}` 校验沿用 `_check_response`；网络与 HTTP 异常原样抛出，由调用方映射为失败关闭。
+  - 缓存键：正向 `saas:im-binding:{platform}:{channel_user_id}`，反向 `saas:im-binding:uid:{uid}:{platform}`；值只存 uid 与 channelUserId。
+- [ ] **Step 4: 跑测试通过**（同 Step 2 命令）
+- [ ] **Step 5: 提交**
+  ```bash
+  git add backend/package/yuxi/services/saas_client.py backend/package/yuxi/services/im_binding_cache.py backend/test/unit/services/test_saas_client.py backend/test/unit/services/test_im_binding_cache.py
+  git commit -m "feat(im-binding): 接入 Tenant 渠道绑定接口与身份缓存原语"
+  ```
+
+### Task 9: 绑定/解绑/查询改为 Tenant 唯一保存
+
+**Files:**
+- Modify: `backend/package/yuxi/services/im_binding_service.py`
+- Modify: `backend/server/routers/im_binding_router.py`
+- Test: `backend/test/integration/services/test_im_binding_service.py`、`backend/test/integration/api/test_im_binding_router.py`
+
+**Interfaces:**
+- Consumes: Task 8 客户端与缓存。
+- Produces: `list_bindings(db, *, user) -> list[dict]`、`delete_binding(db, *, user, platform) -> None`、`complete_binding(...) -> str`（成功即 Tenant 已保存）。
+- 地图：Tenant `channelType → platform` 小写；`channelUserId → platform_user_id`；`boundAt → created_at`；只返回 `feishu/dingtalk` 且 `bound=true`。
+
+- [ ] **Step 1: 写失败测试**
+  1. `complete_binding` 成功路径调用 `bind_channel_account` 并在成功后才返回；Tenant `20316` → 409 `im_account_already_bound`；Tenant `20314` → 清理会话缓存并 401 `im_binding_login_required`；Tenant 网络失败 → 502 `im_binding_tenant_unavailable`；无本地 AgentSession → 401，且不调用 Tenant。
+  2. 绑定时 `require_binding=false` / state 重放 / 过期 / 平台不匹配沿用 Phase 1 断言。
+  3. `list_bindings` 只映射 Tenant 结果，不读本地绑定表；`delete_binding` 调解绑并删除缓存，Tenant 未绑定仍成功。
+  4. 非 SaaS（`app_config.saas_enabled=False`）时三个用户接口都返回 400 `im_binding_not_enabled`。
+- [ ] **Step 2: 运行确认失败**（同文件路径 `-q`）
+- [ ] **Step 3: 实现**
+  - 所有用户接口先取 `get_saas_agent_session(user.uid)`；缺失即 401，绝不落本地绑定。
+  - `complete_binding` 保持「先提交 used_at，再换平台身份」；换取身份后必须成功调用 Tenant 才算绑定成功，并写正向/反向缓存。
+  - Tenant 错误码映射集中在一个 helper，日志只记录 code，不记录 token/密钥。
+- [ ] **Step 4: 跑测试通过**
+- [ ] **Step 5: 提交**
+  ```bash
+  git add backend/package/yuxi/services/im_binding_service.py backend/server/routers/im_binding_router.py backend/test/integration/services/test_im_binding_service.py backend/test/integration/api/test_im_binding_router.py
+  git commit -m "feat(im-binding): 绑定关系改由 Tenant 唯一保存"
+  ```
+
+### Task 10: 消息身份先查缓存、冷启动调 Tenant、失败关闭
+
+**Files:**
+- Modify: `backend/package/yuxi/services/im_binding_service.py`
+- Test: `backend/test/integration/api/test_channel_identity_binding.py`、`backend/test/e2e/test_im_binding_flow.py`
+
+**Interfaces:**
+- Consumes: `im_binding_cache.bind_uid`、`SaasClient.authenticate_channel`。
+- Produces: `resolve_channel_identity` 行为：
+  - 非 SaaS → `ChannelIdentity(user=transport_user, identity_source="owner")`，不调用 Tenant，`require_binding` 不生效。
+  - 缓存命中 → 直接解析本地用户，0 次 Tenant 调用。
+  - 缓存未命中 → 调一次 `auth/channel`，成功后 `find_or_create_saas_user` 并回填缓存。
+  - Tenant `20206` → 按 `require_binding` 分流（409 或归属人回退）。
+  - Tenant 不可达/其他错误 → 502 `im_binding_unavailable`，不得回退归属人。
+
+- [ ] **Step 1: 写失败测试**（真实 PostgreSQL + 真实 Redis；Tenant 客户端 monkeypatch）
+  1. 命中缓存的已绑定 sender：`identity_source=binding`，`authenticate_channel` 调用次数为 0。
+  2. 缓存未命中：调用一次 `authenticate_channel` 并把 uid 写入缓存，第二次消息不再调用。
+  3. `20206` + `require_binding=true` → 409；`20206` + `false` → `owner_fallback`。
+  4. Tenant 网络错误 → 502 `im_binding_unavailable`，不提交 Run。
+  5. 非 SaaS 且 `require_binding=true` → 仍 `identity_source="owner"`，不触碰 Tenant。
+- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 3: 实现**
+  - 缓存命中后按 uid 查 `users`，用户不存在时视为未命中并重新认证。
+  - 冷启动用户的 `employee_code` 即本地 uid；创建走 `find_or_create_saas_user`，不复制 Tenant Session。
+- [ ] **Step 4: 跑测试通过**（含 `test/unit/routers/test_agent_invocation_channel_router.py`）
+- [ ] **Step 5: 提交**
+  ```bash
+  git add backend/package/yuxi/services/im_binding_service.py backend/test/integration/api/test_channel_identity_binding.py backend/test/e2e/test_im_binding_flow.py
+  git commit -m "feat(im-binding): IM 消息身份走缓存并在冷启动回查 Tenant"
+  ```
+
+### Task 11: 登录保存会话并预热缓存，移除本地绑定表
+
+**Files:**
+- Modify: `backend/server/routers/auth_router.py`（登录无条件保存 AgentSession 并预热；登出清缓存）
+- Modify: `backend/package/yuxi/storage/postgres/models_business.py`（删除 `IMAccountBinding`）
+- Modify: `backend/package/yuxi/storage/postgres/manager.py`（删除建表语句）
+- Modify: `backend/test/integration/storage/test_im_binding_schema.py`、`backend/test/unit/storage/test_postgres_manager_schema.py`
+- Modify: `web/src/components/SettingsModal.vue`（`imAccounts` tab 只在 `saasMode` 下出现）
+
+- [ ] **Step 1: 写失败测试**
+  - 登录成功且 `selected_mcp is None` 时仍保存 `SaasAgentSession`，并调用一次 `list_channel_bindings` 填入缓存。
+  - 预热失败不影响登录返回。
+  - `models_business` 不再导出 `IMAccountBinding`；`ensure_business_schema` 不再创建 `im_account_bindings`，但仍创建 `im_binding_sessions` 与 `require_binding` 列。
+  - 前端 `availableTabs` 在 `saasMode=false` 时不包含 `imAccounts`。
+- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 3: 实现**
+  - `SaasAgentSession.mcp_instance_id` 在无 MCP 时为 `""`。
+  - 历史库已有的 `im_account_bindings` 表不删除、不读取；决策记录写明其成为无消费者残留。
+- [ ] **Step 4: 跑测试通过**
+- [ ] **Step 5: 提交**
+  ```bash
+  git add backend/server/routers/auth_router.py backend/package/yuxi/storage/postgres/models_business.py backend/package/yuxi/storage/postgres/manager.py backend/test/integration/storage/test_im_binding_schema.py backend/test/unit/storage/test_postgres_manager_schema.py web/src/components/SettingsModal.vue
+  git commit -m "refactor(im-binding): 登录预热绑定缓存并移除本地绑定表"
+  ```
+
+### Task 12: 文档、完整验证与复审
+
+**Files:**
+- Modify: `docs/develop-guides/decisions/implemented/2026-11-01-im-account-binding.md`
+- Modify: `docs/develop-guides/changelog.md`
+- Modify: `docs/superpowers/plans/2026-11-01-im-account-binding.md`
+
+- [ ] **Step 1: 改写决策记录**：Tenant 唯一保存、Redis 缓存与 TTL、失败语义、非 SaaS 停用、历史表残留、验证命令与未验证范围。
+- [ ] **Step 2: 更新 changelog 原条目**：不新增重复条目。
+- [ ] **Step 3: 跑完整验证**：unit + 相关 integration + e2e（可跳过范围要记录）+ 网关 + 前端 + 工程契约。
+- [ ] **Step 4: 全新 Reviewer 复审**，修复 Critical/Important。
+- [ ] **Step 5: 提交**
+  ```bash
+  git add docs/develop-guides/decisions docs/develop-guides/changelog.md docs/superpowers/plans
+  git commit -m "docs(im-binding): 记录 Tenant 唯一保存与缓存语义"
+  ```

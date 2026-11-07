@@ -48,6 +48,7 @@ async def test_preheat_binding_cache_writes_bound_platforms_and_clears_stale(mon
 
     remembered: list[dict] = []
     forgotten: list[str] = []
+    seen_expires_at: list[str] = []
 
     class _FakeClient:
         async def list_channel_bindings(self, token):
@@ -67,6 +68,11 @@ async def test_preheat_binding_cache_writes_bound_platforms_and_clears_stale(mon
     monkeypatch.setattr(im_binding_service, "get_saas_client", lambda: _FakeClient())
     monkeypatch.setattr(im_binding_service.im_binding_cache, "remember_binding", fake_remember)
     monkeypatch.setattr(im_binding_service.im_binding_cache, "forget_binding", fake_forget)
+    monkeypatch.setattr(
+        im_binding_service,
+        "get_saas_session_ttl_seconds",
+        lambda expires_at: seen_expires_at.append(expires_at) or 600,
+    )
 
     count = await im_binding_service.preheat_binding_cache(
         "emp-1",
@@ -80,9 +86,10 @@ async def test_preheat_binding_cache_writes_bound_platforms_and_clears_stale(mon
     )
 
     assert count == 1
+    assert seen_expires_at == ["1793974830"]
     assert forgotten == ["dingtalk", "feishu"]
     assert len(remembered) == 1
     assert remembered[0]["uid"] == "emp-1"
     assert remembered[0]["platform"] == "feishu"
     assert remembered[0]["channel_user_id"] == "ou-1"
-    assert remembered[0]["ttl_seconds"] > 0
+    assert remembered[0]["ttl_seconds"] == 600

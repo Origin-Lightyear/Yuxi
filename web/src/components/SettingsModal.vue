@@ -86,7 +86,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'imBots' }"
             @click="activeTab = 'imBots'"
-            v-if="userStore.isAdmin && !userStore.saasMode"
+            v-if="userStore.isAdmin"
           >
             <Bot class="icon" :size="18" />
             <span>IM 机器人</span>
@@ -206,7 +206,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'imBots' }"
           @click="activeTab = 'imBots'"
-          v-if="userStore.isAdmin && !userStore.saasMode"
+          v-if="userStore.isAdmin"
         >
           IM 机器人
         </div>
@@ -256,7 +256,7 @@
             <DepartmentManagementComponent />
           </div>
 
-          <div v-show="activeTab === 'imBots'" v-if="userStore.isAdmin && !userStore.saasMode">
+          <div v-show="activeTab === 'imBots'" v-if="userStore.isAdmin">
             <ImBotManagementComponent />
           </div>
         </div>
@@ -338,7 +338,8 @@ const availableTabs = computed(() => {
   if (userStore.isLoggedIn && userStore.saasMode) tabs.push('imAccounts')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('apiKeys')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('agentEnv')
-  if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user', 'imBots')
+  if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user')
+  if (userStore.isAdmin) tabs.push('imBots')
   if (userStore.isSuperAdmin && !userStore.saasMode) tabs.push('department')
   return tabs
 })

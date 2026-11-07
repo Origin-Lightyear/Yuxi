@@ -1,4 +1,5 @@
 import hashlib
+from dataclasses import dataclass
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -47,11 +48,16 @@ async def _verify_api_key(key: str, db: AsyncSession) -> tuple[User | None, APIK
     return None, None
 
 
-# 获取当前用户（异步版本）
-async def get_current_user(
-    authorization: str | None = Header(None),
-    db: AsyncSession = Depends(get_db),
-):
+@dataclass(frozen=True)
+class AuthPrincipal:
+    """当前请求的认证主体；``api_key_id`` 仅在 API Key 认证时存在。"""
+
+    user: User
+    api_key_id: int | None = None
+
+
+async def _resolve_principal(authorization: str | None, db: AsyncSession) -> AuthPrincipal | None:
+    """解析 Bearer 凭证并返回认证主体，JWT 与 API Key 都保留来源差异。"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="无效的凭证",
@@ -75,7 +81,8 @@ async def get_current_user(
         if user is not None and api_key_obj is not None:
             api_key_obj.last_used_at = utc_now_naive()
             await db.commit()
-        return user
+            return AuthPrincipal(user=user, api_key_id=api_key_obj.id)
+        return None
 
     # JWT Token 认证
     try:
@@ -117,23 +124,47 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-    return user
+    return AuthPrincipal(user=user, api_key_id=None)
 
 
-# 获取已登录用户（抛出401如果未登录）
-async def get_required_user(user: User | None = Depends(get_current_user)):
-    if user is None:
+# 获取当前认证主体（异步版本）
+async def get_current_principal(
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> AuthPrincipal | None:
+    return await _resolve_principal(authorization, db)
+
+
+# 获取当前用户（异步版本）
+async def get_current_user(
+    principal: AuthPrincipal | None = Depends(get_current_principal),
+) -> User | None:
+    return principal.user if principal is not None else None
+
+
+# 获取已登录认证主体（抛出401如果未登录）
+async def get_required_principal(
+    principal: AuthPrincipal | None = Depends(get_current_principal),
+) -> AuthPrincipal:
+    if principal is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="请登录后再访问",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if not user.department_id:
+    if not principal.user.department_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="当前用户未绑定部门",
         )
-    return user
+    return principal
+
+
+# 获取已登录用户（抛出401如果未登录）
+async def get_required_user(
+    principal: AuthPrincipal = Depends(get_required_principal),
+) -> User:
+    return principal.user
 
 
 # 获取管理员用户

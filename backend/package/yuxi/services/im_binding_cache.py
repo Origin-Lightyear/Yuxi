@@ -36,11 +36,15 @@ async def bind_uid(platform: str, channel_user_id: str) -> str | None:
 
 
 async def remember_binding(*, uid: str, platform: str, channel_user_id: str, ttl_seconds: int) -> None:
-    """写入正向与反向映射，TTL 取 Tenant AgentSession 剩余有效秒数。"""
+    """写入反向与正向映射，TTL 取 Tenant AgentSession 剩余有效秒数。
+
+    先写反向键再写正向键：正向键是消息侧唯一消费入口，第二次写入失败时不能
+    留下无法通过反向键清理的悬空映射。
+    """
     redis = await get_async_redis_client()
     ttl = max(1, int(ttl_seconds))
-    await redis.set(_forward_key(platform, channel_user_id), uid, ex=ttl)
     await redis.set(_reverse_key(uid, platform), channel_user_id, ex=ttl)
+    await redis.set(_forward_key(platform, channel_user_id), uid, ex=ttl)
 
 
 async def forget_binding(*, uid: str, platform: str) -> None:

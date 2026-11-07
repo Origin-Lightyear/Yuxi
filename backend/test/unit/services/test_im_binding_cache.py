@@ -56,6 +56,27 @@ async def test_remember_binding_writes_forward_and_reverse_with_ttl(fake_redis):
 
 
 @pytest.mark.asyncio
+async def test_remember_binding_failure_on_forward_write_leaves_no_forward_mapping(fake_redis):
+    """第二次写入（正向键）失败时不能留下消息侧会命中的映射。"""
+    original_set = fake_redis.set
+
+    async def failing_forward_set(key, value, ex=None):
+        if key.startswith("saas:im-binding:feishu:"):
+            raise RuntimeError("redis down")
+        await original_set(key, value, ex)
+
+    fake_redis.set = failing_forward_set
+
+    with pytest.raises(RuntimeError, match="redis down"):
+        await im_binding_cache.remember_binding(
+            uid="emp-1", platform="feishu", channel_user_id="ou_1", ttl_seconds=60
+        )
+
+    assert "saas:im-binding:feishu:ou_1" not in fake_redis.values
+    assert fake_redis.values == {"saas:im-binding:uid:emp-1:feishu": "ou_1"}
+
+
+@pytest.mark.asyncio
 async def test_bind_uid_returns_none_when_missing(fake_redis):
     """未命中返回 None，调用方据此回查 Tenant。"""
     assert await im_binding_cache.bind_uid("feishu", "ou-missing") is None

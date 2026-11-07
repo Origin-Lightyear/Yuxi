@@ -7,20 +7,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
 
 import asyncpg
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from e2e_helpers import postgres_dsn
 from test.live_api_cleanup import delete_test_conversation_rows
 from yuxi.config import config as app_config
 from yuxi.services.im_binding_cache import forget_user_bindings, remember_binding
-from yuxi.storage.postgres.models_business import IMBotConfig, User
+from yuxi.storage.postgres.models_business import APIKey, IMBotConfig, User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -46,8 +47,19 @@ async def _create_user(session, uid: str) -> User:
 
 async def _create_bot(
     session, *, platform: str, owner_uid: str, agent_slug: str, require_binding: bool
-) -> IMBotConfig:
-    """创建临时启用机器人配置并返回；身份解析不读取凭证，占位密文即可。"""
+) -> tuple[IMBotConfig, str]:
+    """创建临时启用机器人及其 API Key，返回机器人与明文调用凭证。"""
+    owner = (await session.execute(select(User).where(User.uid == owner_uid))).scalar_one()
+    token = f"yxkey_e2e_{uuid.uuid4().hex}"
+    api_key = APIKey(
+        key_hash=hashlib.sha256(token.encode()).hexdigest(),
+        key_prefix=token[:12],
+        name=f"e2e-im-bot-key-{uuid.uuid4().hex[:8]}",
+        user_id=owner.id,
+        created_by=owner_uid,
+    )
+    session.add(api_key)
+    await session.flush()
     bot = IMBotConfig(
         platform=platform,
         name=f"e2e-im-bot-{uuid.uuid4().hex[:8]}",
@@ -56,10 +68,11 @@ async def _create_bot(
         owner_uid=owner_uid,
         agent_slug=agent_slug,
         require_binding=require_binding,
+        api_key_id=api_key.id,
     )
     session.add(bot)
     await session.commit()
-    return bot
+    return bot, token
 
 
 def _channel_payload(*, account_id: str, chat_id: str, sender_id: str, agent_slug: str) -> dict:
@@ -108,7 +121,7 @@ async def _assert_run_belongs_to(conn: asyncpg.Connection, run_id: str, thread_i
 
 
 async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
-    e2e_client, e2e_headers, e2e_agent_context, im_db
+    e2e_client, e2e_agent_context, im_db
 ):
     """已绑定 sender 各自落库到本人线程，未绑定身份在强绑开关下被拦。"""
     if not app_config.is_saas_enabled:
@@ -127,19 +140,23 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
     thread_ids: set[str] = set()
     bot_id: int | None = None
     enforce_bot_id: int | None = None
+    bot_key_ids: list[int | None] = []
 
     try:
         async with im_db() as session:
             bound_a = await _create_user(session, bound_a_uid)
             bound_b = await _create_user(session, bound_b_uid)
-            bot = await _create_bot(
+            bot, bot_token = await _create_bot(
                 session, platform="feishu", owner_uid=owner_uid, agent_slug=agent_slug, require_binding=False
             )
-            enforce_bot = await _create_bot(
+            enforce_bot, enforce_bot_token = await _create_bot(
                 session, platform="feishu", owner_uid=owner_uid, agent_slug=agent_slug, require_binding=True
             )
             bot_id = bot.id
             enforce_bot_id = enforce_bot.id
+            bot_key_ids = [bot.api_key_id, enforce_bot.api_key_id]
+            bot_headers = {"Authorization": f"Bearer {bot_token}"}
+            enforce_bot_headers = {"Authorization": f"Bearer {enforce_bot_token}"}
             # 绑定关系由 Tenant 保存；E2E 预置与其 TTL 等价的缓存，避免依赖 Tenant 可达性。
             await remember_binding(uid=bound_a.uid, platform="feishu", channel_user_id="sender-a", ttl_seconds=600)
             await remember_binding(uid=bound_b.uid, platform="feishu", channel_user_id="sender-b", ttl_seconds=600)
@@ -150,7 +167,7 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
             json=_channel_payload(
                 account_id=str(bot_id), chat_id=f"chat-a-{run_token}", sender_id="sender-a", agent_slug=agent_slug
             ),
-            headers=e2e_headers,
+            headers=bot_headers,
         )
         assert resp_a.status_code == 200, resp_a.text
         payload_a = resp_a.json()
@@ -166,7 +183,7 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
             json=_channel_payload(
                 account_id=str(bot_id), chat_id=f"chat-b-{run_token}", sender_id="sender-b", agent_slug=agent_slug
             ),
-            headers=e2e_headers,
+            headers=bot_headers,
         )
         assert resp_b.status_code == 200, resp_b.text
         payload_b = resp_b.json()
@@ -193,7 +210,7 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
                 sender_id="unbound-sender",
                 agent_slug=agent_slug,
             ),
-            headers=e2e_headers,
+            headers=enforce_bot_headers,
         )
         assert resp_reject.status_code == 409, resp_reject.text
         assert resp_reject.json()["detail"]["code"] == "im_account_not_bound", resp_reject.text
@@ -211,9 +228,12 @@ async def test_bound_senders_land_in_their_own_threads_and_unbound_is_rejected(
         if thread_ids:
             await delete_test_conversation_rows(thread_ids)
         bot_ids = [bid for bid in (bot_id, enforce_bot_id) if bid is not None]
+        key_ids = [kid for kid in bot_key_ids if kid is not None]
         async with im_db() as session:
             if bot_ids:
                 await session.execute(delete(IMBotConfig).where(IMBotConfig.id.in_(bot_ids)))
+            if key_ids:
+                await session.execute(delete(APIKey).where(APIKey.id.in_(key_ids)))
             await session.execute(delete(User).where(User.uid.in_([bound_a_uid, bound_b_uid])))
             await session.commit()
         for uid in (bound_a_uid, bound_b_uid):

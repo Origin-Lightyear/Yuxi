@@ -36,7 +36,7 @@ async def test_saas_jwt_rejects_request_when_agent_session_is_missing(monkeypatc
     monkeypatch.setattr(saas_session, "get_saas_agent_session", lambda _uid: _async_value(None))
 
     with pytest.raises(HTTPException) as exc_info:
-        await auth_middleware.get_current_user("Bearer token", _UserSession(user))
+        await auth_middleware._resolve_principal("Bearer token", _UserSession(user))
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Agent登录状态已失效，请重新登录"
@@ -53,7 +53,8 @@ async def test_non_saas_jwt_does_not_require_agent_session(monkeypatch):
 
     monkeypatch.setattr(saas_session, "get_saas_agent_session", fail_if_called)
 
-    result = await auth_middleware.get_current_user("Bearer token", _UserSession(user))
+    principal = await auth_middleware._resolve_principal("Bearer token", _UserSession(user))
+    result = principal.user
 
     assert result is user
 
@@ -71,7 +72,8 @@ async def test_saas_jwt_attaches_tenant_scope_to_user(monkeypatch):
     monkeypatch.setattr(saas_identity, "get_saas_employee_context", lambda _db, _uid: _async_value(context))
     monkeypatch.setattr(saas_session, "get_saas_agent_session", lambda _uid: _async_value(object()))
 
-    result = await auth_middleware.get_current_user("Bearer token", _UserSession(user))
+    principal = await auth_middleware._resolve_principal("Bearer token", _UserSession(user))
+    result = principal.user
 
     assert result.tenant_id == 100
     assert result.tenant_department_id == 10
