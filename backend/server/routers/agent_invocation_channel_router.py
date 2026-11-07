@@ -60,7 +60,8 @@ async def receive_channel_message(
     db: AsyncSession = Depends(get_db),
 ):
     """处理纯文本 Channel 消息或最小 slash command。"""
-    channel = _normalize_required(payload.channel, "channel")
+    # 平台标识统一小写，避免 "Feishu" 之类的大小写变体绕过 IM 渠道凭证与绑定校验。
+    channel = _normalize_required(payload.channel, "channel").lower()
     account_id = _normalize_required(payload.account_id, "account_id")
     agent_slug = _normalize_required(payload.agent_slug, "agent_slug")
     current_user = principal.user

@@ -4,9 +4,9 @@
 
 **Goal:** 员工在 Yuxi 个人设置里生成绑定链接/二维码，用飞书或钉钉扫码授权后，把平台身份与自己的 Yuxi 账号一一绑定；此后 IM 消息按本人身份执行，未绑定期间按机器人归属人执行并明确提示。
 
-**Architecture:** 新增 `im_account_bindings`（平台身份 ↔ 用户映射）与 `im_binding_sessions`（一次性 state）两张表，加上 `im_bot_configs.require_binding` 开关。绑定入口在 Yuxi 侧，用该平台唯一启用机器人的凭据发起平台 OAuth，回调换取平台用户 ID 后落库。Channel 入口保留「API Key = 机器人归属人」的传输身份用于校验调用方，再按 `(platform, sender_id)` 解析真实用户；未绑定时按开关分流为「回退归属人 + 提示」或「409 拦截」。
+**Architecture（最终）:** Tenant 的 `employee/channel-bindings` 与 `auth/channel` 唯一保存绑定关系，Yuxi 只保留 `im_binding_sessions` 一次性 state 与 TTL 与 AgentSession 对齐的 Redis 缓存；`im_bot_configs.require_binding` 控制未绑定身份是拦截还是回退归属人。绑定入口在 Yuxi 侧，用该平台唯一启用机器人的凭据发起平台 OAuth，回调换取平台用户 ID 后调用 Tenant 保存。Channel 入口要求机器人自身的 API Key，再按 `(platform, sender_id)` 解析真实用户；未绑定时按开关分流为「回退归属人 + 提示」或「409 拦截」。Phase 1 的本地表设计已被 Phase 2 取代，仅作历史记录保留。
 
-> **修订（Phase 2）**：下方 Phase 1 的 `im_account_bindings` 本地表设计已被取代。最终方案不再由 Yuxi 保存绑定关系，Tenant 是唯一保存方，Yuxi 只保留 `im_binding_sessions` 一次性 state 与 TTL 对齐的 Redis 缓存。以本计划末尾 Phase 2 任务与决策记录为准。
+> **修订（Phase 2）**：Phase 1 的 `im_account_bindings` 本地表设计已被取代，代码中不再存在该模型、建表或读写。当前实现以 Phase 2 任务与决策记录为准。
 
 **Tech Stack:** FastAPI + SQLAlchemy(async) + PostgreSQL、httpx、Vue 3 + Ant Design Vue、`qrcode`（前端渲染二维码）、pytest / vitest。
 
@@ -35,7 +35,11 @@
 
 ---
 
-### Task 1: 持久化模型与 schema 演进
+## Phase 1（历史方案，已废弃）
+
+> 以下 Task 1–7 是已被 Phase 2 取代的实现路径记录。`im_account_bindings` 本地表、`IMAccountBinding` 模型、建表 DDL、唯一约束与相关读写均已从代码删除；下列步骤与代码片段**不可再执行**，只用于说明当时的取舍。当前架构、任务与验证以 Phase 2 与决策记录为准。
+
+### Task 1（历史，已废弃）: 持久化模型与 schema 演进
 
 **Files:**
 - Modify: `backend/package/yuxi/storage/postgres/models_business.py`（`IMBotConfig` 之后新增两个模型，`IMBotConfig` 增加 `require_binding` 列与序列化字段）
@@ -112,7 +116,7 @@ git commit -m "feat(im-binding): 新增 IM 账号绑定与绑定会话数据模�
 
 ---
 
-### Task 2: 绑定会话、平台授权与身份解析服务
+### Task 2（历史，已废弃）: 绑定会话、平台授权与身份解析服务
 
 **Files:**
 - Create: `backend/package/yuxi/services/im_binding_service.py`
@@ -160,7 +164,7 @@ git commit -m "feat(im-binding): 实现绑定会话与平台授权换绑"
 
 ---
 
-### Task 3: 用户侧绑定接口与公开回调路由
+### Task 3（历史，已废弃）: 用户侧绑定接口与公开回调路由
 
 **Files:**
 - Create: `backend/server/routers/im_binding_router.py`
@@ -195,7 +199,7 @@ git commit -m "feat(im-binding): 提供绑定会话、回调与解绑接口"
 
 ---
 
-### Task 4: Channel 入口按绑定解析身份
+### Task 4（历史，已废弃）: Channel 入口按绑定解析身份
 
 **Files:**
 - Modify: `backend/server/routers/agent_invocation_channel_router.py`
@@ -229,7 +233,7 @@ git commit -m "feat(im-binding): Channel 入口按绑定身份解析发送者"
 
 ---
 
-### Task 5: 网关识别未绑定与过渡期提示
+### Task 5（历史，已废弃）: 网关识别未绑定与过渡期提示
 
 **Files:**
 - Modify: `packages/yuxi-im-gateway/src/yuxi_im_gateway/runner.py`
@@ -259,7 +263,7 @@ git commit -m "feat(im-binding): 网关提示未绑定与过渡期身份回退"
 
 ---
 
-### Task 6: 个人设置「IM 账号」绑定页
+### Task 6（历史，已废弃）: 个人设置「IM 账号」绑定页
 
 **Files:**
 - Create: `web/src/apis/im_binding_api.js`
@@ -293,7 +297,7 @@ git commit -m "feat(im-binding): 个人设置支持扫码绑定飞书/钉钉账�
 
 ---
 
-### Task 7: 接线、证据与文档收尾
+### Task 7（历史，已废弃）: 接线、证据与文档收尾
 
 **Files:**
 - Modify: `docs/develop-guides/changelog.md`

@@ -370,3 +370,24 @@ async def test_im_channel_rejects_jwt_principal_before_identity_resolution(monke
 
     assert exc.value.status_code == 403
     assert exc.value.detail["code"] == "im_channel_api_key_required"
+
+
+@pytest.mark.asyncio
+async def test_im_channel_name_is_case_insensitive_for_guard(monkeypatch: pytest.MonkeyPatch):
+    """平台标识大小写变体也走 IM 凭证校验，不能绕过机器人 API Key 门槛。"""
+    from server.utils.auth_middleware import AuthPrincipal
+
+    async def fail_resolve_channel_identity(*_args, **_kwargs):
+        raise AssertionError("缺少机器人 API Key 时不应解析绑定身份")
+
+    monkeypatch.setattr(router, "resolve_channel_identity", fail_resolve_channel_identity)
+
+    with pytest.raises(HTTPException) as exc:
+        await router.receive_channel_message(
+            _payload("你好", channel="Feishu", account_id="1", sender_id="sender-1"),
+            principal=AuthPrincipal(user=SimpleNamespace(uid="user-1"), api_key_id=None),
+            db=object(),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "im_channel_api_key_required"

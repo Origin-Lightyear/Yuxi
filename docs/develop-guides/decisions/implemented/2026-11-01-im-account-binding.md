@@ -64,6 +64,8 @@ Owner 分工：`im_binding_service.py` 拥有绑定会话、平台身份换取�
 - 回调地址取自创建会话时的请求 `base_url`，要求该域名手机侧可达且已在平台后台登记。
 - `allowed_users` 白名单继续作为入口门禁，与绑定相互独立。
 - Channel Run 的读权限跟随机器人启停：机器人停用后，归属人不再能通过该规则读取其历史 Channel Run 事件与产物。
+- SaaS 部署下管理员同样展示「IM 机器人」管理入口：绑定开关与机器人凭据都要在 Yuxi 侧维护，不能因为 SaaS 模式隐藏入口。
+- IM 渠道的 `channel` 标识统一转小写后再匹配 `PLATFORMS`，避免大小写变体绕过机器人 API Key 门槛。
 - 历史库的 `im_account_bindings` 成为无消费者残留表；新库不创建，旧库需人工确认后清理。
 - 过期 `im_binding_sessions` 行不会主动删除；条件 `UPDATE` 保证其不可再用，运维可按 `expires_at` 归档清理。
 - 缓存冷启动回查只同步本地用户，不重写员工上下文；绑定用户必然先完成过 SaaS 登录，`UserConfig` 与部门信息已存在。
@@ -72,11 +74,11 @@ Owner 分工：`im_binding_service.py` 拥有绑定会话、平台身份换取�
 
 本槽位真实执行的命令与结果：
 
-- `docker compose exec -T api python -m pytest test/unit -m "not slow" -q --deselect test/unit/routers/test_document_file_exists_route.py::test_document_file_exists_route_accepts_filename_with_slashes` → **2752 passed, 58 skipped**。该用例在既有代码上会挂死，本槽位未纳入全量运行。
+- `docker compose exec -T api python -m pytest test/unit -m "not slow" -q --deselect test/unit/routers/test_document_file_exists_route.py::test_document_file_exists_route_accepts_filename_with_slashes` → **2753 passed, 58 skipped**。该用例在既有代码上会挂死，本槽位未纳入全量运行。
 - `docker compose exec -T api python -m pytest test/unit/routers/test_agent_invocation_channel_router.py test/unit/services/test_artifact_service.py -q` → **35 passed**。
 - `docker compose exec -T api python -m pytest test/integration/services/test_channel_run_read_access.py -q` → **2 passed**。
-- `docker compose exec -T api python -m pytest test/unit/routers/test_auth_router_saas.py test/unit/routers/test_im_binding_router.py test/unit/routers/test_agent_invocation_channel_router.py test/unit/services/test_im_binding_service.py test/unit/services/test_im_binding_cache.py test/unit/server/test_saas_session_auth.py -q` → **33 passed**。
-- `docker compose exec -T api python -m pytest test/integration/storage/test_im_binding_schema.py test/integration/services/test_im_binding_service.py test/integration/api/test_channel_identity_binding.py -q` → **34 passed**（真实 PostgreSQL + Redis，含 Tenant 错误码映射、state 并发原子消费、缓存命中零调用、Redis 读失败回退、冷启动回查、归属人回退、非 SaaS `identity_source=owner`、机器人 API Key 校验与失败关闭）。
+- `docker compose exec -T api python -m pytest test/unit/routers/test_auth_router_saas.py test/unit/routers/test_im_binding_router.py test/unit/routers/test_agent_invocation_channel_router.py test/unit/services/test_im_binding_service.py test/unit/services/test_im_binding_cache.py test/unit/server/test_saas_session_auth.py -q` → **37 passed**。
+- `docker compose exec -T api python -m pytest test/integration/storage/test_im_binding_schema.py test/integration/services/test_im_binding_service.py test/integration/api/test_channel_identity_binding.py -q` → **37 passed**（真实 PostgreSQL + Redis，含 Tenant 错误码映射 20302/20314/20316/20317、state 并发原子消费、缓存命中零调用、Redis 读失败回退、冷启动回查、归属人回退、非 SaaS `identity_source=owner`、机器人 API Key 与同属主其他 Key 拒绝、大小写平台标识不绕过凭证门槛）。
 - `docker compose exec -T api python -m pytest test/integration/services/test_channel_run_read_access.py test/integration/api/test_im_binding_router.py test/integration/api/test_agent_invocation_channel_api.py test/integration/api/test_auth_router.py -q` → **7 passed, 14 skipped, 2 failed**。失败的两条是 `test_auth_router.py` 的本地登录断言：本槽位 `SAAS_ENABLED=true` 且 Tenant 不可达，登录走 Tenant 后返回 502，而用例预期本地 401/限流，与本次变更无关。
 - `python3 -m ruff check --line-length 120 --select F,E,W,UP <本次修改的 Python 文件>` → **All checks passed**。`manager.py` 本次只删除 DDL，未新增超长行；该文件 1573/1625/1626/1671/1719 的 5 处既有 E501 不在本次范围，未顺手修改。
 - `cd packages/yuxi-im-gateway && .venv/bin/python -m pytest tests -q` → **66 passed**。

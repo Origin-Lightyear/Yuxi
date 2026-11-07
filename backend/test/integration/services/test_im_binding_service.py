@@ -725,3 +725,49 @@ async def test_dingtalk_token_exchange_error_redacts_query_secrets(monkeypatch):
     assert secret not in message
     assert "appsecret" not in message
     assert "access_token" not in message
+
+
+async def test_list_bindings_maps_employee_unavailable(binding_engine, fake_saas):
+    """Tenant 20302 映射为 403，不把员工停用伪装成临时故障。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            await _create_user(session, user_uid)
+        await _seed_agent_session(user_uid)
+        fake_saas.list_error = SaasAPIError(code=20302, msg="员工不存在或已停用")
+
+        async with binding_engine() as session:
+            user = (await session.execute(select(User).where(User.uid == user_uid))).scalar_one()
+            with pytest.raises(HTTPException) as exc_info:
+                await list_bindings(session, user=user)
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["code"] == "im_employee_unavailable"
+
+
+async def test_list_bindings_maps_channel_key_failure(binding_engine, fake_saas):
+    """Tenant 20317 映射为 502，管理密钥问题必须显式失败。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            await _create_user(session, user_uid)
+        await _seed_agent_session(user_uid)
+        fake_saas.list_error = SaasAPIError(code=20317, msg="管理密钥错误")
+
+        async with binding_engine() as session:
+            user = (await session.execute(select(User).where(User.uid == user_uid))).scalar_one()
+            with pytest.raises(HTTPException) as exc_info:
+                await list_bindings(session, user=user)
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["code"] == "im_binding_tenant_unavailable"

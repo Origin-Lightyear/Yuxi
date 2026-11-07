@@ -453,6 +453,40 @@ async def test_bot_not_owned_by_transport_user_rejects(binding_engine, fake_tena
     assert exc_info.value.detail["code"] == "im_bot_not_owned"
 
 
+async def test_other_api_key_of_same_owner_rejects(binding_engine, fake_tenant):
+    """同一归属人的其他 API Key 不是该机器人的传输凭证，返回 403 且不解析身份。"""
+    uid = uuid.uuid4().hex[:10]
+    owner_uid = f"owner-{uid}"
+
+    try:
+        async with binding_engine() as session:
+            owner = await _create_user(session, owner_uid)
+            bot = await _create_bot(session, platform="feishu", owner_uid=owner.uid)
+            other_key = APIKey(
+                key_hash=uuid.uuid4().hex,
+                key_prefix="pytest",
+                name=f"pytest-other-key-{uuid.uuid4().hex[:8]}",
+                user_id=owner.id,
+                created_by=owner.uid,
+            )
+            session.add(other_key)
+            await session.commit()
+
+            with pytest.raises(HTTPException) as exc_info:
+                await channel_router.receive_channel_message(
+                    _payload(str(bot.id), "sender-1"),
+                    principal=AuthPrincipal(user=owner, api_key_id=other_key.id),
+                    db=session,
+                )
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [owner_uid])
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["code"] == "im_bot_credential_mismatch"
+    assert fake_tenant.calls == []
+
+
 async def test_disabled_bot_rejects_before_identity_resolution(binding_engine, fake_tenant):
     """机器人停用时返回 403 ``im_bot_disabled``，不解析身份也不调用 Tenant。"""
     uid = uuid.uuid4().hex[:10]
