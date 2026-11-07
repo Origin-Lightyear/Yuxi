@@ -401,6 +401,8 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
         platform, credentials, code, redirect_uri=None
     )
     _ensure_platform_account_matches_user(user, platform_mobile)
+    # 先算缓存 TTL：解析失败时必须在调用 Tenant 前失败，避免“已绑定却显示失败”。
+    ttl_seconds = get_saas_session_ttl_seconds(agent_session.expires_at)
 
     try:
         await get_saas_client().bind_channel_account(
@@ -413,7 +415,7 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
         uid=user.uid,
         platform=platform,
         channel_user_id=platform_user_id,
-        ttl_seconds=get_saas_session_ttl_seconds(agent_session.expires_at),
+        ttl_seconds=ttl_seconds,
     )
     return FRONTEND_BINDING_RESULT_PATH
 

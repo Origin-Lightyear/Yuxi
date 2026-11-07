@@ -22,7 +22,7 @@
 - 每个新增 guard 配一个负向测试（恢复缺陷即变红）。
 - 提交前在仓库根目录执行：`python3 scripts/verify_engineering_contracts.py`、`python3 -m unittest scripts.test_verify_engineering_contracts`、`docker compose exec api uv run --group test pytest test/unit -m "not slow"`；网关改动额外跑 `cd packages/yuxi-im-gateway && uv run --group test pytest tests -q`；前端跑 `cd web && pnpm lint:check && pnpm test:unit`。
 - 集成测试一律在 api 容器里跑，但本 worktree 的镜像里 `uv run` 会因 site-packages 权限失败，改用 `docker compose exec -T api python -m pytest test/integration/... -q`；ruff 用宿主机 `uv run --with ruff ruff check --line-length 120 --select F,E,W,UP <files>`。
-- 原「```docker compose exec api uv run --group test pytest```」命令在本槽位不可用，同理替换为 `docker compose exec -T api python -m pytest test/unit -m "not slow"`。，真实 PostgreSQL 通过 `os.environ["POSTGRES_URL"]` 自建 engine，按 `test_agent_run_lease.py` 的做法建表、用 `uuid4` 造唯一数据并在 `finally` 里删除，不依赖缺失的 `db_session` fixture。
+- 原「```docker compose exec api uv run --group test pytest```」命令在本槽位不可用，同理替换为 `docker compose exec -T api python -m pytest test/unit -m "not slow"`，真实 PostgreSQL 通过 `os.environ["POSTGRES_URL"]` 自建 engine，按 `test_agent_run_lease.py` 的做法建表、用 `uuid4` 造唯一数据并在 `finally` 里删除，不依赖缺失的 `db_session` fixture。
 - 仓库没有 `backend/test/.env.test`（只有 `.example`）；HTTP 集成测试需要它提供 `TEST_USERNAME`/`TEST_PASSWORD`。本地按本 worktree 的 `.env` 生成该文件（git 忽略，不提交），缺失时相关用例会 skip，不能算通过。
 
 ## Review Focus

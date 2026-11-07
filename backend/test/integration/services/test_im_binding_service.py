@@ -391,6 +391,41 @@ async def test_complete_binding_rejects_other_persons_platform_account(binding_e
         await _clear_user_state(user_uid)
 
 
+async def test_complete_binding_ttl_failure_happens_before_tenant(binding_engine, monkeypatch, fake_saas):
+    """缓存 TTL 解析失败必须在调用 Tenant 前暴露，避免已绑定却显示失败。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=f"state-{uuid.uuid4().hex}",
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+            await _seed_agent_session(user.uid)
+
+            async def fake_exchange(platform, credentials, code, redirect_uri):
+                return "dingtalk-userid-1", "union-1", user.phone_number
+
+            def failing_ttl(expires_at):
+                raise ValueError(f"bad expiry: {expires_at}")
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
+            monkeypatch.setattr(im_binding_service, "get_saas_session_ttl_seconds", failing_ttl)
+
+            with pytest.raises(ValueError, match="bad expiry"):
+                await complete_binding(session, platform="dingtalk", code="code", state=state)
+            assert fake_saas.bound == []
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
 async def test_complete_binding_requires_login_session(binding_engine, monkeypatch, fake_saas):
     """没有 Tenant AgentSession 时拒绝绑定，且不触达平台换取。"""
     uid = uuid.uuid4().hex[:10]
