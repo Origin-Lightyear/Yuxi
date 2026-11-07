@@ -150,7 +150,7 @@ async def test_saas_login_limits_jwt_to_agent_session_lifetime(monkeypatch):
     class SaasClient:
         async def authenticate_employee(self, mobile, password):
             del mobile, password
-            return EmployeeAuthResult(mobile="13800000000", tenants=[employee])
+            return EmployeeAuthResult(mobile="13911112222", tenants=[employee])
 
         async def get_tenant_config(self, tenant_id):
             del tenant_id
@@ -184,8 +184,13 @@ async def test_saas_login_limits_jwt_to_agent_session_lifetime(monkeypatch):
     monkeypatch.setattr(auth_router, "find_or_create_saas_user", lambda *_args, **_kwargs: _async_value(user))
     monkeypatch.setattr(auth_router, "log_operation", no_op)
     monkeypatch.setattr(auth_router.AuthUtils, "create_access_token", create_access_token)
+    saved_sessions: list = []
+
+    async def capture_session(uid, session):
+        saved_sessions.append((uid, session))
+
     monkeypatch.setattr("yuxi.services.saas_identity.save_saas_employee_context", no_op)
-    monkeypatch.setattr("yuxi.services.saas_session.save_saas_agent_session", no_op)
+    monkeypatch.setattr("yuxi.services.saas_session.save_saas_agent_session", capture_session)
 
     db = SimpleNamespace(commit=no_op)
     result = await auth_router._saas_login(db, "13800000000", "password")
@@ -193,6 +198,8 @@ async def test_saas_login_limits_jwt_to_agent_session_lifetime(monkeypatch):
     assert result["access_token"] == "yuxi-token"
     assert captured["data"] == {"sub": "10"}
     assert 3500 <= captured["expires_delta"].total_seconds() <= 3600
+    assert len(saved_sessions) == 1
+    assert saved_sessions[0][1].mobile == "13911112222"
 
 
 async def _async_value(value):

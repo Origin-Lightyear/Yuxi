@@ -288,6 +288,8 @@ async def _exchange_code(
 def _normalize_mobile(value: str | None) -> str:
     """把手机号归一化为纯数字并去掉中国区号，供平台资料与本地用户比对。"""
     digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if digits.startswith("00"):
+        digits = digits[2:]
     if len(digits) == 13 and digits.startswith("86"):
         digits = digits[2:]
     return digits
@@ -327,7 +329,10 @@ async def create_binding_session(db: AsyncSession, *, user: User, platform: str,
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
         raise ValueError("platform 只支持 feishu 或 dingtalk")
-    await _require_agent_session(user)
+    agent_session = await _require_agent_session(user)
+    # 旧会话没有 Tenant 下发手机号，无法完成归属核验，提前失败避免消耗 state。
+    if not agent_session.mobile:
+        raise _binding_login_required()
     bots = [bot for bot in await list_im_bots(db) if bot.enabled and bot.platform == platform]
     if len(bots) > 1:
         raise ValueError("同一平台只能有一个启用的机器人")

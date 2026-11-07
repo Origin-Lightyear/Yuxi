@@ -225,6 +225,29 @@ async def test_create_binding_session_requires_login_session(binding_engine):
             await _cleanup(session, [user_uid])
 
 
+async def test_create_binding_session_requires_session_mobile(binding_engine):
+    """旧会话没有 Tenant 手机号时提前 401，不生成必然失败的二维码与 pending state。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+        await _seed_agent_session(user_uid, None)
+
+        async with binding_engine() as session:
+            with pytest.raises(HTTPException) as exc_info:
+                await create_binding_session(session, user=user, platform="dingtalk", base_url="https://yuxi.example")
+            assert exc_info.value.status_code == 401
+            assert exc_info.value.detail["code"] == "im_binding_login_required"
+            rows = await session.execute(select(IMBindingSession).where(IMBindingSession.user_id == user.id))
+            assert rows.scalars().all() == []
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
 async def test_create_binding_session_rejects_ambiguous_platform(binding_engine):
     """同一平台存在多个启用机器人时必须拒绝，不能静默挑选凭据。"""
     uid = uuid.uuid4().hex[:10]

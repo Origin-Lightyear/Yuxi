@@ -101,6 +101,7 @@ def test_normalize_mobile_strips_country_code_and_separators():
 
     assert _normalize_mobile("+86 138-0013-8000") == "13800138000"
     assert _normalize_mobile("8613800138000") == "13800138000"
+    assert _normalize_mobile("008613800138000") == "13800138000"
     assert _normalize_mobile("13800138000") == "13800138000"
     assert _normalize_mobile(None) == ""
 
@@ -156,3 +157,27 @@ def test_platform_account_must_match_session_mobile():
     _ensure_platform_account_matches_user(
         "EMP001", expected_mobile="13800138000", platform_mobile="+86 138-0013-8000"
     )
+
+
+@pytest.mark.asyncio
+async def test_dingtalk_exchange_reads_profile_mobile(monkeypatch):
+    """钉钉换取身份后必须读取 users/me.mobile，供绑定归属核验。"""
+    from yuxi.services import im_binding_service
+
+    async def fake_request_json(method, url, **kwargs):
+        del method, kwargs
+        if url == im_binding_service.DINGTALK_USER_ACCESS_TOKEN_URL:
+            return {"accessToken": "user-token"}
+        if url == im_binding_service.DINGTALK_USERS_ME_URL:
+            return {"unionId": "un-1", "mobile": "13800138000"}
+        if url == im_binding_service.DINGTALK_GETTOKEN_URL:
+            return {"access_token": "enterprise-token"}
+        if url == im_binding_service.DINGTALK_GETBYUNIONID_URL:
+            return {"result": {"userid": "user-1"}}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(im_binding_service, "_request_json", fake_request_json)
+
+    identity = await im_binding_service._exchange_code("dingtalk", DINGTALK_CREDENTIALS, "code", None)
+
+    assert identity == ("user-1", "un-1", "13800138000")
