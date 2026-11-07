@@ -2,21 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import pytest
-from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-from yuxi.storage.postgres.models_business import IMAccountBinding
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
-
-
-def _session_factory():
-    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
-    return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def _an_agent_slug(test_client, headers) -> str:
@@ -77,36 +67,7 @@ async def test_callback_with_invalid_state_returns_failure_page(test_client):
     assert "绑定失败" in resp.text
 
 
-async def test_delete_binding_then_list_empty(test_client, admin_headers):
-    """解绑后列表为空。"""
-    me = await test_client.get("/api/auth/me", headers=admin_headers)
-    assert me.status_code == 200, me.text
-    user_id = me.json()["id"]
-
-    engine, factory = _session_factory()
-    try:
-        async with factory() as db:
-            db.add(IMAccountBinding(user_id=user_id, platform="feishu", platform_user_id="ou-seeded"))
-            await db.commit()
-
-        listed = await test_client.get("/api/user/im-bindings", headers=admin_headers)
-        assert listed.status_code == 200, listed.text
-        assert any(item["platform"] == "feishu" for item in listed.json()["data"])
-
-        deleted = await test_client.delete("/api/user/im-bindings/feishu", headers=admin_headers)
-        assert deleted.status_code == 200, deleted.text
-
-        after = await test_client.get("/api/user/im-bindings", headers=admin_headers)
-        assert after.status_code == 200, after.text
-        assert not any(item["platform"] == "feishu" for item in after.json()["data"])
-    finally:
-        async with factory() as db:
-            await db.execute(
-                delete(IMAccountBinding).where(
-                    IMAccountBinding.user_id == user_id,
-                    IMAccountBinding.platform == "feishu",
-                    IMAccountBinding.platform_user_id == "ou-seeded",
-                )
-            )
-            await db.commit()
-        await engine.dispose()
+async def test_delete_binding_requires_auth(test_client):
+    """未登录解绑返回 401；真实 Tenant 解绑由服务层集成用例覆盖。"""
+    resp = await test_client.delete("/api/user/im-bindings/feishu")
+    assert resp.status_code == 401

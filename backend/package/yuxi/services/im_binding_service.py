@@ -1,9 +1,11 @@
 """IM 账号绑定服务：绑定会话、平台 OAuth 授权换取与消息身份解析。
 
 绑定链路：用户在 Yuxi 侧用该平台唯一启用机器人的凭据发起飞书/钉钉扫码授权，
-回调后换取平台身份写入 ``im_account_bindings``。消息链路：Channel 入口先以
-「API Key = 机器人归属人」的传输身份校验调用方，再按 ``(platform, sender_id)``
-解析真实用户；未绑定且 ``require_binding`` 打开时返回 409 拦截。
+回调后换取平台身份并调用 Tenant ``employee/channel-bindings`` 保存绑定；Tenant
+是绑定关系的唯一保存方，Yuxi 只保留一次性 state 与 TTL 对齐 AgentSession 的
+Redis 映射缓存。消息链路：Channel 入口先以「API Key = 机器人归属人」的传输
+身份校验调用方，再按 ``(platform, sender_id)`` 先查缓存、冷启动回查 Tenant
+``auth/channel`` 解析真实用户；未绑定且 ``require_binding`` 打开时返回 409。
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import NoReturn
 from urllib.parse import urlencode
 
 import httpx
@@ -19,9 +22,20 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.config import config as app_config
 from yuxi.repositories.im_bot_repository import get_im_bot, list_im_bots
+from yuxi.services import im_binding_cache
 from yuxi.services.im_bot_service import PLATFORMS, decrypt_credentials
-from yuxi.storage.postgres.models_business import AgentRun, IMAccountBinding, IMBindingSession, User
+from yuxi.services.saas_auth_service import find_or_create_saas_user
+from yuxi.services.saas_client import SaasAPIError, channel_type_for, get_saas_client
+from yuxi.services.saas_session import (
+    SaasAgentSession,
+    clear_saas_agent_session,
+    get_saas_agent_session,
+    get_saas_session_ttl_seconds,
+)
+from yuxi.storage.postgres.models_business import AgentRun, IMBindingSession, User
+from yuxi.utils import logger
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 # 飞书 / 钉钉授权与换取身份端点（与各平台开放文档一致）。
@@ -52,6 +66,77 @@ class ChannelIdentity:
 def _hash_state(state: str) -> str:
     """对一次性 state 做不可逆哈希，避免明文落库。"""
     return hashlib.sha256(str(state).encode("utf-8")).hexdigest()
+
+
+def _binding_not_enabled() -> HTTPException:
+    """绑定能力只在 SaaS 部署开放；本地部署继续按机器人归属人执行。"""
+    return HTTPException(400, detail={"code": "im_binding_not_enabled", "message": "当前部署未启用 IM 账号绑定"})
+
+
+def _binding_login_required() -> HTTPException:
+    """绑定、解绑与查询都需要有效的 Tenant AgentSession。"""
+    return HTTPException(
+        401,
+        detail={"code": "im_binding_login_required", "message": "Yuxi 登录状态已失效，请重新登录后再试"},
+    )
+
+
+def _require_binding_enabled() -> None:
+    """绑定能力未启用时显式失败，不静默落回本地绑定。"""
+    if not app_config.is_saas_enabled:
+        raise _binding_not_enabled()
+
+
+async def _require_agent_session(user: User) -> SaasAgentSession:
+    """读取当前用户的 Tenant AgentSession；缺失即要求重新登录。"""
+    session = await get_saas_agent_session(user.uid)
+    if session is None:
+        raise _binding_login_required()
+    return session
+
+
+async def _handle_tenant_error(uid: str | None, exc: Exception) -> NoReturn:
+    """把 Tenant 渠道绑定错误映射为用户可见的失败，绝不静默成功。"""
+    if isinstance(exc, SaasAPIError):
+        if exc.code == 20314:
+            if uid:
+                await clear_saas_agent_session(uid)
+                await im_binding_cache.forget_user_bindings(uid)
+            raise _binding_login_required()
+        if exc.code == 20316:
+            raise HTTPException(
+                409,
+                detail={"code": "im_account_already_bound", "message": "该平台账号已绑定其他员工，请先解绑"},
+            )
+        if exc.code == 20302:
+            raise HTTPException(
+                403,
+                detail={"code": "im_employee_unavailable", "message": "员工账号不可用，请联系管理员"},
+            )
+        if exc.code == 20317:
+            logger.error("Tenant 渠道绑定管理密钥认证失败")
+            raise HTTPException(
+                502,
+                detail={"code": "im_binding_tenant_unavailable", "message": "租户服务认证失败，请联系管理员"},
+            )
+        logger.warning(f"Tenant channel binding failed: code={exc.code}")
+    else:
+        logger.warning(f"Tenant channel binding request failed: {exc.__class__.__name__}")
+    raise HTTPException(
+        502,
+        detail={"code": "im_binding_tenant_unavailable", "message": "租户服务暂时不可用，请稍后重试"},
+    )
+
+
+async def _remember_binding_safely(*, uid: str, platform: str, channel_user_id: str, ttl_seconds: int) -> None:
+    """缓存只是加速层：写入失败记录告警，不推翻 Tenant 已提交的绑定结果。"""
+    try:
+        await im_binding_cache.forget_binding(uid=uid, platform=platform)
+        await im_binding_cache.remember_binding(
+            uid=uid, platform=platform, channel_user_id=channel_user_id, ttl_seconds=ttl_seconds
+        )
+    except Exception as exc:  # Redis 故障不应把成功的绑定回报成失败
+        logger.warning(f"IM binding cache write failed: platform={platform}, error={exc.__class__.__name__}")
 
 
 def _build_authorize_url(platform: str, credentials: dict, redirect_uri: str, state: str) -> str:
@@ -180,6 +265,7 @@ async def _exchange_code(
 
 async def create_binding_session(db: AsyncSession, *, user: User, platform: str, base_url: str) -> dict:
     """为用户创建一次性绑定会话，返回 ``{"bind_url", "expires_at"}``。"""
+    _require_binding_enabled()
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
         raise ValueError("platform 只支持 feishu 或 dingtalk")
@@ -210,11 +296,12 @@ async def create_binding_session(db: AsyncSession, *, user: User, platform: str,
 
 
 async def complete_binding(db: AsyncSession, *, platform: str, code: str, state: str) -> str:
-    """校验 state、换取平台身份并写入绑定，返回前端回调路径。
+    """校验 state、换取平台身份并由 Tenant 保存绑定，返回前端回调路径。
 
-    state 单次可用的持久化顺序：先 COMMIT 置 used_at，再换取平台身份，最后写绑定并再次
-    COMMIT。代价是换取失败会烧掉该 state，用户需重新生成二维码。
+    state 单次可用的持久化顺序：先 COMMIT 置 used_at，再换取平台身份，最后调用
+    Tenant。代价是换取或 Tenant 失败会烧掉该 state，用户需重新生成二维码。
     """
+    _require_binding_enabled()
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
         raise ValueError("platform 只支持 feishu 或 dingtalk")
@@ -230,23 +317,17 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
     if session.expires_at <= utc_now_naive():
         raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定会话已过期"})
 
-    # 同平台已有绑定须提前拒绝，避免触发 (user_id, platform) 唯一约束的 IntegrityError。
-    bound = await db.execute(
-        select(IMAccountBinding.id).where(
-            IMAccountBinding.user_id == session.user_id,
-            IMAccountBinding.platform == platform,
-        )
-    )
-    if bound.scalar_one_or_none() is not None:
-        raise HTTPException(
-            409,
-            detail={"code": "im_account_already_bound", "message": "该平台已绑定，请先解绑"},
-        )
-
     # state 一次性消费：先置 used_at 并 COMMIT，使重放保证不依赖调用方事务。
     session.status = "used"
     session.used_at = utc_now_naive()
     await db.commit()
+
+    user = (
+        await db.execute(select(User).where(User.id == session.user_id, User.is_deleted == 0))
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定用户不存在"})
+    agent_session = await _require_agent_session(user)
 
     bot = await get_im_bot(db, session.bot_id)
     if bot is None:
@@ -254,52 +335,110 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
     credentials = decrypt_credentials(platform, bot.credentials_encrypted)
     platform_user_id, _union_id = await _exchange_code(platform, credentials, code, redirect_uri=None)
 
-    existing = await db.execute(
-        select(IMAccountBinding.id).where(
-            IMAccountBinding.platform == platform,
-            IMAccountBinding.platform_user_id == platform_user_id,
+    try:
+        await get_saas_client().bind_channel_account(
+            agent_session.token, channel_type_for(platform), platform_user_id
         )
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise HTTPException(409, detail={"code": "im_account_already_bound", "message": "该平台身份已绑定其他账号"})
+    except Exception as exc:
+        await _handle_tenant_error(user.uid, exc)
 
-    db.add(
-        IMAccountBinding(
-            user_id=session.user_id,
-            platform=platform,
-            platform_user_id=platform_user_id,
-            bot_id=session.bot_id,
-        )
+    await _remember_binding_safely(
+        uid=user.uid,
+        platform=platform,
+        channel_user_id=platform_user_id,
+        ttl_seconds=get_saas_session_ttl_seconds(agent_session.expires_at),
     )
-    await db.commit()
     return FRONTEND_BINDING_RESULT_PATH
 
 
-async def list_bindings(db: AsyncSession, *, user_id: int) -> list[dict]:
-    """列出指定用户的全部平台绑定。"""
-    result = await db.execute(
-        select(IMAccountBinding).where(IMAccountBinding.user_id == user_id).order_by(IMAccountBinding.platform.asc())
-    )
-    return [binding.to_dict() for binding in result.scalars().all()]
+async def list_bindings(db: AsyncSession, *, user: User) -> list[dict]:
+    """实时读取 Tenant 的三平台绑定，映射为前端使用的飞书/钉钉列表。"""
+    del db
+    _require_binding_enabled()
+    agent_session = await _require_agent_session(user)
+    try:
+        rows = await get_saas_client().list_channel_bindings(agent_session.token)
+    except Exception as exc:
+        await _handle_tenant_error(user.uid, exc)
+
+    bindings: list[dict] = []
+    for row in rows:
+        platform = str(row.get("channelType") or "").strip().lower()
+        channel_user_id = row.get("channelUserId")
+        if platform not in PLATFORMS or row.get("bound") is not True or not channel_user_id:
+            continue
+        bindings.append(
+            {
+                "platform": platform,
+                "platform_user_id": str(channel_user_id),
+                "created_at": row.get("boundAt"),
+            }
+        )
+    return sorted(bindings, key=lambda item: item["platform"])
 
 
-async def delete_binding(db: AsyncSession, *, user: User, platform: str) -> bool:
-    """删除用户在某平台的绑定，返回是否实际删除了记录。"""
+async def delete_binding(db: AsyncSession, *, user: User, platform: str) -> None:
+    """由 Tenant 解除当前用户在某平台的绑定，并清理本地缓存。"""
+    del db
+    _require_binding_enabled()
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
         raise ValueError("platform 只支持 feishu 或 dingtalk")
-    result = await db.execute(
-        select(IMAccountBinding).where(
-            IMAccountBinding.user_id == user.id,
-            IMAccountBinding.platform == platform,
-        )
+    agent_session = await _require_agent_session(user)
+    try:
+        await get_saas_client().unbind_channel_account(agent_session.token, channel_type_for(platform))
+    except Exception as exc:
+        await _handle_tenant_error(user.uid, exc)
+    try:
+        await im_binding_cache.forget_binding(uid=user.uid, platform=platform)
+    except Exception as exc:  # Tenant 已解绑，缓存清理失败只影响下一次冷启动
+        logger.warning(f"IM binding cache cleanup failed: platform={platform}, error={exc.__class__.__name__}")
+
+
+async def _find_active_user(db: AsyncSession, uid: str) -> User | None:
+    """按 uid 读取未删除的本地用户。"""
+    return (
+        await db.execute(select(User).where(User.uid == uid, User.is_deleted == 0))
+    ).scalar_one_or_none()
+
+
+async def _resolve_bound_user(db: AsyncSession, *, platform: str, sender_id: str) -> User | None:
+    """缓存未命中时用 Tenant ``auth/channel`` 查一次并回填缓存。"""
+    try:
+        auth_result = await get_saas_client().authenticate_channel(channel_type_for(platform), sender_id)
+    except SaasAPIError as exc:
+        if exc.code == 20206:
+            return None
+        logger.warning(f"Tenant channel auth failed: code={exc.code}")
+        raise HTTPException(
+            502,
+            detail={"code": "im_binding_unavailable", "message": "身份服务暂时不可用，请稍后重试"},
+        ) from exc
+    except Exception as exc:
+        logger.warning(f"Tenant channel auth request failed: {exc.__class__.__name__}")
+        raise HTTPException(
+            502,
+            detail={"code": "im_binding_unavailable", "message": "身份服务暂时不可用，请稍后重试"},
+        ) from exc
+
+    employee = auth_result.primary
+    if employee is None or employee.enabled != 1:
+        return None
+
+    user = await find_or_create_saas_user(
+        db,
+        mobile=auth_result.mobile,
+        employee_code=employee.employee_code,
+        employee_name=employee.employee_name,
+        department_name=employee.department_name,
     )
-    binding = result.scalar_one_or_none()
-    if binding is None:
-        return False
-    await db.delete(binding)
-    await db.flush()
-    return True
+    await _remember_binding_safely(
+        uid=user.uid,
+        platform=platform,
+        channel_user_id=sender_id,
+        ttl_seconds=get_saas_session_ttl_seconds(employee.agent_session_expires_at),
+    )
+    return user
 
 
 async def resolve_channel_identity(
@@ -308,8 +447,9 @@ async def resolve_channel_identity(
     """按 account_id 机器人归属与 sender_id 绑定解析真实执行身份。
 
     ``account_id`` 不归属 ``transport_user`` 时抛 403；机器人停用时抛 403
-    ``im_bot_disabled``；未绑定且 ``require_binding`` 打开时抛 409
-    ``im_account_not_bound``，关闭时回退到机器人归属人并标记 owner_fallback。
+    ``im_bot_disabled``。非 SaaS 部署不启用绑定，始终以机器人归属人执行。
+    绑定身份先读 Redis 缓存，未命中才调用 Tenant；Tenant 不可达时失败关闭，
+    未绑定且 ``require_binding`` 打开时抛 409 ``im_account_not_bound``。
     """
     try:
         bot_id = int(account_id)
@@ -327,19 +467,16 @@ async def resolve_channel_identity(
             detail={"code": "im_bot_disabled", "message": "机器人已停用"},
         )
 
-    binding = None
+    if not app_config.is_saas_enabled:
+        return ChannelIdentity(user=transport_user, owner_fallback=True)
+
     if sender_id:
-        result = await db.execute(
-            select(IMAccountBinding).where(
-                IMAccountBinding.platform == bot.platform,
-                IMAccountBinding.platform_user_id == sender_id,
-            )
-        )
-        binding = result.scalar_one_or_none()
-    if binding is not None:
-        bound_user = (
-            await db.execute(select(User).where(User.id == binding.user_id, User.is_deleted == 0))
-        ).scalar_one_or_none()
+        cached_uid = await im_binding_cache.bind_uid(bot.platform, sender_id)
+        if cached_uid:
+            bound_user = await _find_active_user(db, cached_uid)
+            if bound_user is not None:
+                return ChannelIdentity(user=bound_user, owner_fallback=False)
+        bound_user = await _resolve_bound_user(db, platform=bot.platform, sender_id=sender_id)
         if bound_user is not None:
             return ChannelIdentity(user=bound_user, owner_fallback=False)
 

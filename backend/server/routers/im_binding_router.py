@@ -34,8 +34,8 @@ def _http_exception_reason(exc: HTTPException) -> str:
 
 @user_im_bindings.get("")
 async def list_bindings(current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
-    """列出当前用户的全部平台绑定。"""
-    return {"success": True, "data": await im_binding_service.list_bindings(db, user_id=current_user.id)}
+    """实时读取 Tenant 中当前用户的全部平台绑定。"""
+    return {"success": True, "data": await im_binding_service.list_bindings(db, user=current_user)}
 
 
 @user_im_bindings.post("/{platform}/sessions")
@@ -62,14 +62,11 @@ async def delete_binding(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """解绑当前用户在某平台的绑定。"""
+    """由 Tenant 解除当前用户在某平台的绑定。"""
     try:
-        deleted = await im_binding_service.delete_binding(db, user=current_user, platform=platform)
-        await db.commit()
+        await im_binding_service.delete_binding(db, user=current_user, platform=platform)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not deleted:
-        raise HTTPException(status_code=404, detail="该平台未绑定")
     return {"success": True}
 
 

@@ -1,8 +1,9 @@
-"""真实 PostgreSQL 上的 IM 绑定会话与身份解析服务测试。"""
+"""真实 PostgreSQL + Redis 上的 IM 绑定服务测试（Tenant 唯一保存方）。"""
 
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from datetime import timedelta
 
@@ -14,23 +15,37 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import yuxi.services.im_binding_service as im_binding_service
+from yuxi.config import config as app_config
+from yuxi.services.im_binding_cache import bind_uid, forget_user_bindings, remember_binding
 from yuxi.services.im_binding_service import (
     _hash_state,
     complete_binding,
     create_binding_session,
-    resolve_channel_identity,
+    delete_binding,
+    list_bindings,
 )
 from yuxi.services.im_bot_service import encrypt_credentials
-from yuxi.storage.postgres.models_business import (
-    Base,
-    IMAccountBinding,
-    IMBindingSession,
-    IMBotConfig,
-    User,
+from yuxi.services.saas_client import SaasAPIError
+from yuxi.services.saas_session import (
+    SaasAgentSession,
+    clear_saas_agent_session,
+    get_saas_agent_session,
+    save_saas_agent_session,
 )
+from yuxi.storage.postgres.models_business import Base, IMBindingSession, IMBotConfig, User
+from yuxi.storage.redis import close_async_redis_client, get_async_redis_client
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _isolated_redis_client():
+    """把共享 Redis 客户端绑定到当前用例的事件循环。"""
+    await close_async_redis_client()
+    await get_async_redis_client()
+    yield
+    await close_async_redis_client()
 
 
 @pytest_asyncio.fixture()
@@ -51,6 +66,49 @@ async def binding_engine():
 @pytest.fixture(autouse=True)
 def _encryption_key(monkeypatch):
     monkeypatch.setenv("IM_CREDENTIAL_ENCRYPTION_KEY", "im-binding-test-key")
+
+
+@pytest.fixture(autouse=True)
+def _enable_binding(monkeypatch):
+    """绑定接口只在 SaaS 部署开放，测试显式打开开关。"""
+    monkeypatch.setattr(app_config, "saas_enabled", True)
+    monkeypatch.setattr(app_config, "platform_service_url", "https://tenant.example.com")
+
+
+class _FakeSaasClient:
+    """记录绑定服务对 Tenant 的调用，按用例注入返回值或异常。"""
+
+    def __init__(self) -> None:
+        self.bound: list[tuple[str, str, str]] = []
+        self.unbound: list[tuple[str, str]] = []
+        self.bind_error: Exception | None = None
+        self.unbind_error: Exception | None = None
+        self.list_error: Exception | None = None
+        self.bindings: list[dict] = []
+
+    async def bind_channel_account(self, token: str, channel_type: str, channel_user_id: str) -> dict:
+        self.bound.append((token, channel_type, channel_user_id))
+        if self.bind_error is not None:
+            raise self.bind_error
+        return {"channelType": channel_type, "bound": True, "channelUserId": channel_user_id}
+
+    async def unbind_channel_account(self, token: str, channel_type: str) -> None:
+        self.unbound.append((token, channel_type))
+        if self.unbind_error is not None:
+            raise self.unbind_error
+
+    async def list_channel_bindings(self, token: str) -> list[dict]:
+        del token
+        if self.list_error is not None:
+            raise self.list_error
+        return self.bindings
+
+
+@pytest.fixture()
+def fake_saas(monkeypatch) -> _FakeSaasClient:
+    client = _FakeSaasClient()
+    monkeypatch.setattr(im_binding_service, "get_saas_client", lambda: client)
+    return client
 
 
 def _credentials(platform: str) -> dict:
@@ -93,7 +151,7 @@ async def _cleanup(session, user_uids: list[str]) -> None:
 
 
 async def _add_session(session, *, user_id: int, bot_id: int, state: str, expires_at) -> str:
-    """插入一个 pending 会话并提交，返回其 state_hash。"""
+    """插入一个 pending 会话并提交，返回其 state。"""
     session.add(
         IMBindingSession(
             user_id=user_id,
@@ -106,6 +164,44 @@ async def _add_session(session, *, user_id: int, bot_id: int, state: str, expire
     )
     await session.commit()
     return state
+
+
+async def _seed_agent_session(uid: str) -> None:
+    """写入与 Tenant AgentSession 对齐的 Redis 会话。"""
+    await save_saas_agent_session(
+        uid,
+        SaasAgentSession(
+            token="tenant-session-1",
+            expires_at=str(int(time.time()) + 600),
+            tenant_id=1,
+            employee_id=2,
+            mcp_instance_id="runtime-1",
+        ),
+    )
+
+
+async def _clear_user_state(uid: str) -> None:
+    """清理 Redis 会话与绑定缓存。"""
+    await clear_saas_agent_session(uid)
+    await forget_user_bindings(uid)
+
+
+async def test_create_binding_session_rejects_when_binding_disabled(binding_engine, monkeypatch):
+    """非 SaaS 部署不启用绑定，发起会话直接返回 400。"""
+    monkeypatch.setattr(app_config, "saas_enabled", False)
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            with pytest.raises(HTTPException) as exc_info:
+                await create_binding_session(session, user=user, platform="dingtalk", base_url="https://yuxi.example")
+            assert exc_info.value.status_code == 400
+            assert exc_info.value.detail["code"] == "im_binding_not_enabled"
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
 
 
 async def test_create_binding_session_rejects_ambiguous_platform(binding_engine):
@@ -124,22 +220,22 @@ async def test_create_binding_session_rejects_ambiguous_platform(binding_engine)
             await _cleanup(session, [user_uid])
 
 
-async def test_complete_binding_consumes_state_once(binding_engine, monkeypatch):
-    """state 只能消费一次：首次写入绑定，重放抛 400。"""
+async def test_complete_binding_saves_to_tenant_and_caches(binding_engine, monkeypatch, fake_saas):
+    """绑定成功后 Tenant 收到大写平台类型，Redis 写入可复用的身份映射。"""
     uid = uuid.uuid4().hex[:10]
     user_uid = f"bind-{uid}"
     try:
         async with binding_engine() as session:
             user = await _create_user(session, user_uid)
             bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
-            state = f"state-{uuid.uuid4().hex}"
-            await _add_session(
+            state = await _add_session(
                 session,
                 user_id=user.id,
                 bot_id=bot.id,
-                state=state,
+                state=f"state-{uuid.uuid4().hex}",
                 expires_at=utc_now_naive() + timedelta(seconds=600),
             )
+            await _seed_agent_session(user.uid)
 
             async def fake_exchange(platform, credentials, code, redirect_uri):
                 return "dingtalk-userid-1", "union-1"
@@ -147,62 +243,80 @@ async def test_complete_binding_consumes_state_once(binding_engine, monkeypatch)
             monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
 
             result_path = await complete_binding(session, platform="dingtalk", code="code", state=state)
-            await session.commit()
+
             assert result_path == "/"
+            assert fake_saas.bound == [("tenant-session-1", "DINGTALK", "dingtalk-userid-1")]
+            assert await bind_uid("dingtalk", "dingtalk-userid-1") == user.uid
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
+async def test_complete_binding_consumes_state_once(binding_engine, monkeypatch, fake_saas):
+    """state 只能消费一次：首次成功，重放抛 400。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=f"state-{uuid.uuid4().hex}",
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+            await _seed_agent_session(user.uid)
+
+            async def fake_exchange(platform, credentials, code, redirect_uri):
+                return "dingtalk-userid-1", "union-1"
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
+
+            await complete_binding(session, platform="dingtalk", code="code", state=state)
 
             with pytest.raises(HTTPException) as exc_info:
                 await complete_binding(session, platform="dingtalk", code="code", state=state)
             assert exc_info.value.status_code == 400
             assert exc_info.value.detail["code"] == "invalid_binding_state"
-
-            binding = (
-                await session.execute(
-                    select(IMAccountBinding).where(
-                        IMAccountBinding.user_id == user.id,
-                        IMAccountBinding.platform == "dingtalk",
-                    )
-                )
-            ).scalar_one_or_none()
-            assert binding is not None
-            assert binding.platform_user_id == "dingtalk-userid-1"
     finally:
         async with binding_engine() as session:
             await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
 
 
-async def test_complete_binding_rejects_identity_owned_by_other_user(binding_engine, monkeypatch):
-    """平台身份已被他人绑定时必须拒绝，不能覆盖既有绑定。"""
+async def test_complete_binding_requires_login_session(binding_engine, monkeypatch, fake_saas):
+    """没有 Tenant AgentSession 时拒绝绑定，且不触达平台换取。"""
     uid = uuid.uuid4().hex[:10]
-    user_a_uid = f"bind-a-{uid}"
-    user_b_uid = f"bind-b-{uid}"
+    user_uid = f"bind-{uid}"
     try:
         async with binding_engine() as session:
-            user_a = await _create_user(session, user_a_uid)
-            user_b = await _create_user(session, user_b_uid)
-            bot = await _create_bot(session, platform="dingtalk", owner_uid=user_a.uid)
-            session.add(IMAccountBinding(user_id=user_a.id, platform="dingtalk", platform_user_id="taken-id"))
-            await session.commit()
-            state = f"state-{uuid.uuid4().hex}"
-            await _add_session(
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = await _add_session(
                 session,
-                user_id=user_b.id,
+                user_id=user.id,
                 bot_id=bot.id,
-                state=state,
+                state=f"state-{uuid.uuid4().hex}",
                 expires_at=utc_now_naive() + timedelta(seconds=600),
             )
 
-            async def fake_exchange(platform, credentials, code, redirect_uri):
-                return "taken-id", "union-1"
+            async def no_exchange(platform, credentials, code, redirect_uri):
+                raise AssertionError("缺少登录会话时不应触达平台换取")
 
-            monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
+            monkeypatch.setattr(im_binding_service, "_exchange_code", no_exchange)
 
             with pytest.raises(HTTPException) as exc_info:
                 await complete_binding(session, platform="dingtalk", code="code", state=state)
-            assert exc_info.value.status_code == 409
-            assert exc_info.value.detail["code"] == "im_account_already_bound"
+            assert exc_info.value.status_code == 401
+            assert exc_info.value.detail["code"] == "im_binding_login_required"
+            assert fake_saas.bound == []
     finally:
         async with binding_engine() as session:
-            await _cleanup(session, [user_a_uid, user_b_uid])
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
 
 
 async def test_complete_binding_rejects_expired_state(binding_engine, monkeypatch):
@@ -213,29 +327,28 @@ async def test_complete_binding_rejects_expired_state(binding_engine, monkeypatc
         async with binding_engine() as session:
             user = await _create_user(session, user_uid)
             bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
-            state = f"state-{uuid.uuid4().hex}"
-            await _add_session(
+            state = await _add_session(
                 session,
                 user_id=user.id,
                 bot_id=bot.id,
-                state=state,
+                state=f"state-{uuid.uuid4().hex}",
                 expires_at=utc_now_naive() - timedelta(seconds=1),
             )
 
-            async def fake_exchange(platform, credentials, code, redirect_uri):
+            async def no_exchange(platform, credentials, code, redirect_uri):
                 raise AssertionError("过期 state 不应触达平台换取")
 
-            monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
+            monkeypatch.setattr(im_binding_service, "_exchange_code", no_exchange)
 
             with pytest.raises(HTTPException) as exc_info:
                 await complete_binding(session, platform="dingtalk", code="code", state=state)
             assert exc_info.value.status_code == 400
             assert exc_info.value.detail["code"] == "invalid_binding_state"
 
-            binding = (
-                await session.execute(select(IMAccountBinding).where(IMAccountBinding.user_id == user.id))
-            ).scalar_one_or_none()
-            assert binding is None
+            row = (
+                await session.execute(select(IMBindingSession).where(IMBindingSession.state_hash == _hash_state(state)))
+            ).scalar_one()
+            assert row.status == "pending"
     finally:
         async with binding_engine() as session:
             await _cleanup(session, [user_uid])
@@ -249,12 +362,11 @@ async def test_complete_binding_rejects_platform_mismatch(binding_engine, monkey
         async with binding_engine() as session:
             user = await _create_user(session, user_uid)
             bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
-            state = f"state-{uuid.uuid4().hex}"
-            await _add_session(
+            state = await _add_session(
                 session,
                 user_id=user.id,
                 bot_id=bot.id,
-                state=state,
+                state=f"state-{uuid.uuid4().hex}",
                 expires_at=utc_now_naive() + timedelta(seconds=600),
             )
 
@@ -272,46 +384,7 @@ async def test_complete_binding_rejects_platform_mismatch(binding_engine, monkey
             await _cleanup(session, [user_uid])
 
 
-async def test_complete_binding_rejects_rebinding_same_platform(binding_engine, monkeypatch):
-    """同一用户同平台已有绑定时返回 409，不触发唯一约束 IntegrityError。"""
-    uid = uuid.uuid4().hex[:10]
-    user_uid = f"bind-{uid}"
-    try:
-        async with binding_engine() as session:
-            user = await _create_user(session, user_uid)
-            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
-            session.add(IMAccountBinding(user_id=user.id, platform="dingtalk", platform_user_id="already-bound"))
-            await session.commit()
-            state = f"state-{uuid.uuid4().hex}"
-            await _add_session(
-                session,
-                user_id=user.id,
-                bot_id=bot.id,
-                state=state,
-                expires_at=utc_now_naive() + timedelta(seconds=600),
-            )
-
-            async def no_exchange(platform, credentials, code, redirect_uri):
-                raise AssertionError("已绑定同平台时不应触达换取")
-
-            monkeypatch.setattr(im_binding_service, "_exchange_code", no_exchange)
-
-            with pytest.raises(HTTPException) as exc_info:
-                await complete_binding(session, platform="dingtalk", code="code", state=state)
-            assert exc_info.value.status_code == 409
-            assert exc_info.value.detail["code"] == "im_account_already_bound"
-            assert exc_info.value.detail["message"] == "该平台已绑定，请先解绑"
-
-            bindings = (
-                await session.execute(select(IMAccountBinding).where(IMAccountBinding.user_id == user.id))
-            ).scalars().all()
-            assert len(bindings) == 1
-    finally:
-        async with binding_engine() as session:
-            await _cleanup(session, [user_uid])
-
-
-async def test_complete_binding_commits_used_state_before_exchange(binding_engine, monkeypatch):
+async def test_complete_binding_commits_used_state_before_exchange(binding_engine, monkeypatch, fake_saas):
     """换取失败也必须把 state 置 used 并提交，使重放不能复用。"""
     uid = uuid.uuid4().hex[:10]
     user_uid = f"bind-{uid}"
@@ -319,14 +392,14 @@ async def test_complete_binding_commits_used_state_before_exchange(binding_engin
         async with binding_engine() as session:
             user = await _create_user(session, user_uid)
             bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
-            state = f"state-{uuid.uuid4().hex}"
-            await _add_session(
+            state = await _add_session(
                 session,
                 user_id=user.id,
                 bot_id=bot.id,
-                state=state,
+                state=f"state-{uuid.uuid4().hex}",
                 expires_at=utc_now_naive() + timedelta(seconds=600),
             )
+            await _seed_agent_session(user.uid)
 
             async def failing_exchange(platform, credentials, code, redirect_uri):
                 raise ValueError("平台换取失败")
@@ -336,7 +409,6 @@ async def test_complete_binding_commits_used_state_before_exchange(binding_engin
             with pytest.raises(ValueError, match="平台换取失败"):
                 await complete_binding(session, platform="dingtalk", code="code", state=state)
 
-            # 用独立会话确认 used_at 已提交，排除未提交的脏读。
             async with binding_engine() as verify:
                 row = (
                     await verify.execute(
@@ -345,9 +417,177 @@ async def test_complete_binding_commits_used_state_before_exchange(binding_engin
                 ).scalar_one()
                 assert row.status == "used"
                 assert row.used_at is not None
+            assert fake_saas.bound == []
     finally:
         async with binding_engine() as session:
             await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
+async def test_complete_binding_maps_tenant_conflict(binding_engine, monkeypatch, fake_saas):
+    """Tenant 20316 映射为 409，用户需要先解绑占用账号。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=f"state-{uuid.uuid4().hex}",
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+            await _seed_agent_session(user.uid)
+            fake_saas.bind_error = SaasAPIError(code=20316, msg="该平台账号已绑定其他员工，请先解绑")
+
+            async def fake_exchange(platform, credentials, code, redirect_uri):
+                return "dingtalk-userid-1", "union-1"
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await complete_binding(session, platform="dingtalk", code="code", state=state)
+            assert exc_info.value.status_code == 409
+            assert exc_info.value.detail["code"] == "im_account_already_bound"
+            assert await bind_uid("dingtalk", "dingtalk-userid-1") is None
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
+async def test_complete_binding_clears_expired_tenant_session(binding_engine, monkeypatch, fake_saas):
+    """Tenant 20314 表示会话失效：清理 Redis 会话与绑定缓存并要求重新登录。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=f"state-{uuid.uuid4().hex}",
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+            await _seed_agent_session(user.uid)
+            await remember_binding(uid=user.uid, platform="dingtalk", channel_user_id="old-id", ttl_seconds=600)
+            fake_saas.bind_error = SaasAPIError(code=20314, msg="Agent登录状态已失效，请重新登录")
+
+            async def fake_exchange(platform, credentials, code, redirect_uri):
+                return "dingtalk-userid-1", "union-1"
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await complete_binding(session, platform="dingtalk", code="code", state=state)
+            assert exc_info.value.status_code == 401
+            assert exc_info.value.detail["code"] == "im_binding_login_required"
+            assert await get_saas_agent_session(user.uid) is None
+            assert await bind_uid("dingtalk", "old-id") is None
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
+async def test_complete_binding_maps_tenant_network_failure(binding_engine, monkeypatch, fake_saas):
+    """Tenant 不可达时绑定失败关闭，不返回成功。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=f"state-{uuid.uuid4().hex}",
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+            await _seed_agent_session(user.uid)
+            fake_saas.bind_error = httpx.ConnectError("tenant down")
+
+            async def fake_exchange(platform, credentials, code, redirect_uri):
+                return "dingtalk-userid-1", "union-1"
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await complete_binding(session, platform="dingtalk", code="code", state=state)
+            assert exc_info.value.status_code == 502
+            assert exc_info.value.detail["code"] == "im_binding_tenant_unavailable"
+            assert await bind_uid("dingtalk", "dingtalk-userid-1") is None
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
+async def test_list_bindings_maps_tenant_payload(binding_engine, fake_saas):
+    """列表只映射 Tenant 已绑定的飞书/钉钉，未绑定与企业微信不出现。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            await _seed_agent_session(user.uid)
+            fake_saas.bindings = [
+                {"channelType": "FEISHU", "bound": True, "channelUserId": "ou-1", "boundAt": "2026-11-06T10:20:30"},
+                {"channelType": "DINGTALK", "bound": False, "channelUserId": None, "boundAt": None},
+                {"channelType": "WECOM", "bound": True, "channelUserId": "wc-1", "boundAt": "2026-11-05T09:08:07"},
+            ]
+
+            rows = await list_bindings(session, user=user)
+
+            assert rows == [
+                {"platform": "feishu", "platform_user_id": "ou-1", "created_at": "2026-11-06T10:20:30"}
+            ]
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
+async def test_delete_binding_calls_tenant_and_clears_cache(binding_engine, fake_saas):
+    """解绑由 Tenant 执行，本地只清理缓存。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            await _seed_agent_session(user.uid)
+            await remember_binding(uid=user.uid, platform="feishu", channel_user_id="ou-1", ttl_seconds=600)
+
+            await delete_binding(session, user=user, platform="feishu")
+
+            assert fake_saas.unbound == [("tenant-session-1", "FEISHU")]
+            assert await bind_uid("feishu", "ou-1") is None
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
+async def test_list_bindings_requires_login_session(binding_engine, fake_saas):
+    """没有 Tenant AgentSession 时查询直接 401，不调用 Tenant。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            with pytest.raises(HTTPException) as exc_info:
+                await list_bindings(session, user=user)
+            assert exc_info.value.status_code == 401
+            assert exc_info.value.detail["code"] == "im_binding_login_required"
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
 
 
 async def test_dingtalk_token_exchange_error_redacts_query_secrets(monkeypatch):
@@ -377,54 +617,3 @@ async def test_dingtalk_token_exchange_error_redacts_query_secrets(monkeypatch):
     assert secret not in message
     assert "appsecret" not in message
     assert "access_token" not in message
-
-
-async def test_resolve_channel_identity_falls_back_to_owner_when_not_required(binding_engine):
-    """未绑定时按 require_binding 分流：关闭回退归属人，打开抛 409。"""
-    uid = uuid.uuid4().hex[:10]
-    user_uid = f"bind-{uid}"
-    try:
-        async with binding_engine() as session:
-            transport_user = await _create_user(session, user_uid)
-            optional_bot = await _create_bot(
-                session, platform="dingtalk", owner_uid=transport_user.uid, require_binding=False
-            )
-            identity = await resolve_channel_identity(
-                session, transport_user=transport_user, account_id=str(optional_bot.id), sender_id="unknown-sender"
-            )
-            assert identity.user.id == transport_user.id
-            assert identity.owner_fallback is True
-
-            required_bot = await _create_bot(
-                session, platform="dingtalk", owner_uid=transport_user.uid, require_binding=True
-            )
-            with pytest.raises(HTTPException) as exc_info:
-                await resolve_channel_identity(
-                    session, transport_user=transport_user, account_id=str(required_bot.id), sender_id="unknown-sender"
-                )
-            assert exc_info.value.status_code == 409
-            assert exc_info.value.detail["code"] == "im_account_not_bound"
-    finally:
-        async with binding_engine() as session:
-            await _cleanup(session, [user_uid])
-
-
-async def test_resolve_channel_identity_rejects_disabled_bot(binding_engine):
-    """停用机器人即使归属正确也必须拒绝，不能回退到归属人身份。"""
-    uid = uuid.uuid4().hex[:10]
-    user_uid = f"bind-{uid}"
-    try:
-        async with binding_engine() as session:
-            transport_user = await _create_user(session, user_uid)
-            disabled_bot = await _create_bot(
-                session, platform="dingtalk", owner_uid=transport_user.uid, enabled=False
-            )
-            with pytest.raises(HTTPException) as exc_info:
-                await resolve_channel_identity(
-                    session, transport_user=transport_user, account_id=str(disabled_bot.id), sender_id="sender-1"
-                )
-            assert exc_info.value.status_code == 403
-            assert exc_info.value.detail["code"] == "im_bot_disabled"
-    finally:
-        async with binding_engine() as session:
-            await _cleanup(session, [user_uid])
