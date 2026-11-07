@@ -225,7 +225,8 @@ async def test_create_binding_session_requires_login_session(binding_engine):
             await _cleanup(session, [user_uid])
 
 
-async def test_create_binding_session_requires_session_mobile(binding_engine):
+@pytest.mark.parametrize("session_mobile", [None, "   "])
+async def test_create_binding_session_requires_session_mobile(binding_engine, session_mobile):
     """旧会话没有 Tenant 手机号时提前 401，不生成必然失败的二维码与 pending state。"""
     uid = uuid.uuid4().hex[:10]
     user_uid = f"bind-{uid}"
@@ -233,7 +234,7 @@ async def test_create_binding_session_requires_session_mobile(binding_engine):
         async with binding_engine() as session:
             user = await _create_user(session, user_uid)
             await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
-        await _seed_agent_session(user_uid, None)
+        await _seed_agent_session(user_uid, session_mobile)
 
         async with binding_engine() as session:
             with pytest.raises(HTTPException) as exc_info:
@@ -459,7 +460,8 @@ async def test_complete_binding_ignores_user_editable_phone(binding_engine, monk
         await _clear_user_state(user_uid)
 
 
-async def test_complete_binding_requires_session_mobile(binding_engine, monkeypatch, fake_saas):
+@pytest.mark.parametrize("session_mobile", [None, "   "])
+async def test_complete_binding_requires_session_mobile(binding_engine, monkeypatch, fake_saas, session_mobile):
     """旧会话没有 Tenant 下发手机号时要求重新登录，不能跳过归属核验。"""
     uid = uuid.uuid4().hex[:10]
     user_uid = f"bind-{uid}"
@@ -474,7 +476,7 @@ async def test_complete_binding_requires_session_mobile(binding_engine, monkeypa
                 state=f"state-{uuid.uuid4().hex}",
                 expires_at=utc_now_naive() + timedelta(seconds=600),
             )
-        await _seed_agent_session(user_uid, None)
+        await _seed_agent_session(user_uid, session_mobile)
 
         async def no_exchange(*_args, **_kwargs):
             raise AssertionError("缺少会话手机号时不应触达平台换取")

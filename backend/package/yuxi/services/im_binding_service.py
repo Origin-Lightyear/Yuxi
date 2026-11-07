@@ -331,7 +331,7 @@ async def create_binding_session(db: AsyncSession, *, user: User, platform: str,
         raise ValueError("platform 只支持 feishu 或 dingtalk")
     agent_session = await _require_agent_session(user)
     # 旧会话没有 Tenant 下发手机号，无法完成归属核验，提前失败避免消耗 state。
-    if not agent_session.mobile:
+    if not _normalize_mobile(agent_session.mobile):
         raise _binding_login_required()
     bots = [bot for bot in await list_im_bots(db) if bot.enabled and bot.platform == platform]
     if len(bots) > 1:
@@ -400,7 +400,7 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
         raise HTTPException(400, detail={"code": "invalid_binding_state", "message": "绑定用户不存在"})
     agent_session = await _require_agent_session(user)
     # 旧会话没有 Tenant 下发手机号，无法核验扫码账号归属，要求重新登录刷新会话。
-    if not agent_session.mobile:
+    if not _normalize_mobile(agent_session.mobile):
         raise _binding_login_required()
 
     bot = await get_im_bot(db, bot_id)

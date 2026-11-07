@@ -277,6 +277,8 @@ async def _save_saas_login_state(uid: str, emp: TenantEmployee, mcp_instance_id:
     """
     from yuxi.services import im_binding_service, saas_session
 
+    if not str(mobile or "").strip():
+        logger.warning(f"SaaS login returned empty mobile: uid={uid}")
     agent_session = saas_session.SaasAgentSession(
         token=emp.agent_session_token,
         expires_at=emp.agent_session_expires_at,
