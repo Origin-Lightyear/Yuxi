@@ -29,6 +29,7 @@
 
 - **未绑定身份是否能绕过开关执行**：`require_binding=true` 时任何 `sender_id` 缺失、未命中绑定的请求都必须 409，不能落到归属人身份。
 - **伪造 `account_id`**：持有任意 API Key 的调用方不能通过传别人的 `account_id` 拿到别人的绑定身份，必须校验机器人归属。
+- **他人平台账号扫码**：诱导同事扫自己的绑定二维码时，回调必须先核验平台资料手机号属于发起绑定的用户，否则拒绝绑定。
 - **同平台身份被换绑**：另一个用户完成授权时不能覆盖已有绑定，必须拒绝并引导先解绑。
 - **state 重放 / 过期**：用过或过期的 state 必须失败，不能写出绑定。
 - **过渡期静默**：`require_binding=false` 且未绑定时，响应必须带 `identity_source=owner_fallback`，网关必须附提示，用户不能毫不知情；非 SaaS 部署直接按归属人执行，返回 `identity_source=owner`，不附绑定提示。
@@ -382,14 +383,14 @@ git commit -m "docs(im-binding): 记录 IM 账号绑定的证据与未验证范�
 - 地图：Tenant `channelType → platform` 小写；`channelUserId → platform_user_id`；`boundAt → created_at`；只返回 `feishu/dingtalk` 且 `bound=true`。
 
 - [ ] **Step 1: 写失败测试**
-  1. `complete_binding` 成功路径调用 `bind_channel_account` 并在成功后才返回；Tenant `20316` → 409 `im_account_already_bound`；Tenant `20314` → 清理会话缓存并 401 `im_binding_login_required`；Tenant 网络失败 → 502 `im_binding_tenant_unavailable`；无本地 AgentSession → 401，且不调用 Tenant。
+  1. `complete_binding` 成功路径调用 `bind_channel_account` 并在成功后才返回；Tenant `20316` → 409 `im_account_already_bound`；Tenant `20314` → 清理会话缓存并 401 `im_binding_login_required`；Tenant 网络失败 → 502 `im_binding_tenant_unavailable`；无本地 AgentSession → 401，且不调用 Tenant；授权平台资料手机号与当前用户不一致或缺失 → 403 `im_binding_identity_mismatch`，不调用 Tenant、不写缓存。
   2. 绑定时 `require_binding=false` / state 重放 / 过期 / 平台不匹配沿用 Phase 1 断言。
   3. `list_bindings` 只映射 Tenant 结果，不读本地绑定表；`delete_binding` 调解绑并删除缓存，Tenant 未绑定仍成功。
   4. 非 SaaS（`app_config.saas_enabled=False`）时三个用户接口都返回 400 `im_binding_not_enabled`。
 - [ ] **Step 2: 运行确认失败**（同文件路径 `-q`）
 - [ ] **Step 3: 实现**
   - 所有用户接口先取 `get_saas_agent_session(user.uid)`；缺失即 401，绝不落本地绑定。
-  - `complete_binding` 保持「先提交 used_at，再换平台身份」；换取身份后必须成功调用 Tenant 才算绑定成功，并写正向/反向缓存。
+  - `complete_binding` 保持「先提交 used_at，再换平台身份」；换取身份后先用平台资料手机号核验扫码账号属于当前登录用户（缺失或不一致 403 `im_binding_identity_mismatch`），再成功调用 Tenant 才算绑定成功，并写正向/反向缓存。
   - Tenant 错误码映射集中在一个 helper，日志只记录 code，不记录 token/密钥。
 - [ ] **Step 4: 跑测试通过**
 - [ ] **Step 5: 提交**

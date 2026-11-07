@@ -119,8 +119,8 @@ def _credentials(platform: str) -> dict:
 
 
 async def _create_user(session, uid: str) -> User:
-    """创建临时用户并返回。"""
-    user = User(username=uid, uid=uid, password_hash="pytest")
+    """创建临时用户并返回；手机号用于平台账号归属核验，按 uid 独立生成。"""
+    user = User(username=uid, uid=uid, password_hash="pytest", phone_number=f"138{uuid.uuid4().int % 100000000:08d}")
     session.add(user)
     await session.commit()
     return user
@@ -260,7 +260,7 @@ async def test_complete_binding_saves_to_tenant_and_caches(binding_engine, monke
             await _seed_agent_session(user.uid)
 
             async def fake_exchange(platform, credentials, code, redirect_uri):
-                return "dingtalk-userid-1", "union-1"
+                return "dingtalk-userid-1", "union-1", user.phone_number
 
             monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
 
@@ -293,7 +293,7 @@ async def test_complete_binding_consumes_state_once(binding_engine, monkeypatch,
             await _seed_agent_session(user.uid)
 
             async def fake_exchange(platform, credentials, code, redirect_uri):
-                return "dingtalk-userid-1", "union-1"
+                return "dingtalk-userid-1", "union-1", user.phone_number
 
             monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
 
@@ -330,7 +330,7 @@ async def test_complete_binding_concurrent_callbacks_only_one_succeeds(binding_e
 
         async def fake_exchange(platform, credentials, code, redirect_uri):
             exchanged_codes.append(code)
-            return "dingtalk-userid-1", "union-1"
+            return "dingtalk-userid-1", "union-1", user.phone_number
 
         monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
 
@@ -351,6 +351,40 @@ async def test_complete_binding_concurrent_callbacks_only_one_succeeds(binding_e
         assert failures[0].detail["code"] == "invalid_binding_state"
         assert len(exchanged_codes) == 1
         assert fake_saas.bound == [("tenant-session-1", "DINGTALK", "dingtalk-userid-1")]
+    finally:
+        async with binding_engine() as session:
+            await _cleanup(session, [user_uid])
+        await _clear_user_state(user_uid)
+
+
+async def test_complete_binding_rejects_other_persons_platform_account(binding_engine, monkeypatch, fake_saas):
+    """他人平台账号扫码授权不能绑到当前 Yuxi 账号，绑定前必须核验手机号。"""
+    uid = uuid.uuid4().hex[:10]
+    user_uid = f"bind-{uid}"
+    try:
+        async with binding_engine() as session:
+            user = await _create_user(session, user_uid)
+            bot = await _create_bot(session, platform="dingtalk", owner_uid=user.uid)
+            state = await _add_session(
+                session,
+                user_id=user.id,
+                bot_id=bot.id,
+                state=f"state-{uuid.uuid4().hex}",
+                expires_at=utc_now_naive() + timedelta(seconds=600),
+            )
+            await _seed_agent_session(user.uid)
+
+            async def fake_exchange(platform, credentials, code, redirect_uri):
+                return "dingtalk-userid-1", "union-1", "13900000000"
+
+            monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await complete_binding(session, platform="dingtalk", code="code", state=state)
+            assert exc_info.value.status_code == 403
+            assert exc_info.value.detail["code"] == "im_binding_identity_mismatch"
+            assert fake_saas.bound == []
+            assert await bind_uid("dingtalk", "dingtalk-userid-1") is None
     finally:
         async with binding_engine() as session:
             await _cleanup(session, [user_uid])
@@ -513,7 +547,7 @@ async def test_complete_binding_maps_tenant_conflict(binding_engine, monkeypatch
             fake_saas.bind_error = SaasAPIError(code=20316, msg="该平台账号已绑定其他员工，请先解绑")
 
             async def fake_exchange(platform, credentials, code, redirect_uri):
-                return "dingtalk-userid-1", "union-1"
+                return "dingtalk-userid-1", "union-1", user.phone_number
 
             monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
 
@@ -548,7 +582,7 @@ async def test_complete_binding_clears_expired_tenant_session(binding_engine, mo
             fake_saas.bind_error = SaasAPIError(code=20314, msg="Agent登录状态已失效，请重新登录")
 
             async def fake_exchange(platform, credentials, code, redirect_uri):
-                return "dingtalk-userid-1", "union-1"
+                return "dingtalk-userid-1", "union-1", user.phone_number
 
             monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
 
@@ -583,7 +617,7 @@ async def test_20314_cache_clear_failure_still_returns_401(binding_engine, monke
             fake_saas.bind_error = SaasAPIError(code=20314, msg="Agent登录状态已失效，请重新登录")
 
             async def fake_exchange(platform, credentials, code, redirect_uri):
-                return "dingtalk-userid-1", "union-1"
+                return "dingtalk-userid-1", "union-1", user.phone_number
 
             async def failing_forget(uid):
                 del uid
@@ -621,7 +655,7 @@ async def test_complete_binding_maps_tenant_network_failure(binding_engine, monk
             fake_saas.bind_error = httpx.ConnectError("tenant down")
 
             async def fake_exchange(platform, credentials, code, redirect_uri):
-                return "dingtalk-userid-1", "union-1"
+                return "dingtalk-userid-1", "union-1", user.phone_number
 
             monkeypatch.setattr(im_binding_service, "_exchange_code", fake_exchange)
 

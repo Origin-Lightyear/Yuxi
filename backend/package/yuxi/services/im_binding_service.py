@@ -43,6 +43,7 @@ FEISHU_AUTHORIZE_URL = "https://open.feishu.cn/open-apis/authen/v1/index"
 DINGTALK_AUTHORIZE_URL = "https://login.dingtalk.com/oauth2/auth"
 FEISHU_TENANT_ACCESS_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 FEISHU_USER_ACCESS_TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v1/access_token"
+FEISHU_USER_INFO_URL = "https://open.feishu.cn/open-apis/authen/v1/user_info"
 DINGTALK_USER_ACCESS_TOKEN_URL = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken"
 DINGTALK_USERS_ME_URL = "https://api.dingtalk.com/v1.0/contact/users/me"
 DINGTALK_GETTOKEN_URL = "https://oapi.dingtalk.com/gettoken"
@@ -231,11 +232,12 @@ async def _dingtalk_userid(credentials: dict, union_id: str) -> str:
 
 async def _exchange_code(
     platform: str, credentials: dict, code: str, redirect_uri: str | None
-) -> tuple[str, str | None]:
-    """用授权码换取平台身份，返回 ``(platform_user_id, union_id)``。
+) -> tuple[str, str | None, str | None]:
+    """用授权码换取平台身份，返回 ``(platform_user_id, union_id, mobile)``。
 
-    飞书返回 ``open_id``，钉钉返回消息侧使用的 ``userid``。飞书/钉钉换取 token
-    均不校验 ``redirect_uri``，该参数仅为对齐标准 OAuth 签名保留。
+    飞书返回 ``open_id``，钉钉返回消息侧使用的 ``userid``；``mobile`` 取自平台
+    用户资料，用于校验扫码账号属于当前 Yuxi 用户。飞书/钉钉换取 token 均不
+    校验 ``redirect_uri``，该参数仅为对齐标准 OAuth 签名保留。
     """
     platform = str(platform or "").strip().lower()
     if platform == "feishu":
@@ -250,7 +252,16 @@ async def _exchange_code(
         open_id = payload.get("open_id")
         if not open_id:
             raise ValueError("飞书换取 user_access_token 未返回 open_id")
-        return open_id, payload.get("union_id")
+        access_token = payload.get("access_token")
+        mobile = None
+        if access_token:
+            profile = await _request_json(
+                "GET",
+                FEISHU_USER_INFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            mobile = (profile.get("data") or {}).get("mobile")
+        return open_id, payload.get("union_id"), mobile
     if platform == "dingtalk":
         data = await _request_json(
             "POST",
@@ -270,8 +281,38 @@ async def _exchange_code(
         if not union_id:
             raise ValueError("钉钉查询当前用户 unionId 失败")
         userid = await _dingtalk_userid(credentials, union_id)
-        return userid, union_id
+        return userid, union_id, me.get("mobile")
     raise ValueError(f"platform 只支持 feishu 或 dingtalk: {platform}")
+
+
+def _normalize_mobile(value: str | None) -> str:
+    """把手机号归一化为纯数字并去掉中国区号，供平台资料与本地用户比对。"""
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(digits) == 13 and digits.startswith("86"):
+        digits = digits[2:]
+    return digits
+
+
+def _ensure_platform_account_matches_user(user: User, platform_mobile: str | None) -> None:
+    """确认扫码的平台账号属于当前登录用户，避免把他人平台身份绑到自己账号。
+
+    平台授权只证明扫码者控制该平台账号，Tenant 按 AgentSession 确定绑定目标，
+    因此归属核验必须由 Yuxi 完成：用平台资料手机号与本地用户比对，任一侧缺失
+    或不一致都失败关闭，不调用 Tenant。
+    """
+    local_mobile = _normalize_mobile(user.phone_number)
+    platform_value = _normalize_mobile(platform_mobile)
+    if not local_mobile or not platform_value or local_mobile != platform_value:
+        logger.warning(
+            f"Platform identity verification failed: uid={user.uid}, has_platform_mobile={bool(platform_value)}"
+        )
+        raise HTTPException(
+            403,
+            detail={
+                "code": "im_binding_identity_mismatch",
+                "message": "扫码账号与当前 Yuxi 账号不一致，请使用本人飞书/钉钉账号重新扫码",
+            },
+        )
 
 
 async def create_binding_session(db: AsyncSession, *, user: User, platform: str, base_url: str) -> dict:
@@ -356,7 +397,10 @@ async def complete_binding(db: AsyncSession, *, platform: str, code: str, state:
     if bot is None:
         raise ValueError("绑定会话关联的机器人不存在")
     credentials = decrypt_credentials(platform, bot.credentials_encrypted)
-    platform_user_id, _union_id = await _exchange_code(platform, credentials, code, redirect_uri=None)
+    platform_user_id, _union_id, platform_mobile = await _exchange_code(
+        platform, credentials, code, redirect_uri=None
+    )
+    _ensure_platform_account_matches_user(user, platform_mobile)
 
     try:
         await get_saas_client().bind_channel_account(

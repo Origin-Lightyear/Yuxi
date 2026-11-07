@@ -93,3 +93,63 @@ async def test_preheat_binding_cache_writes_bound_platforms_and_clears_stale(mon
     assert remembered[0]["platform"] == "feishu"
     assert remembered[0]["channel_user_id"] == "ou-1"
     assert remembered[0]["ttl_seconds"] == 600
+
+
+def test_normalize_mobile_strips_country_code_and_separators():
+    """平台资料与本地用户手机号可能格式不同，比较前统一归一化。"""
+    from yuxi.services.im_binding_service import _normalize_mobile
+
+    assert _normalize_mobile("+86 138-0013-8000") == "13800138000"
+    assert _normalize_mobile("8613800138000") == "13800138000"
+    assert _normalize_mobile("13800138000") == "13800138000"
+    assert _normalize_mobile(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_feishu_exchange_reads_profile_mobile(monkeypatch):
+    """飞书换取身份后必须读取用户资料手机号，供绑定归属核验。"""
+    from yuxi.services import im_binding_service
+
+    seen: list[tuple[str, str, dict]] = []
+
+    async def fake_request_json(method, url, **kwargs):
+        seen.append((method, url, kwargs))
+        if url == im_binding_service.FEISHU_TENANT_ACCESS_TOKEN_URL:
+            return {"tenant_access_token": "tenant-token"}
+        if url == im_binding_service.FEISHU_USER_ACCESS_TOKEN_URL:
+            return {"data": {"open_id": "ou-1", "union_id": "un-1", "access_token": "user-token"}}
+        if url == im_binding_service.FEISHU_USER_INFO_URL:
+            return {"data": {"mobile": "+8613800138000"}}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(im_binding_service, "_request_json", fake_request_json)
+
+    identity = await im_binding_service._exchange_code("feishu", FEISHU_CREDENTIALS, "code", None)
+
+    assert identity == ("ou-1", "un-1", "+8613800138000")
+    method, url, kwargs = seen[-1]
+    assert (method, url) == ("GET", im_binding_service.FEISHU_USER_INFO_URL)
+    assert kwargs["headers"] == {"Authorization": "Bearer user-token"}
+
+
+def test_platform_account_must_match_local_mobile():
+    """手机号缺失或不一致时拒绝绑定，且不泄露具体号码。"""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from yuxi.services.im_binding_service import _ensure_platform_account_matches_user
+
+    user = SimpleNamespace(uid="EMP001", phone_number="13800138000")
+
+    with pytest.raises(HTTPException) as exc:
+        _ensure_platform_account_matches_user(user, "13900000000")
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "im_binding_identity_mismatch"
+    assert "13800138000" not in exc.value.detail["message"]
+
+    with pytest.raises(HTTPException) as exc:
+        _ensure_platform_account_matches_user(user, None)
+    assert exc.value.detail["code"] == "im_binding_identity_mismatch"
+
+    _ensure_platform_account_matches_user(user, "+86 138-0013-8000")
