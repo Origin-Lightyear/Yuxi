@@ -209,6 +209,11 @@
         <a-form-item label="群聊内按用户独立会话" class="form-item">
           <a-switch v-model:checked="state.form.groupSessionsPerUser" />
         </a-form-item>
+
+        <a-form-item label="要求绑定后才能使用" class="form-item">
+          <a-switch v-model:checked="state.form.requireBinding" />
+          <div class="help-text">仅 SaaS 部署生效；关闭时未绑定身份回退到机器人归属人并附提示。</div>
+        </a-form-item>
       </a-form>
     </a-modal>
   </div>

@@ -18,8 +18,10 @@ from yuxi.agents.backends.paths import (
     runtime_user_data_path,
     workspace_scope_from_runtime_path,
 )
+from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.file_preview import render_file_preview
+from yuxi.services.im_binding_service import can_read_channel_thread_as_bot_owner
 from yuxi.services.skills.edit import open_shared_skill_dir
 from yuxi.services.skills.shared import lock_accessible_shared_skill_for_file
 from yuxi.services.workdir_service import resolve_authorized_workdir
@@ -145,9 +147,20 @@ async def resolve_thread_artifact_view(
     preview: bool = False,
 ) -> FileResponse | StreamingResponse | dict:
     """把实时授权文件导出为自动清理的 HTTP 文件响应。"""
-    access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db)
+    try:
+        access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
+        if conversation is None or not await can_read_channel_thread_as_bot_owner(
+            db, thread_id=thread_id, caller_uid=current_uid
+        ):
+            raise
+        access = await resolve_authorized_workdir(thread_id=thread_id, uid=conversation.uid, db=db)
+    access_uid = access.uid
     normalized = _normalize_artifact_path(runtime_user_data_path(access.workdir.root_path), path)
-    skill_source = await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
+    skill_source = await _require_skill_artifact_access(normalized_path=normalized, current_uid=access_uid, db=db)
     is_preview = preview and not download
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-artifact-", suffix=PurePosixPath(normalized).suffix)
     os.close(descriptor)
@@ -177,7 +190,7 @@ async def resolve_thread_artifact_view(
             return await render_file_preview(
                 normalized,
                 raw_content,
-                office_cache_key=f"artifact:{current_uid}:{normalized}",
+                office_cache_key=f"artifact:{access_uid}:{normalized}",
             )
         except OfficePreviewConversionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

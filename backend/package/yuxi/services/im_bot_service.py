@@ -140,6 +140,7 @@ async def create_im_bot(db: AsyncSession, payload: dict, username: str) -> IMBot
             "agent_slug": agent_slug,
             "allowed_users": _normalize_allowed_users(payload.get("allowed_users")),
             "require_mention": bool(payload.get("require_mention", True)),
+            "require_binding": bool(payload.get("require_binding", False)),
             "group_sessions_per_user": bool(payload.get("group_sessions_per_user", True)),
             "created_by": username,
             "updated_by": username,
@@ -183,6 +184,8 @@ async def update_im_bot(db: AsyncSession, bot_id: int, payload: dict, username: 
         bot.allowed_users = _normalize_allowed_users(payload.get("allowed_users"))
     if "require_mention" in payload:
         bot.require_mention = bool(payload.get("require_mention"))
+    if "require_binding" in payload:
+        bot.require_binding = bool(payload.get("require_binding"))
     if "group_sessions_per_user" in payload:
         bot.group_sessions_per_user = bool(payload.get("group_sessions_per_user"))
     bot.updated_by = username

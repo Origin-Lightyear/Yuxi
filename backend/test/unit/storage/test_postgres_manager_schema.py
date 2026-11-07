@@ -275,6 +275,40 @@ async def test_ensure_business_schema_creates_user_config_table():
 
 
 @pytest.mark.asyncio
+async def test_ensure_business_schema_creates_im_binding_tables():
+    """既有/已版本化业务库也必须通过 ensure_business_schema 建出一次性绑定会话表。"""
+    async with _recording_manager() as (manager, connection):
+        await manager.ensure_business_schema()
+
+    statements = "\n".join(connection.statements)
+
+    # 绑定关系由 Tenant 唯一保存，业务库不再创建本地绑定表。
+    assert "CREATE TABLE IF NOT EXISTS im_account_bindings" not in statements
+
+    assert "CREATE TABLE IF NOT EXISTS im_binding_sessions" in statements
+    assert "state_hash VARCHAR(64) NOT NULL UNIQUE" in statements
+    assert "status VARCHAR(16) NOT NULL DEFAULT 'pending'" in statements
+    assert "ADD COLUMN IF NOT EXISTS require_binding BOOLEAN NOT NULL DEFAULT false" in statements
+
+
+@pytest.mark.asyncio
+async def test_im_binding_tables_use_naive_timestamps_matching_models():
+    """绑定会话表的迁移 DDL 必须与 DateTime(naive) 模型一致，避免 aware/naive 时间比较抛错。"""
+    async with _recording_manager() as (manager, connection):
+        await manager.ensure_business_schema()
+
+    im_binding_statements = [
+        statement
+        for statement in connection.statements
+        if "CREATE TABLE IF NOT EXISTS im_binding_sessions" in statement
+    ]
+    assert len(im_binding_statements) == 1
+    for statement in im_binding_statements:
+        assert "TIMESTAMP WITHOUT TIME ZONE" in statement
+        assert "TIMESTAMPTZ" not in statement
+
+
+@pytest.mark.asyncio
 async def test_ensure_business_schema_creates_generic_config_options_table():
     async with _recording_manager() as (manager, connection):
         await manager.ensure_business_schema()

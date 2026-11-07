@@ -7,7 +7,26 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.utils.auth_middleware import AuthPrincipal
+
 router = importlib.import_module("server.routers.agent_invocation_channel_router")
+
+
+def _principal(*, uid: str = "user-1", api_key_id: int | None = 1) -> AuthPrincipal:
+    """构造已认证主体；IM 渠道用例默认携带 API Key 身份。"""
+    return AuthPrincipal(user=SimpleNamespace(uid=uid), api_key_id=api_key_id)
+
+
+@pytest.fixture(autouse=True)
+def _resolve_identity(monkeypatch: pytest.MonkeyPatch):
+    """把身份解析替换为透传 transport_user，使单元测试聚焦消息信封与命令分支。"""
+
+    async def fake_resolve_channel_identity(db, *, transport_user, account_id, sender_id, transport_api_key_id):
+        del db, account_id, sender_id
+        assert transport_api_key_id == 1
+        return SimpleNamespace(user=transport_user, identity_source="binding")
+
+    monkeypatch.setattr(router, "resolve_channel_identity", fake_resolve_channel_identity)
 
 
 def _payload(text: str, **kwargs):
@@ -56,7 +75,7 @@ async def test_plain_channel_text_uses_shared_submission(monkeypatch: pytest.Mon
     monkeypatch.setattr(router, "AgentRunRepository", EmptyRunRepo)
     result = await router.receive_channel_message(
         _payload("你好", channel="cli", account_id="local", chat_id="chat-1"),
-        current_user=SimpleNamespace(uid="user-1"),
+        principal=_principal(),
         db=object(),
     )
 
@@ -77,7 +96,7 @@ async def test_channel_rejects_whitespace_text_before_submission(monkeypatch: py
     with pytest.raises(HTTPException) as exc:
         await router.receive_channel_message(
             _payload("   "),
-            current_user=SimpleNamespace(uid="user-1"),
+            principal=_principal(),
             db=object(),
         )
 
@@ -113,7 +132,7 @@ async def test_channel_uses_request_id_as_external_id_when_message_id_missing(mo
             request_id="request-1",
             message={"type": "text", "text": "你好"},
         ),
-        current_user=SimpleNamespace(uid="user-1"),
+        principal=_principal(),
         db=object(),
     )
 
@@ -132,8 +151,8 @@ async def test_state_command_does_not_submit(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(router, "submit_agent_request", fail_submit)
     monkeypatch.setattr(router, "get_agent_state_view", fake_state)
     result = await router.receive_channel_message(
-        _payload("/state"),
-        current_user=SimpleNamespace(uid="user-1"),
+        _payload("/state", channel="dingtalk", account_id="1"),
+        principal=_principal(),
         db=object(),
     )
     assert result == {
@@ -141,6 +160,7 @@ async def test_state_command_does_not_submit(monkeypatch: pytest.MonkeyPatch):
         "command": "state",
         "thread_id": "thread-1",
         "state": {"agent_state": {"todos": []}},
+        "identity_source": "binding",
     }
 
 
@@ -171,7 +191,7 @@ async def test_approve_command_creates_resume_without_submit(monkeypatch: pytest
     monkeypatch.setattr(router, "submit_agent_request", fail_submit)
     result = await router.receive_channel_message(
         _payload("/approve"),
-        current_user=SimpleNamespace(uid="user-1"),
+        principal=_principal(),
         db=object(),
     )
 
@@ -220,7 +240,7 @@ async def test_approve_command_reuses_existing_resume_when_it_is_latest(monkeypa
 
     result = await router.receive_channel_message(
         _payload("/approve", request_id="request-1"),
-        current_user=SimpleNamespace(uid="user-1"),
+        principal=_principal(),
         db=object(),
     )
 
@@ -262,7 +282,7 @@ async def test_approve_command_rejects_request_id_from_older_resume(monkeypatch:
     with pytest.raises(HTTPException) as exc:
         await router.receive_channel_message(
             _payload("/approve", request_id="request-1"),
-            current_user=SimpleNamespace(uid="user-1"),
+            principal=_principal(),
             db=object(),
         )
 
@@ -287,8 +307,87 @@ async def test_channel_does_not_treat_question_interrupt_as_approval(monkeypatch
     with pytest.raises(HTTPException) as exc:
         await router.receive_channel_message(
             _payload("继续"),
-            current_user=SimpleNamespace(uid="user-1"),
+            principal=_principal(),
             db=object(),
         )
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "ask_user_question_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_cli_channel_skips_im_binding_resolution(monkeypatch: pytest.MonkeyPatch):
+    """非 IM 渠道（yuxi-cli）不得进入机器人绑定解析，也不返回 identity_source。"""
+    calls: dict[str, object] = {}
+
+    async def fail_resolve_channel_identity(*_args, **_kwargs):
+        raise AssertionError("非 IM 渠道不应解析 IM 绑定身份")
+
+    async def fake_submit_agent_request(*, request_input, **_kwargs):
+        calls["request_input"] = request_input
+        return {"run_id": "run-1", "thread_id": request_input.thread_id, "status": "dispatched"}
+
+    class EmptyRunRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_run_by_request_id(self, request_id: str):
+            del request_id
+            return None
+
+        async def get_latest_chat_or_resume_run(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(router, "resolve_channel_identity", fail_resolve_channel_identity)
+    monkeypatch.setattr(router, "submit_agent_request", fake_submit_agent_request)
+    monkeypatch.setattr(router, "AgentRunRepository", EmptyRunRepo)
+    result = await router.receive_channel_message(
+        _payload("你好", channel="cli", account_id="local", chat_id="chat-1"),
+        principal=_principal(),
+        db=object(),
+    )
+
+    assert result["kind"] == "run"
+    assert calls["request_input"].origin.channel == "cli"
+    assert "identity_source" not in result
+
+
+@pytest.mark.asyncio
+async def test_im_channel_rejects_jwt_principal_before_identity_resolution(monkeypatch: pytest.MonkeyPatch):
+    """JWT 登录态不能代替机器人 API Key 提交 IM 消息，避免归属人冒充 sender。"""
+    from server.utils.auth_middleware import AuthPrincipal
+
+    async def fail_resolve_channel_identity(*_args, **_kwargs):
+        raise AssertionError("缺少机器人 API Key 时不应解析绑定身份")
+
+    monkeypatch.setattr(router, "resolve_channel_identity", fail_resolve_channel_identity)
+
+    with pytest.raises(HTTPException) as exc:
+        await router.receive_channel_message(
+            _payload("你好", channel="dingtalk", account_id="1", sender_id="sender-1"),
+            principal=AuthPrincipal(user=SimpleNamespace(uid="user-1"), api_key_id=None),
+            db=object(),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "im_channel_api_key_required"
+
+
+@pytest.mark.asyncio
+async def test_im_channel_name_is_case_insensitive_for_guard(monkeypatch: pytest.MonkeyPatch):
+    """平台标识大小写变体也走 IM 凭证校验，不能绕过机器人 API Key 门槛。"""
+    from server.utils.auth_middleware import AuthPrincipal
+
+    async def fail_resolve_channel_identity(*_args, **_kwargs):
+        raise AssertionError("缺少机器人 API Key 时不应解析绑定身份")
+
+    monkeypatch.setattr(router, "resolve_channel_identity", fail_resolve_channel_identity)
+
+    with pytest.raises(HTTPException) as exc:
+        await router.receive_channel_message(
+            _payload("你好", channel="Feishu", account_id="1", sender_id="sender-1"),
+            principal=AuthPrincipal(user=SimpleNamespace(uid="user-1"), api_key_id=None),
+            db=object(),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "im_channel_api_key_required"

@@ -63,6 +63,27 @@ async def test_create_list_update_delete_im_bot(test_client, admin_headers):
     assert deleted.status_code == 200, deleted.text
 
 
+async def test_require_binding_round_trip(test_client, admin_headers):
+    """require_binding 通过创建 / 更新往返：显式 true 落库，更新 false 生效，缺省为 False。"""
+    uid = await _admin_uid(test_client, admin_headers)
+    slug = await _an_agent_slug(test_client, admin_headers)
+
+    payload = _payload(uid, slug)
+    payload["require_binding"] = True
+    created = await test_client.post("/api/system/im-bots", json=payload, headers=admin_headers)
+    assert created.status_code == 200, created.text
+    assert created.json()["data"]["require_binding"] is True
+    bot_id = created.json()["data"]["id"]
+
+    updated = await test_client.put(
+        f"/api/system/im-bots/{bot_id}", json={"require_binding": False}, headers=admin_headers
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["require_binding"] is False
+
+    await test_client.delete(f"/api/system/im-bots/{bot_id}", headers=admin_headers)
+
+
 async def test_gateway_config_requires_token(test_client, admin_headers):
     token = os.environ.get("IM_GATEWAY_TOKEN", "")
     if not token:

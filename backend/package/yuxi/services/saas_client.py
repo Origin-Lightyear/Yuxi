@@ -15,10 +15,22 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from yuxi.config import config as app_config
 from yuxi.utils.logging_config import logger
 from yuxi.utils.string_utils import mask_mobile
 
 DEFAULT_TIMEOUT_SECONDS = 15.0
+
+# Tenant 渠道绑定接口只接受大写平台类型，Yuxi 内部使用小写平台名。
+CHANNEL_TYPES = {"feishu": "FEISHU", "dingtalk": "DINGTALK", "wecom": "WECOM"}
+
+
+def channel_type_for(platform: str) -> str:
+    """把 Yuxi 平台名转换为 Tenant 约定的大写 channelType。"""
+    value = CHANNEL_TYPES.get(str(platform or "").strip().lower())
+    if value is None:
+        raise ValueError(f"channelType 只支持 FEISHU、DINGTALK 或 WECOM: {platform}")
+    return value
 
 
 class SaasAPIError(Exception):
@@ -262,6 +274,64 @@ class SaasClient:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(url, headers={"Authorization": f"AgentSession {agent_session_token}"})
             response.raise_for_status()
+
+    async def bind_channel_account(
+        self, agent_session_token: str, channel_type: str, channel_user_id: str
+    ) -> dict[str, Any]:
+        """把平台账号绑定到当前员工（POST employee/channel-bindings）。"""
+        url = _build_url(self._tenant_url, "/api/v1/agent/inner/employee/channel-bindings")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                url,
+                headers={"Authorization": f"AgentSession {agent_session_token}"},
+                json={"channelType": channel_type, "channelUserId": channel_user_id},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        data = _check_response(payload)
+        logger.info(f"SaaS channel binding saved: channel_type={channel_type}")
+        return data if isinstance(data, dict) else {}
+
+    async def unbind_channel_account(self, agent_session_token: str, channel_type: str) -> None:
+        """解除当前员工在指定平台的绑定（DELETE employee/channel-bindings/{channelType}）。"""
+        url = _build_url(self._tenant_url, f"/api/v1/agent/inner/employee/channel-bindings/{channel_type}")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.delete(
+                url, headers={"Authorization": f"AgentSession {agent_session_token}"}
+            )
+            response.raise_for_status()
+            payload = response.json()
+        _check_response(payload)
+        logger.info(f"SaaS channel binding removed: channel_type={channel_type}")
+
+    async def list_channel_bindings(self, agent_session_token: str) -> list[dict[str, Any]]:
+        """查询当前员工三个平台的绑定（GET employee/channel-bindings）。"""
+        url = _build_url(self._tenant_url, "/api/v1/agent/inner/employee/channel-bindings")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.get(url, headers={"Authorization": f"AgentSession {agent_session_token}"})
+            response.raise_for_status()
+            payload = response.json()
+        data = _check_response(payload)
+        return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+
+    async def authenticate_channel(self, channel_type: str, channel_user_id: str) -> EmployeeAuthResult:
+        """用平台身份登录 Tenant（POST auth/channel），只用服务管理密钥。"""
+        admin_key = app_config.tenant_admin_api_key.strip()
+        if not admin_key:
+            raise SaasAPIError(code=20317, msg="Agent 服务认证失败")
+        url = _build_url(self._tenant_url, "/api/v1/agent/inner/auth/channel")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                url,
+                headers={"X-Tenant-Admin-Key": admin_key},
+                json={"channelType": channel_type, "channelUserId": channel_user_id},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        data = _check_response(payload)
+        result = _parse_employee_auth(data)
+        logger.info(f"SaaS channel auth success: channel_type={channel_type}, tenants={len(result.tenants)}")
+        return result
 
 
 _saas_client: SaasClient | None = None

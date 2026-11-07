@@ -103,6 +103,26 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
       find(host, (node) => node.props.panel === 'UserManagementComponent'),
       undefined
     )
+    const imAccountTab = () =>
+      find(host, (node) => node.children.some((child) => child.text === 'IM 账号'))
+    assert.equal(imAccountTab(), undefined, '非 SaaS 部署不展示 IM 账号入口')
+    useUserStore().saasMode = true
+    await nextTick()
+    assert.ok(imAccountTab(), 'SaaS 部署展示 IM 账号入口')
+    useUserStore().saasMode = false
+    await nextTick()
+    const imBotTab = () =>
+      find(host, (node) => node.children.some((child) => child.text === 'IM 机器人'))
+    assert.ok(imBotTab(), '非 SaaS 管理员展示 IM 机器人入口')
+    useUserStore().saasMode = true
+    await nextTick()
+    assert.ok(imBotTab(), 'SaaS 管理员也展示 IM 机器人入口')
+    useUserStore().saasMode = false
+    useUserStore().userRole = 'user'
+    await nextTick()
+    assert.equal(imBotTab(), undefined, '非管理员不展示 IM 机器人入口')
+    useUserStore().userRole = 'admin'
+    await nextTick()
     const ocr = find(host, (node) => node.props.panel === 'OCRSettingsSection')
     ocr.props.onInput({ target: { value: 'draft' } })
     const select = async (label) => {

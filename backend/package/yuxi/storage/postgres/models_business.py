@@ -1739,6 +1739,7 @@ class IMBotConfig(Base):
     agent_slug = Column(String(100), nullable=False)
     allowed_users = Column(JSON, nullable=False, default=list)
     require_mention = Column(Boolean, nullable=False, default=True)
+    require_binding = Column(Boolean, nullable=False, default=False)
     group_sessions_per_user = Column(Boolean, nullable=False, default=True)
     created_by = Column(String(100), nullable=True)
     updated_by = Column(String(100), nullable=True)
@@ -1757,9 +1758,39 @@ class IMBotConfig(Base):
             "agent_slug": self.agent_slug,
             "allowed_users": list(self.allowed_users or []),
             "require_mention": bool(self.require_mention),
+            "require_binding": bool(self.require_binding),
             "group_sessions_per_user": bool(self.group_sessions_per_user),
             "created_by": self.created_by,
             "updated_by": self.updated_by,
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class IMBindingSession(Base):
+    """IM 账号绑定会话（一次性授权 / 扫码流程状态）。"""
+
+    __tablename__ = "im_binding_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    platform = Column(String(16), nullable=False)
+    bot_id = Column(Integer, ForeignKey("im_bot_configs.id", ondelete="SET NULL"), nullable=True)
+    state_hash = Column(String(64), nullable=False, unique=True, index=True)
+    status = Column(String(16), nullable=False, default="pending")
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive)
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化绑定会话公开字段。"""
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "platform": self.platform,
+            "bot_id": self.bot_id,
+            "status": self.status,
+            "expires_at": format_utc_datetime(self.expires_at),
+            "used_at": format_utc_datetime(self.used_at),
+            "created_at": format_utc_datetime(self.created_at),
         }

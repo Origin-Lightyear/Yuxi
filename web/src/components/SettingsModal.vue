@@ -30,6 +30,15 @@
           </div>
           <div
             class="sider-item"
+            :class="{ activesec: activeTab === 'imAccounts' }"
+            @click="activeTab = 'imAccounts'"
+            v-if="userStore.isLoggedIn && userStore.saasMode"
+          >
+            <IdCard class="icon" :size="18" />
+            <span>IM 账号</span>
+          </div>
+          <div
+            class="sider-item"
             :class="{ activesec: activeTab === 'apiKeys' }"
             @click="activeTab = 'apiKeys'"
             v-if="false"
@@ -77,7 +86,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'imBots' }"
             @click="activeTab = 'imBots'"
-            v-if="userStore.isAdmin && !userStore.saasMode"
+            v-if="userStore.isAdmin"
           >
             <Bot class="icon" :size="18" />
             <span>IM 机器人</span>
@@ -139,6 +148,14 @@
         </div>
         <div
           class="nav-item"
+          :class="{ active: activeTab === 'imAccounts' }"
+          @click="activeTab = 'imAccounts'"
+          v-if="userStore.isLoggedIn && userStore.saasMode"
+        >
+          IM 账号
+        </div>
+        <div
+          class="nav-item"
           :class="{ active: activeTab === 'apiKeys' }"
           @click="activeTab = 'apiKeys'"
           v-if="false"
@@ -189,7 +206,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'imBots' }"
           @click="activeTab = 'imBots'"
-          v-if="userStore.isAdmin && !userStore.saasMode"
+          v-if="userStore.isAdmin"
         >
           IM 机器人
         </div>
@@ -203,6 +220,13 @@
             v-if="userStore.isLoggedIn && loadedTabs.has('account')"
           >
             <AccountSettingsComponent />
+          </div>
+
+          <div
+            v-show="activeTab === 'imAccounts'"
+            v-if="userStore.isLoggedIn && userStore.saasMode && loadedTabs.has('imAccounts')"
+          >
+            <ImAccountBindingComponent />
           </div>
 
           <div v-if="false">
@@ -232,7 +256,7 @@
             <DepartmentManagementComponent />
           </div>
 
-          <div v-show="activeTab === 'imBots'" v-if="userStore.isAdmin && !userStore.saasMode">
+          <div v-show="activeTab === 'imBots'" v-if="userStore.isAdmin">
             <ImBotManagementComponent />
           </div>
         </div>
@@ -248,6 +272,7 @@ import {
   CircleUser,
   Bot,
   ExternalLink,
+  IdCard,
   Settings,
   Key,
   ScanText,
@@ -276,6 +301,9 @@ const DepartmentManagementComponent = createAsyncPanel(
 )
 const ImBotManagementComponent = createAsyncPanel(
   () => import('@/components/ImBotManagementComponent.vue')
+)
+const ImAccountBindingComponent = createAsyncPanel(
+  () => import('@/components/ImAccountBindingComponent.vue')
 )
 
 const props = defineProps({
@@ -307,9 +335,11 @@ const visible = computed({
 const availableTabs = computed(() => {
   const tabs = []
   if (userStore.isLoggedIn) tabs.push('account')
+  if (userStore.isLoggedIn && userStore.saasMode) tabs.push('imAccounts')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('apiKeys')
   if (userStore.isLoggedIn && !userStore.saasMode) tabs.push('agentEnv')
-  if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user', 'imBots')
+  if (userStore.isAdmin && !userStore.saasMode) tabs.push('base', 'ocr', 'user')
+  if (userStore.isAdmin) tabs.push('imBots')
   if (userStore.isSuperAdmin && !userStore.saasMode) tabs.push('department')
   return tabs
 })

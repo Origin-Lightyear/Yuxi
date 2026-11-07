@@ -16,12 +16,14 @@ test('buildImBotPayload maps form fields', () => {
     enabled: true,
     allowedUsersText: 'ou_a,ou_b',
     requireMention: true,
+    requireBinding: true,
     groupSessionsPerUser: true,
     credentials: { app_id: 'a', app_secret: 'b' }
   })
   assert.equal(payload.owner_uid, 'u1')
   assert.deepEqual(payload.allowed_users, ['ou_a', 'ou_b'])
   assert.equal(payload.require_mention, true)
+  assert.equal(payload.require_binding, true)
   assert.equal(payload.credentials.app_id, 'a')
 })
 
@@ -34,9 +36,15 @@ test('formFromImBot omits credentials and joins users', () => {
     enabled: false,
     allowed_users: ['a', 'b'],
     require_mention: false,
+    require_binding: true,
     group_sessions_per_user: false
   })
   assert.equal(form.ownerUid, 'u2')
   assert.equal(form.allowedUsersText, 'a, b')
   assert.equal(form.platform, 'dingtalk')
+  assert.equal(form.requireBinding, true)
+})
+
+test('formFromImBot defaults requireBinding to false when unset', () => {
+  assert.equal(formFromImBot({}).requireBinding, false)
 })

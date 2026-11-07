@@ -16,12 +16,14 @@ from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.services.agent_run_service import create_resume_run_view
 from yuxi.services.channel_command_service import parse_slash_command
 from yuxi.services.chat_service import get_agent_state_view
+from yuxi.services.im_binding_service import resolve_channel_identity
+from yuxi.services.im_bot_service import PLATFORMS
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.services.agent_request_service import RunOrigin, AgentRequestInput, submit_agent_request
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.hash_utils import hash_id
 
-from server.utils.auth_middleware import get_db, get_required_user
+from server.utils.auth_middleware import AuthPrincipal, get_db, get_required_principal
 
 agent_invocation_channel_router = APIRouter(prefix="/agent-invocation/channel", tags=["agent-invocation"])
 
@@ -54,13 +56,35 @@ class ChannelMessageRequest(BaseModel):
 @agent_invocation_channel_router.post("/messages")
 async def receive_channel_message(
     payload: ChannelMessageRequest,
-    current_user: User = Depends(get_required_user),
+    principal: AuthPrincipal = Depends(get_required_principal),
     db: AsyncSession = Depends(get_db),
 ):
     """处理纯文本 Channel 消息或最小 slash command。"""
-    channel = _normalize_required(payload.channel, "channel")
+    # 平台标识统一小写，避免 "Feishu" 之类的大小写变体绕过 IM 渠道凭证与绑定校验。
+    channel = _normalize_required(payload.channel, "channel").lower()
     account_id = _normalize_required(payload.account_id, "account_id")
     agent_slug = _normalize_required(payload.agent_slug, "agent_slug")
+    current_user = principal.user
+
+    identity_source = None
+    if channel in PLATFORMS:
+        # IM 渠道由网关用机器人自己的 API Key 调用；JWT 不能代替传输凭证，
+        # 否则机器人归属人可以凭自己的登录态冒充任意已绑定 sender。
+        if principal.api_key_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "im_channel_api_key_required", "message": "IM 渠道只接受机器人 API Key"},
+            )
+        identity = await resolve_channel_identity(
+            db,
+            transport_user=current_user,
+            account_id=account_id,
+            sender_id=payload.sender_id,
+            transport_api_key_id=principal.api_key_id,
+        )
+        current_user = identity.user
+        identity_source = identity.identity_source
+
     thread_id = _resolve_thread_id(
         uid=str(current_user.uid),
         channel=channel,
@@ -104,7 +128,13 @@ async def receive_channel_message(
                 db=db,
                 include_messages=False,
             )
-            return {"kind": "command", "command": "state", "thread_id": thread_id, "state": state}
+            return {
+                "kind": "command",
+                "command": "state",
+                "thread_id": thread_id,
+                "state": state,
+                **_identity_source_field(identity_source),
+            }
         try:
             decision = decision_type_for_command(command.name, command.args)
         except ValueError as exc:
@@ -119,6 +149,7 @@ async def receive_channel_message(
                 channel=channel,
                 origin_metadata=origin_metadata,
                 current_user=current_user,
+                identity_source=identity_source,
                 db=db,
             )
         raise HTTPException(status_code=422, detail=f"不支持的 slash command: /{command.name}")
@@ -160,6 +191,7 @@ async def receive_channel_message(
     )
     result["kind"] = "run"
     result["channel"] = channel
+    result.update(_identity_source_field(identity_source))
     return result
 
 
@@ -173,6 +205,7 @@ async def _resolve_latest_run(
     channel: str,
     origin_metadata: dict[str, str],
     current_user: User,
+    identity_source: str | None,
     db: AsyncSession,
 ) -> dict:
     """审批（批准或拒绝）当前等待中的工具调用，并优先复用同 request_id 的恢复 run。"""
@@ -221,7 +254,18 @@ async def _resolve_latest_run(
         external_id=external_id,
         origin_metadata=origin_metadata,
     )
-    return {"kind": "command", "command": decision, "thread_id": thread_id, "run": result}
+    return {
+        "kind": "command",
+        "command": decision,
+        "thread_id": thread_id,
+        "run": result,
+        **_identity_source_field(identity_source),
+    }
+
+
+def _identity_source_field(identity_source: str | None) -> dict[str, str]:
+    """只在 IM 渠道解析过身份时输出 identity_source，其他渠道保持原有响应结构。"""
+    return {"identity_source": identity_source} if identity_source else {}
 
 
 _DECISION_COMMANDS = {"approve": "approve", "reject": "reject"}

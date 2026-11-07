@@ -389,3 +389,85 @@ async def test_concurrent_artifact_saves_use_distinct_atomic_names(live_files):
         b"one\ntwo\n",
         b"second",
     }
+
+
+@pytest.mark.asyncio
+async def test_artifact_falls_back_to_channel_run_owner(tmp_path, monkeypatch):
+    """机器人归属人可读取绑定用户 Channel Run 的产物。"""
+    (tmp_path / "shared").mkdir()
+    backend = _Workspace(tmp_path / "shared/reporter")
+    backend.files["/projects/11111111-1111-4111-8111-111111111111/report.md"] = b"bound artifact"
+    binding = AuthorizedWorkdir(
+        conversation_id=2,
+        thread_id="channel-thread",
+        uid="bound-1",
+        workdir=Workdir("projects/11111111-1111-4111-8111-111111111111", backend),
+        project_id="11111111-1111-4111-8111-111111111111",
+        directory_mode="managed",
+    )
+    resolved_uids: list[str] = []
+
+    async def resolve(**kwargs):
+        resolved_uids.append(kwargs["uid"])
+        if kwargs["uid"] == "owner-1":
+            raise HTTPException(status_code=404, detail="对话线程不存在")
+        assert kwargs["uid"] == "bound-1"
+        return binding
+
+    def conversation_repo(_db):
+        class Repo:
+            async def get_conversation_by_thread_id(self, _thread_id):
+                return type("C", (), {"uid": "bound-1"})()
+
+        return Repo()
+
+    async def allow_thread(_db, *, thread_id, caller_uid):
+        assert thread_id == "channel-thread"
+        assert caller_uid == "owner-1"
+        return True
+
+    monkeypatch.setattr(svc, "resolve_authorized_workdir", resolve)
+    monkeypatch.setattr(svc, "ConversationRepository", conversation_repo)
+    monkeypatch.setattr(svc, "can_read_channel_thread_as_bot_owner", allow_thread)
+
+    response = await svc.resolve_thread_artifact_view(
+        thread_id="channel-thread",
+        current_uid="owner-1",
+        db=object(),
+        path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/report.md",
+    )
+    assert Path(response.path).read_bytes() == b"bound artifact"
+    assert resolved_uids == ["owner-1", "bound-1"]
+    await response.background()
+
+
+@pytest.mark.asyncio
+async def test_artifact_rejects_channel_fallback_without_bot_ownership(tmp_path, monkeypatch):
+    """不拥有该 Channel Run 机器人的调用方仍然得到 404。"""
+
+    async def deny_resolve(**_kwargs):
+        raise HTTPException(status_code=404, detail="对话线程不存在")
+
+    def conversation_repo(_db):
+        class Repo:
+            async def get_conversation_by_thread_id(self, _thread_id):
+                return type("C", (), {"uid": "bound-1"})()
+
+        return Repo()
+
+    async def deny_thread(_db, *, thread_id, caller_uid):
+        del thread_id, caller_uid
+        return False
+
+    monkeypatch.setattr(svc, "resolve_authorized_workdir", deny_resolve)
+    monkeypatch.setattr(svc, "ConversationRepository", conversation_repo)
+    monkeypatch.setattr(svc, "can_read_channel_thread_as_bot_owner", deny_thread)
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.resolve_thread_artifact_view(
+            thread_id="channel-thread",
+            current_uid="stranger-1",
+            db=object(),
+            path="/home/gem/user-data/report.md",
+        )
+    assert exc.value.status_code == 404
